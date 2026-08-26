@@ -119,7 +119,10 @@ def main():
         print("  如无法访问，请在本机防火墙中放行 Python 和端口 %d" % PORT)
         print("  按 Ctrl+C 停止服务")
         print("=" * 56)
-        httpd.serve_forever()
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n服务器已停止")
 
 
 if __name__ == "__main__":
