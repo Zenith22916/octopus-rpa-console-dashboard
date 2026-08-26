@@ -18,11 +18,16 @@
 import argparse
 import calendar
 import csv
+import hashlib
 import json
 import os
 import re
 from collections import OrderedDict
 from datetime import date, datetime
+
+# 访问密码：留空 = 本地使用不设密码门；部署公网前填入密码（服务端无法鉴权时至少挡一般访问者）
+ACCESS_PASSWORD = ""
+PWD_HASH = hashlib.sha256(ACCESS_PASSWORD.encode()).hexdigest() if ACCESS_PASSWORD else ""
 
 # 深色背景下的 12 色配色（同应用同色，按出现顺序分配）
 PALETTE = [
@@ -178,6 +183,18 @@ def main():
 </style>
 </head>
 <body>
+<!-- __LOCK_START__ -->
+<div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="text-align:center;width:300px;">
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">RPA 日程仪表盘</div>
+    <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
+    <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
+      style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
+    <button id="unlock" style="width:100%;margin-top:12px;padding:9px 0;background:#378ADD;border:none;border-radius:6px;color:#fff;font-size:14px;cursor:pointer;">进入</button>
+    <div id="err" style="color:#E24B4A;font-size:12px;margin-top:10px;display:none;">密码错误，请重试</div>
+  </div>
+</div>
+<!-- __LOCK_END__ -->
 <div class="head">
   <div>
     <h1>RPA 触发器日程仪表盘</h1>
@@ -405,6 +422,29 @@ if (window.ResizeObserver) {
 }
 render('week', '__ALL__', 'enabled');
 </script>
+<script>
+function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){return(n<<t)|(n>>>(32-t))}function s2b(s){var i,b=[],c=0;for(i=0;i<s.length*8;i+=8)c=c<<8|s.charCodeAt(i/8),i%32==24&&(b.push(c),c=0);return b}function b2h(b){var h="",i;for(i=0;i<b.length;i++)h+=((b[i]>>>24)&255).toString(16).padStart(2,"0")+((b[i]>>>16)&255).toString(16).padStart(2,"0")+((b[i]>>>8)&255).toString(16).padStart(2,"0")+(b[i]&255).toString(16).padStart(2,"0");return h}var K=[1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1915078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];var H=[1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225],l=a.length*8,M=s2b(a),i;M[l>>5]|=128<<24-l%32;for(i=0;i<64;i++)M.push(0);M[(l+64>>9<<4)+15]=l;for(var n=0;n<M.length;n+=16){var W=[],A=H[0],B=H[1],C=H[2],D=H[3],E=H[4],F=H[5],G=H[6],J=H[7],j,t;for(i=0;i<64;i++){if(i<16)W[i]=M[n+i];else{var w1=W[i-15],w2=W[i-2];W[i]=ror(w1,7)^ror(w1,18)^(w1>>>3)^ror(w2,17)^ror(w2,19)^(w2>>>10)}var S1=ror(E,6)^ror(E,11)^ror(E,25),ch=E&F^~E&G,t1=J+S1+ch+K[i]+W[i],S0=ror(A,2)^ror(A,13)^ror(A,22),maj=A&B^A&C^B&C,t2=S0+maj;J=G;G=F;F=E;E=D+t1>>>0;D=C;C=B;B=A;A=t1+t2>>>0}H[0]=H[0]+A>>>0;H[1]=H[1]+B>>>0;H[2]=H[2]+C>>>0;H[3]=H[3]+D>>>0;H[4]=H[4]+E>>>0;H[5]=H[5]+F>>>0;H[6]=H[6]+G>>>0;H[7]=H[7]+J>>>0}return b2h(H)}
+(function(){
+  var HASH = '__PWD_HASH__';
+  var lock = document.getElementById('lock');
+  function tryUnlock(){
+    var v = document.getElementById('pwd').value;
+    if (sha256(v) === HASH) {
+      sessionStorage.setItem('rpa_dash_ok', '1');
+      lock.style.display = 'none';
+    } else {
+      document.getElementById('err').style.display = 'block';
+    }
+  }
+  if (sessionStorage.getItem('rpa_dash_ok') === '1') { lock.style.display = 'none'; }
+  else {
+    document.getElementById('unlock').onclick = tryUnlock;
+    document.getElementById('pwd').onkeydown = function(e){ if (e.key === 'Enter') tryUnlock(); };
+    document.getElementById('pwd').focus();
+  }
+})();
+</script>
+<!-- __LOCK_END__ -->
 </body>
 </html>"""
 
@@ -419,6 +459,23 @@ render('week', '__ALL__', 'enabled');
             .replace("__WEEK_DATA__", json.dumps(week_data, ensure_ascii=False))
             .replace("__MONTH_DATA__", json.dumps(month_data, ensure_ascii=False))
             .replace("__MONTH_LABELS__", json.dumps(month_labels, ensure_ascii=False)))
+
+    # 密码门：ACCESS_PASSWORD 为空时移除整段（本地使用）；否则替换哈希
+    if PWD_HASH:
+        html = html.replace("__PWD_HASH__", PWD_HASH)
+    else:
+        html = re.sub(r"<!-- __LOCK_START__ -->.*?<!-- __LOCK_END__ -->", "", html, flags=re.S)
+
+    # 内联 ECharts（存在本地 assets/echarts.min.js 时），部署后不依赖国外 CDN，国内访问更快
+    CDN_TAG = '<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
+    asset = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "echarts.min.js")
+    if os.path.exists(asset):
+        with open(asset, "r", encoding="utf-8") as f:
+            echarts_js = f.read()
+        html = html.replace(CDN_TAG, "<script>\n" + echarts_js + "\n</script>")
+        print("[*] ECharts 已内联（自包含，不依赖外部 CDN）")
+    else:
+        print("[*] 未找到 assets/echarts.min.js，使用 CDN 引用")
 
     out_path = os.path.join(args.out, "dashboard.html")
     with open(out_path, "w", encoding="utf-8") as f:
