@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# 敏感配置（含账号密码，不入库；提交前请复制为 config.example.json 模板）
+config.json
+
+# 生成产物（抓取结果、会话、仪表盘等）
+output/

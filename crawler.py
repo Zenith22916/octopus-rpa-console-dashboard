@@ -1,0 +1,306 @@
+# -*- coding: utf-8 -*-
+"""
+八爪鱼 RPA 触发器爬虫（企业版）
+================================
+从 https://rpa.bazhuayu.com/management/enterprise/robot-trigger 获取企业版所有 RPA 机器人的触发器，
+输出归一化数据（raw JSON + normalized CSV）。
+
+用法：
+    python crawler.py --config config.json --out output
+
+流程：
+    1. 账号密码登录（identity.bazhuayu.com OIDC 链路），会话缓存到 output/session.json
+    2. 获取账号下企业列表，选择企业（config 的 enterprise_id 可指定；默认选第一个非个人账号）
+    3. 切换企业会话（GET /management/api/session?enterprise_id=xxx），后续请求带 EnterpriseId 头
+    4. 分页拉取全部触发器（start/limit 偏移分页）与机器人列表
+    5. 归一化输出 triggers_normalized.csv
+
+鉴权备用方案：
+    - config.json 的 cookie 字段：浏览器 F12 -> Console 执行 document.cookie 填入
+    - config.json 的 api_url：手动指定触发器列表接口（默认已内置逆向得到的接口）
+"""
+import argparse
+import base64
+import csv
+import json
+import os
+import re
+import sys
+import urllib.parse
+
+import requests
+
+# Windows 控制台编码保护（机器人名含 emoji，GBK 下打印会崩溃）
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+DEFAULT_BASE = "https://rpa.bazhuayu.com"
+IDENTITY_BASE = "https://identity.bazhuayu.com"
+CLIENT_ID = "OctopusRPAWeb"
+SESSION_FILE = "session.json"
+
+# 已逆向确认的接口（baseURL = /management/api）
+API_TRIGGERS = "/management/api/officialSite/triggers"
+API_BOTS = "/management/api/officialSite/bots/bots"
+API_ENTERPRISES = "/management/api/officialSite/enterprises/enterprises"
+API_SESSION = "/management/api/session"
+API_ME = "/management/api/officialSite/identity/accounts/me"
+
+
+def b64(s):
+    """登录参数编码（与前端 pd.encode 一致）"""
+    if isinstance(s, str):
+        s = s.encode("utf-8")
+    return base64.b64encode(s).decode()
+
+
+def login_by_password(session, username, password, out_dir):
+    """OIDC 密码登录，成功后 session 持有 rpa 域会话 cookie。返回是否成功。"""
+    print("[*] 尝试账号密码登录 ...")
+    r = session.get(DEFAULT_BASE + "/api/auth", allow_redirects=False, timeout=30)
+    if r.status_code not in (301, 302, 307, 308):
+        print("[!] /api/auth 未返回跳转，可能接口已变更")
+        return False
+    auth_url = r.headers.get("Location", "")
+    r2 = session.get(auth_url, allow_redirects=False, timeout=30)
+    loc2 = r2.headers.get("Location", "")
+    m = re.search(r"[?&]ReturnUrl=([^&]+)", loc2)
+    if not m:
+        print("[!] 未从授权流程中取得 ReturnUrl")
+        return False
+    return_url = urllib.parse.unquote(m.group(1))
+    if return_url.startswith("/"):
+        return_url = IDENTITY_BASE + return_url
+
+    payload = {
+        "userName": username,
+        "password": password,
+        "clientId": CLIENT_ID,
+        "returnUrl": b64(return_url),
+        "channelType": "",
+        "channelCode": "",
+        "channelSessionId": "",
+    }
+    r3 = session.post(
+        IDENTITY_BASE + "/api/login/byCookie",
+        json={"data": b64(json.dumps(payload))},
+        headers={"Referer": IDENTITY_BASE + "/account/RegisterOrLogin"},
+        timeout=30,
+    )
+    try:
+        d = r3.json()
+    except Exception:
+        print(f"[!] 登录接口返回非 JSON: {r3.text[:200]}")
+        return False
+    if d.get("errorCode") != "success":
+        print(f"[!] 登录失败: {d.get('errorCode')} - {d.get('errorDescription')}")
+        return False
+
+    session.get(return_url, allow_redirects=True, timeout=30)
+    os.makedirs(out_dir, exist_ok=True)
+    sess_path = os.path.join(out_dir, SESSION_FILE)
+    with open(sess_path, "w", encoding="utf-8") as f:
+        json.dump(session.cookies.get_dict(), f, ensure_ascii=False, indent=2)
+    print(f"[+] 登录成功，会话已缓存: {sess_path}")
+    return True
+
+
+def load_session(session, out_dir):
+    path = os.path.join(out_dir, SESSION_FILE)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            cookies = json.load(f)
+        for k, v in cookies.items():
+            session.cookies.set(k, v)
+        print(f"[*] 已从 {path} 恢复登录会话")
+        return True
+    return False
+
+
+def pick_enterprise(session, cfg):
+    """获取企业列表并选择目标企业，返回 enterprise dict 或 None"""
+    try:
+        r = session.get(DEFAULT_BASE + API_ENTERPRISES, timeout=20)
+        ents = r.json()
+    except Exception as e:
+        print(f"[!] 获取企业列表失败: {e}")
+        return None
+    if not isinstance(ents, list) or not ents:
+        print("[!] 账号未加入任何企业（含个人账号）")
+        return None
+
+    want = (cfg.get("enterprise_id") or "").strip()
+    if want:
+        for e in ents:
+            if e.get("id") == want:
+                return e
+        print(f"[!] 配置的 enterprise_id 未在账号企业列表中找到: {want}")
+
+    # 优先非个人账号
+    for e in ents:
+        if not e.get("isIndividualAccount"):
+            return e
+    return ents[0]
+
+
+def switch_enterprise(session, ent):
+    """切换企业会话并设置 EnterpriseId 请求头"""
+    ent_id = ent["id"]
+    r = session.get(DEFAULT_BASE + API_SESSION, params={"enterprise_id": ent_id}, timeout=20)
+    ok = r.status_code == 200 and r.json().get("success") is True
+    session.headers["EnterpriseId"] = ent_id
+    print(f"[+] 已切换到企业: {ent.get('name')}（id={ent_id}）"
+          f"{'会话切换成功' if ok else '，但会话切换接口返回异常'}")
+    return ok
+
+
+def fetch_all(session, path, limit=50):
+    """按 start/limit 偏移分页拉取全部记录"""
+    all_items, start = [], 0
+    while True:
+        r = session.get(DEFAULT_BASE + path, params={"start": start, "limit": limit}, timeout=30)
+        d = r.json()
+        items = d.get("items", []) or []
+        all_items.extend(items)
+        total = d.get("total", len(all_items))
+        print(f"  已拉取 {len(all_items)}/{total}")
+        if not items or len(all_items) >= total:
+            break
+        start += limit
+    # 按 id 去重（接口可能重复返回）
+    seen, uniq = set(), []
+    for it in all_items:
+        if it.get("id") not in seen:
+            seen.add(it.get("id"))
+            uniq.append(it)
+    return uniq
+
+
+def normalize_trigger(it):
+    """把触发器原始记录映射为统一字段"""
+    cfg_ = it.get("triggerConfig") or {}
+    calendar = cfg_.get("calendar") or {}
+    trigger_type = it.get("triggerType") or ""
+    ttype_cn = {"BotTiming": "定时", "Webhook": "Webhook"}.get(trigger_type, trigger_type or "-")
+    cron_text = (calendar.get("cronExpressionData") or {}).get("text") or ""
+    return {
+        "trigger_id": it.get("id") or "",
+        "trigger_name": it.get("name") or "",
+        "robot_name": it.get("executorName") or "(未指定机器人)",
+        "app_name": it.get("flowName") or "",
+        "trigger_type": ttype_cn,
+        "cron": cron_text,
+        "enabled": it.get("enable"),
+        "calendar": json.dumps(calendar, ensure_ascii=False) if calendar else "",
+        "update_time": it.get("updateTime") or "",
+        "raw": json.dumps(it, ensure_ascii=False),
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description="八爪鱼 RPA 触发器爬虫（企业版）")
+    ap.add_argument("--config", default="config.json")
+    ap.add_argument("--out", default="output")
+    args = ap.parse_args()
+
+    with open(args.config, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    os.makedirs(args.out, exist_ok=True)
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Referer": DEFAULT_BASE + "/management/enterprise/robot-trigger",
+        "Accept": "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+    })
+
+    cookie = cfg.get("cookie", "")
+    if cookie:
+        session.headers.update({"Cookie": cookie})
+        print("[*] 使用 config.json 中的 Cookie")
+    elif not load_session(session, args.out):
+        acc = cfg.get("account", {})
+        username = acc.get("username") or acc.get("phone") or acc.get("email") or ""
+        password = acc.get("password", "")
+        if username and password:
+            if not login_by_password(session, username, password, args.out):
+                print("[!] 登录失败，请检查账号密码或改用 Cookie")
+                sys.exit(1)
+        else:
+            print("[!] 未配置 Cookie 或账号密码")
+            sys.exit(1)
+
+    # 选择并切换企业
+    ent = pick_enterprise(session, cfg)
+    if not ent:
+        print("[!] 无法确定目标企业，请确认账号已加入企业")
+        sys.exit(1)
+    switch_enterprise(session, ent)
+
+    # 拉取触发器
+    print("[*] 拉取触发器列表 ...")
+    triggers = fetch_all(session, API_TRIGGERS)
+    print(f"[+] 触发器共 {len(triggers)} 条")
+
+    # 拉取机器人（供对照）
+    try:
+        bots = fetch_all(session, API_BOTS, limit=50)
+        print(f"[+] 机器人共 {len(bots)} 台")
+    except Exception as e:
+        bots = []
+        print(f"[!] 机器人列表拉取失败: {e}")
+
+    # 保存原始数据
+    with open(os.path.join(args.out, "triggers_raw.json"), "w", encoding="utf-8") as f:
+        json.dump({"enterprise": ent, "triggers": triggers, "bots": bots},
+                  f, ensure_ascii=False, indent=2)
+    print(f"[+] 原始数据已保存: {args.out}/triggers_raw.json")
+
+    # 归一化 CSV（支持按机器人前缀保留 + 关键词排除）
+    header = ["trigger_id", "trigger_name", "robot_name", "app_name",
+              "trigger_type", "cron", "enabled", "calendar", "update_time"]
+    include = [str(k) for k in (cfg.get("include_robots") or [])]
+    exclude = [str(k) for k in (cfg.get("exclude_robots") or [])]
+
+    def keep(t):
+        name = t.get("executorName") or ""
+        if include and not any(name.startswith(p) for p in include):
+            return False
+        if any(k in name for k in exclude):
+            return False
+        return True
+
+    kept = [t for t in triggers if keep(t)]
+    dropped = len(triggers) - len(kept)
+    if dropped:
+        print(f"[*] 已过滤 {dropped} 条（include={include}, exclude={exclude}）")
+    rows = [normalize_trigger(t) for t in kept]
+    with open(os.path.join(args.out, "triggers_normalized.csv"), "w",
+              encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        for r in rows:
+            w.writerow([r[h] for h in header])
+    print(f"[+] 归一化数据已保存: {args.out}/triggers_normalized.csv")
+
+    # 统计
+    from collections import Counter
+    by_robot = Counter(r["robot_name"] for r in rows)
+    by_type = Counter(r["trigger_type"] for r in rows)
+    enabled = sum(1 for r in rows if r["enabled"] is True)
+    print(f"\n=== 统计 ===")
+    print(f"触发器总数: {len(rows)}（启用 {enabled}）")
+    print(f"触发类型: {dict(by_type)}")
+    print(f"机器人数: {len(by_robot)}")
+    for name, c in by_robot.most_common():
+        print(f"  {name}: {c}")
+    print("\n[✓] 爬取完成")
+
+
+if __name__ == "__main__":
+    main()
