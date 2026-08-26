@@ -26,7 +26,9 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
+from datetime import datetime, timezone
 
 import requests
 
@@ -49,6 +51,7 @@ API_BOTS = "/management/api/officialSite/bots/bots"
 API_ENTERPRISES = "/management/api/officialSite/enterprises/enterprises"
 API_SESSION = "/management/api/session"
 API_ME = "/management/api/officialSite/identity/accounts/me"
+API_RUNNING_RECORDS = "/management/api/officialSite/bots/runningRecords"
 
 
 def b64(s):
@@ -56,6 +59,22 @@ def b64(s):
     if isinstance(s, str):
         s = s.encode("utf-8")
     return base64.b64encode(s).decode()
+
+
+def to_ms(v):
+    """ISO 8601 / 时间戳 -> 绝对毫秒。解析失败返回 None。"""
+    if not v:
+        return None
+    s = str(v)
+    try:
+        if s.isdigit() and len(s) in (10, 13):
+            return int(s) * (1000 if len(s) == 10 else 1)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 def login_by_password(session, username, password, out_dir):
@@ -158,17 +177,27 @@ def switch_enterprise(session, ent):
     return ok
 
 
-def fetch_all(session, path, limit=50):
-    """按 start/limit 偏移分页拉取全部记录"""
+def fetch_all(session, path, limit=50, cut_off_ms=None, time_field="startTime"):
+    """按 start/limit 偏移分页拉取记录。
+    cut_off_ms 非空时：假定接口按 time_field 倒序返回（最新在前），
+    遇到早于截止时间的记录即提前停止（后续只会更旧），用于快速抓取最近 N 天。
+    """
     all_items, start = [], 0
     while True:
         r = session.get(DEFAULT_BASE + path, params={"start": start, "limit": limit}, timeout=30)
         d = r.json()
         items = d.get("items", []) or []
-        all_items.extend(items)
+        truncated = False
+        for it in items:
+            all_items.append(it)
+            if cut_off_ms is not None:
+                t = to_ms(it.get(time_field))
+                if t is not None and t < cut_off_ms:
+                    truncated = True
+                    break  # 本页及后续页都是更旧的记录，停止
         total = d.get("total", len(all_items))
         print(f"  已拉取 {len(all_items)}/{total}")
-        if not items or len(all_items) >= total:
+        if truncated or not items or len(all_items) >= total:
             break
         start += limit
     # 按 id 去重（接口可能重复返回）
@@ -201,15 +230,39 @@ def normalize_trigger(it):
     }
 
 
+def normalize_run_record(it):
+    """把运行记录原始记录映射为统一字段"""
+    return {
+        "flow_id": it.get("flowId") or "",
+        "process_no": it.get("flowProcessNo") or "",
+        "flow_name": it.get("flowName") or "",
+        "bot_name": it.get("botName") or "(未指定机器人)",
+        "trigger_id": it.get("triggerId") or "",
+        "trigger_name": it.get("triggerName") or "",
+        "start_way": it.get("startWay") or "",
+        "status": it.get("status") or "",
+        "start_time": it.get("startTime") or "",
+        "end_time": it.get("endTime") or "",
+        "execution_start_time": it.get("executionStartTime") or "",
+        "raw": json.dumps(it, ensure_ascii=False),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="八爪鱼 RPA 触发器爬虫（企业版）")
     ap.add_argument("--config", default="config.json")
     ap.add_argument("--out", default="output")
+    ap.add_argument("--only-runs", action="store_true",
+                    help="仅抓取运行记录（快速刷新用，跳过触发器/机器人）")
+    ap.add_argument("--days", type=int, default=7,
+                    help="运行记录只保留最近 N 天（默认 7）")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     os.makedirs(args.out, exist_ok=True)
+
+    # 建立会话（Cookie / 缓存会话 / 账号密码）
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -218,7 +271,6 @@ def main():
         "Accept": "application/json, text/plain, */*",
         "X-Requested-With": "XMLHttpRequest",
     })
-
     cookie = cfg.get("cookie", "")
     if cookie:
         session.headers.update({"Cookie": cookie})
@@ -242,6 +294,53 @@ def main():
         sys.exit(1)
     switch_enterprise(session, ent)
 
+    # 机器人过滤规则（运行记录与触发器共用）
+    include = [str(k) for k in (cfg.get("include_robots") or [])]
+    exclude = [str(k) for k in (cfg.get("exclude_robots") or [])]
+
+    def keep_name(name):
+        # 空名（未指定机器人）不保留：竖轴只显示有明确机器人的 Webhook 记录
+        if not name:
+            return False
+        if include and not any(name.startswith(p) for p in include):
+            return False
+        if any(k in name for k in exclude):
+            return False
+        return True
+
+    # 拉取运行记录：只保留最近 args.days 天、符合机器人过滤（保留手动/定时/Webhook 全部触发方式）
+    cut_off_ms = int(time.time() * 1000) - args.days * 86400000
+    print(f"[*] 拉取运行记录（最近 {args.days} 天）...")
+    runs = fetch_all(session, API_RUNNING_RECORDS, cut_off_ms=cut_off_ms)
+    print(f"[+] 运行记录共 {len(runs)} 条")
+    keep_runs = [r for r in runs
+                 if (r.get("startWay") or "") and keep_name(r.get("botName") or "")]
+    from collections import Counter as _W
+    way_dist = _W(r.get("startWay") for r in keep_runs)
+    print(f"    保留 {len(keep_runs)} 条（已按 include/exclude 过滤机器人），触发方式: {dict(way_dist)}")
+    run_rows = [normalize_run_record(r) for r in keep_runs]
+    run_header = ["flow_id", "process_no", "flow_name", "bot_name", "trigger_id",
+                  "trigger_name", "start_way", "status", "start_time", "end_time",
+                  "execution_start_time"]
+    with open(os.path.join(args.out, "runs_normalized.csv"), "w",
+              encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(run_header)
+        for r in run_rows:
+            w.writerow([r[h] for h in run_header])
+    print(f"[+] 运行记录已保存: {args.out}/runs_normalized.csv")
+    if run_rows:
+        from collections import Counter as _C
+        by_status = _C(r["status"] for r in run_rows)
+        by_robot = _C(r["bot_name"] for r in run_rows)
+        print(f"    状态分布: {dict(by_status)}")
+        print(f"    机器人数: {len(by_robot)}")
+
+    if args.only_runs:
+        print("[✓] 运行记录刷新完成")
+        return
+
+    # ---- 完整流程：触发器 + 机器人 + 归一化 CSV + 统计 ----
     # 拉取触发器
     print("[*] 拉取触发器列表 ...")
     triggers = fetch_all(session, API_TRIGGERS)
@@ -264,16 +363,9 @@ def main():
     # 归一化 CSV（支持按机器人前缀保留 + 关键词排除）
     header = ["trigger_id", "trigger_name", "robot_name", "app_name",
               "trigger_type", "cron", "enabled", "calendar", "update_time"]
-    include = [str(k) for k in (cfg.get("include_robots") or [])]
-    exclude = [str(k) for k in (cfg.get("exclude_robots") or [])]
 
     def keep(t):
-        name = t.get("executorName") or ""
-        if include and not any(name.startswith(p) for p in include):
-            return False
-        if any(k in name for k in exclude):
-            return False
-        return True
+        return keep_name(t.get("executorName") or "")
 
     kept = [t for t in triggers if keep(t)]
     dropped = len(triggers) - len(kept)
