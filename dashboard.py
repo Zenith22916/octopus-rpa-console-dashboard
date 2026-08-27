@@ -323,13 +323,34 @@ function statusColor(r){
   if (r.status === "Stopped") return "rgba(95,94,90,0.6)";
   return "rgba(29,158,117,0.6)";  // 已完成（含默认）统一绿色
 }
-// 数据块文字：宽度不够自动换行，最多两行；两行仍放不下则隐藏文字
-function wrapLabel(name, maxW, fs){
-  if (!name || maxW < fs * 0.5) return '';
+// 数据块文字：用离屏 canvas 的 measureText 实测真实字宽（避免按字号估算的偏差，
+// 尤其半角字符（数字/下划线/字母）实际约 8~11px，被估成 11px 会导致第一行提前换行），
+// 宽度不够自动换行，最多两行；两行仍放不下则隐藏文字。
+// 测量字体与 ECharts 渲染字体共用 FONT_STACK，保证「测量宽度=渲染宽度」。
+var FONT_STACK = (function(){
+  try { return getComputedStyle(document.body).fontFamily || 'sans-serif'; }
+  catch(e){ return 'sans-serif'; }
+})();
+var _mc = (function(){
+  try {
+    var c = document.createElement('canvas').getContext('2d');
+    c.font = '500 20px ' + FONT_STACK;
+    return c;
+  } catch(e){ return null; }
+})();
+function measureW(s){
+  if (!_mc) return s.length * 10;   // 退化估算（极少数环境无 canvas）
+  return _mc.measureText(s).width;
+}
+function wrapLabel(name, maxW){
+  if (!name) return '';
+  if (maxW < 8) return '';          // 条太窄，放不下一个字符 → 不显示
+  var full = measureW(name);
+  if (full <= maxW) return name;    // 整串放得下 → 单行不换行
   var lines = [], cur = '', curW = 0;
   for (var i = 0; i < name.length; i++){
     var ch = name[i];
-    var cw = ch.charCodeAt(0) > 255 ? fs : fs * 0.55;  // 全角≈字号，半角≈55%
+    var cw = measureW(ch);
     if (curW + cw > maxW){
       if (lines.length >= 1) return '';   // 第二行也放不下 → 隐藏文字
       lines.push(cur);
@@ -528,15 +549,21 @@ function render(){
       type: 'custom', data: textData, zlevel: 2, silent: true,
       renderItem: function(params, api){
         var row = api.value(1);
-        var cx = api.coord([api.value(0), row])[0];
-        var y = api.coord([api.value(0), row])[1];
+        var mStart = api.value(3);
         var mEnd = api.value(4) == null ? nowW : api.value(4);
-        var wTotal = Math.abs(api.coord([mEnd, row])[0] - api.coord([api.value(3), row])[0]);
-        var label = wrapLabel(api.value(2), Math.max(6, wTotal - 6), 20);
+        // 裁剪到可见时间窗口：文字按「可见条」居中与算宽，记录部分在窗口外时不会错位留空
+        var vStart = Math.max(mStart, nowW - state.span);
+        var vEnd = Math.min(mEnd, nowW);
+        if (vEnd <= vStart) return null;
+        var vc = (vStart + vEnd) / 2;
+        var cx = api.coord([vc, row])[0];
+        var y = api.coord([vc, row])[1];
+        var wTotal = Math.abs(api.coord([vEnd, row])[0] - api.coord([vStart, row])[0]);
+        var label = wrapLabel(api.value(2), Math.max(2, wTotal - 4));
         if (!label) return null;
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
                  textVerticalAlign: 'middle', fill: '#10141a', fontSize: 20,
-                 fontWeight: 500, fontFamily: 'inherit' } };
+                 fontWeight: 500, fontFamily: FONT_STACK } };
       }
     }, {
       // 组间分隔线系列：独立于可见数据，横跨绘图区，空泳道也会绘制
