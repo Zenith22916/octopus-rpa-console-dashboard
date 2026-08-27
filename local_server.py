@@ -177,7 +177,7 @@ def run_update():
 
 
 def run_refresh():
-    """快速刷新：运行记录（最近 7 天 Webhook）+ 甘特图页面（由网页 /api/refresh 触发）。
+    """快速刷新：运行记录（最近 7 天，手动/定时/Webhook 全部触发方式）+ 甘特图页面（由网页 /api/refresh 触发）。
     成功仅打印一行时间戳；失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
     with UPDATE_LOCK:
         py = sys.executable
@@ -198,7 +198,7 @@ def run_refresh():
                             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             " ".join(cmd), ((r.stdout or "") + (r.stderr or ""))[-600:]))
                     return False
-            print("[刷新] %s 运行记录已更新（最近 7 天 Webhook）" % datetime.datetime.now().strftime("%H:%M:%S"))
+            print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
             return True
         except Exception as e:
             with open(log, "a", encoding="utf-8") as f:

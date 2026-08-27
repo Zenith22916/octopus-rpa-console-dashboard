@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-八爪鱼 RPA 触发器爬虫（企业版）
-================================
-从 https://rpa.bazhuayu.com/management/enterprise/robot-trigger 获取企业版所有 RPA 机器人的触发器，
-输出归一化数据（raw JSON + normalized CSV）。
+八爪鱼 RPA 触发器 & 运行记录爬虫（企业版）
+=========================================
+从 https://rpa.bazhuayu.com/management/enterprise/robot-trigger 获取企业版所有 RPA 机器人的
+触发器与运行记录，输出归一化数据：
+  - triggers_normalized.csv / triggers_raw.json：触发器（机器人、应用、触发类型、cron、状态）
+  - runs_normalized.csv：运行记录（机器人、应用、触发方式、状态、起止时间、排队/执行拆分）
 
 用法：
     python crawler.py --config config.json --out output
+    python crawler.py --config config.json --out output --only-runs --days 7   # 仅快速刷新运行记录
 
 流程：
     1. 账号密码登录（identity.bazhuayu.com OIDC 链路），会话缓存到 output/session.json
     2. 获取账号下企业列表，选择企业（config 的 enterprise_id 可指定；默认选第一个非个人账号）
     3. 切换企业会话（GET /management/api/session?enterprise_id=xxx），后续请求带 EnterpriseId 头
-    4. 分页拉取全部触发器（start/limit 偏移分页）与机器人列表
-    5. 归一化输出 triggers_normalized.csv
+    4. 拉取运行记录（最近 N 天；--only-runs 时跳过触发器/机器人，仅刷新运行记录）
+    5. 完整流程：分页拉取全部触发器与机器人列表，归一化输出 CSV；机器人按 include/exclude 过滤
 
 鉴权备用方案：
     - config.json 的 cookie 字段：浏览器 F12 -> Console 执行 document.cookie 填入
-    - config.json 的 api_url：手动指定触发器列表接口（默认已内置逆向得到的接口）
 """
 import argparse
 import base64
@@ -299,7 +301,7 @@ def main():
     exclude = [str(k) for k in (cfg.get("exclude_robots") or [])]
 
     def keep_name(name):
-        # 空名（未指定机器人）不保留：竖轴只显示有明确机器人的 Webhook 记录
+        # 空名（未指定机器人）不保留：仅保留有明确机器人名称的记录
         if not name:
             return False
         if include and not any(name.startswith(p) for p in include):

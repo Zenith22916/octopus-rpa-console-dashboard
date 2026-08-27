@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-生成 RPA 触发器日程仪表盘（ECharts HTML）
-==========================================
-读取 crawler 产出的 triggers_normalized.csv，生成 output/dashboard.html：
+生成 RPA 触发器日程仪表盘 + 运行记录甘特图（ECharts HTML）
+==========================================================
+读取 crawler 产出的 triggers_normalized.csv，生成两张页面：
+  - output/dashboard.html：触发器日程仪表盘
+  - output/runs_gantt.html：运行记录甘特图（数据源优先 runs_normalized.csv 真实运行记录）
+
+日程仪表盘特性：
   - 单张日程时间轴，通过「每周/每月」下拉切换视图：
       * 每周视图：横轴=周一~周日，展示「每天/每周」循环的启用任务
       * 每月视图：横轴=当月有任务的日期，展示「每月」循环的启用任务
@@ -14,6 +18,7 @@
 
 用法：
     python dashboard.py --input output/triggers_normalized.csv --out output
+    python dashboard.py --input output/triggers_normalized.csv --out output --only-gantt   # 仅甘特图
 """
 import argparse
 import calendar
@@ -121,14 +126,17 @@ def finalize_html(html, out_path):
     return html
 
 
-# ==================== 运行记录甘特图页面（仅 Webhook 触发器） ====================
+# ==================== 运行记录甘特图页面 ====================
 # 页面特性：
-#   - 竖轴=机器人（泳道），横轴=时间（右缘=当前时刻，内容随时间缓慢向左移动）
-#   - 图表上滚动鼠标滚轮放大/缩小时间尺度（锚定当前时刻）
-#   - 左移速度可调（暂停 / 1×实时 / 2× / 4× / 8×）
-#   - 种子数据 = triggers_normalized.csv 中 trigger_type=Webhook 的记录
-#     （start=update_time，默认持续 30 分钟；停用触发器显示为灰色）
-#   - 支持新增/删除/导入/导出运行记录，持久化到浏览器 localStorage
+#   - 竖轴=机器人（同一机器人时间重叠的记录自动分多行泳道堆叠），横轴=时间（右缘=当前时刻，内容随时间缓慢左移）
+#   - 时间窗口下拉切换 30 分钟 ~ 7 天（锚定当前时刻）
+#   - 鼠标滚轮左右平移时间窗口（向下=向未来，最多到"现在"；向上=向过去）
+#   - 触发方式下拉筛选：全部 / 手动 / 定时触发器 / Webhook
+#   - 自动更新勾选后每 60 秒向 /api/refresh 请求最新数据（服务器 60 秒内去重）
+#   - 双击图表恢复实时跟随
+#   - 种子数据优先 runs_normalized.csv（爬虫抓取的真实运行记录，手动/定时/Webhook 全部触发方式）；
+#     无该文件时回退 triggers_normalized.csv 中 trigger_type=Webhook 的触发器配置
+#     （回退模式：start=update_time，默认持续 30 分钟；停用触发器显示为灰色）
 GANTT_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -240,7 +248,7 @@ var STATUS_CN = { Waiting: "排队中", Executing: "运行中", Finished: "已�
 var WAY_CN = { Manual: "手动", TimingTrigger: "定时触发器", Webhook: "Webhook" };
 function wayOf(r){ return WAY_CN[r.way] || r.way || "-"; }
 
-var SEED = __SEED__;                    // 八爪鱼后台爬取的真实运行记录（仅 Webhook，6 台核心机器人）
+var SEED = __SEED__;                    // 八爪鱼后台爬取的真实运行记录（手动/定时/Webhook 全部触发方式，按 include/exclude_robots 过滤）
 var records = SEED.slice();
 var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0 };
@@ -620,7 +628,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 
 def build_runs_gantt(rows, out_dir):
     """生成运行记录甘特图页面。
-    数据源优先：output/runs_normalized.csv（爬虫抓取的真实 Webhook 运行记录）；
+    数据源优先：output/runs_normalized.csv（爬虫抓取的真实运行记录，手动/定时/Webhook 全部）；
     无该文件时回退：triggers_normalized.csv 中 trigger_type=Webhook 的触发器配置。
     """
     DEFAULT_RUN_MS = 30 * 60 * 1000  # 回退模式下每条种子记录默认持续 30 分钟
@@ -1093,7 +1101,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
     print(f"    月视图({year}年{month}月): 有任务日期 {len(month_labels)} 天")
     print(f"    周视图任务点: {week_pts} 个 / 月视图任务点: {month_pts} 个")
 
-    # 运行记录甘特图页面（仅 Webhook 触发器）
+    # 运行记录甘特图页面（数据源优先 runs_normalized.csv 真实运行记录）
     build_runs_gantt(rows, args.out)
 
 

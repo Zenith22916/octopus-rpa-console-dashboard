@@ -2,15 +2,16 @@
 """
 时刻表整理脚本
 ==============
-读取 crawler.py 产出的 normalized 数据（JSON 或 CSV），
-按机器人分组，解析 cron 表达式为人类可读的执行时刻，输出：
+读取 crawler.py 产出的 normalized 数据（triggers_normalized.csv）或原始 JSON（triggers_raw.json），
+按机器人分组，解析 cron 表达式 / 结构化日历为人类可读的执行时刻，输出：
   - schedule_<机器人>.md   每个机器人一份时刻表
-  - schedule_all.md        总览（含未启用标记）
-  - schedule_all.xlsx      汇总 Excel（机器人分 Sheet + 总表）
+  - schedule_all.md        总览（含启用/停用标记）
+  - schedule_all.xlsx      汇总 Excel（每个机器人分 Sheet + 总表）
+  - schedule_all.csv       扁平 CSV（每触发器一行，便于导入飞书等）
 
 用法：
     python organize.py --input output/triggers_normalized.csv --out output
-    python organize.py --input output/triggers_normalized.json --out output
+    python organize.py --input output/triggers_raw.json --out output
 """
 import argparse
 import csv

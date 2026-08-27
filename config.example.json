@@ -5,9 +5,6 @@
   },
   "enterprise_id": "",
   "cookie": "",
-  "api_url": "",
-  "method": "GET",
-  "api_params": {},
   "include_robots": ["A", "B"],
   "exclude_robots": []
 }
