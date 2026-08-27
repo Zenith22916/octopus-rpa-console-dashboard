@@ -532,7 +532,7 @@ function render(){
         var y = api.coord([api.value(0), row])[1];
         var mEnd = api.value(4) == null ? nowW : api.value(4);
         var wTotal = Math.abs(api.coord([mEnd, row])[0] - api.coord([api.value(3), row])[0]);
-        var label = wrapLabel(api.value(2), Math.max(6, wTotal - 6), 20);
+        var label = wrapLabel(api.value(2), Math.max(6, wTotal), 20);
         if (!label) return null;
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
                  textVerticalAlign: 'middle', fill: '#10141a', fontSize: 20,
