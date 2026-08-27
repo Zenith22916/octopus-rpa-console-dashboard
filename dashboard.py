@@ -418,9 +418,7 @@ function render(){
   var lastRows = layout.groupLastRows || [];
   // 分隔线画在每个组的上方边界（组间分界）；最顶部组上方（图表顶部）不画
   var topGroupRow = lastRows.length ? Math.max.apply(null, lastRows) : -1;
-  // 统计每行段数：分隔线只在该行最后一段上画（避免同线多条重叠导致颜色深浅不一）
-  var rowLeft = {};
-  visible.forEach(function(s, i){ var row = info[i].row; rowLeft[row] = (rowLeft[row] || 0) + 1; });
+  // 组间分隔线改为独立 series 绘制（见 sepData），不再依赖每行段计数
   // 每条记录的合并区间（排队段+运行段整体），用于文字跨两块整体居中
   var recMerge = {};
   visible.forEach(function(s){
@@ -434,15 +432,11 @@ function render(){
   var textData = [];   // 顶层文字层（zlevel 2）：跨「排队段+运行段」整体居中，任何块悬停高亮都不会盖住文字
   visible.forEach(function(s, i){
     var li = info[i];
-    // value[7]: 1=该行最后一段且为机器人组的上方边界行（用于绘制组间分隔线）
-    var isSep = lastRows.indexOf(li.row) >= 0 && li.row !== topGroupRow;
-    rowLeft[li.row] -= 1;
-    if (isSep) isSep = rowLeft[li.row] === 0;
     var rid = String(s.r.id);
     var merge = recMerge[rid];
     data.push({
       // 颜色仍拆分（排队蓝 + 运行状态色）；文字由独立 textData 层绘制
-      value: [s.start, effEnd(s), li.row, 0, 1, segColor(s), isSep ? 1 : 0],
+      value: [s.start, effEnd(s), li.row, 0, 1, segColor(s)],
       rid: rid, name: s.r.name, app: s.r.app, robot: s.r.robot,
       status: s.r.status, kind: s.kind, way: s.r.way,
       start: s.start, end: s.end, execStart: s.r.execStart
@@ -454,6 +448,10 @@ function render(){
       });
     }
   });
+  // 组间分隔线独立数据：每个机器人组的上方边界行（顶组除外），
+  // 与可见数据解耦，即使该组在窗口内无记录也会绘制，避免空泳道丢失分割线
+  var sepData = [];
+  lastRows.forEach(function(r){ if (r !== topGroupRow) sepData.push({ value: [r] }); });
   // 窗口内可见的原始记录数（同一记录排队+运行两段计 1）
   var recIds = {};
   visible.forEach(function(s){ recIds[s.r.id] = 1; });
@@ -509,13 +507,7 @@ function render(){
         var w = xEnd - x;
         var band = api.size([0, 1])[1];   // 行高：总高度动态平均分配给所有数据格
         var children = [];
-        // 组间分隔线（组上方边界，y 轴索引 0 在底部，顶边=中心-band/2）：
-        // 独立于数据条绘制，横跨整个绘图区，即使该行数据条不可见（条宽<2px）也不会丢失
-        if (api.value(6) === 1) {
-          var ly = y - band / 2;
-          children.push({ type: 'line', shape: { x1: gLeft, y1: ly, x2: gRight, y2: ly },
-                          style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] } });
-        }
+        // 组间分隔线改由独立 sepSeries 绘制（含空泳道），此处不再绘制
         if (w >= 2) {
           // 条高 = 行高 - 间距（动态平均，数据格少则格大、多则格小）
           var bh = Math.max(10, band - 4);
@@ -543,6 +535,20 @@ function render(){
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
                  textVerticalAlign: 'middle', fill: '#10141a', fontSize: 20,
                  fontWeight: 500, fontFamily: 'inherit' } };
+      }
+    }, {
+      // 组间分隔线系列：独立于可见数据，横跨绘图区，空泳道也会绘制
+      type: 'custom', data: sepData, zlevel: 1, silent: true,
+      renderItem: function(params, api){
+        var row = api.value(0);
+        var c0 = api.coord([nowW - state.span, row]);
+        var yc = c0[1];
+        var band = api.size([0, 1])[1];          // 行高：与数据系列一致
+        var gLeft = api.coord([nowW - state.span, row])[0];
+        var gRight = api.coord([nowW, row])[0];
+        var ly = yc - band / 2;                  // 行顶边（y 轴索引 0 在底部）
+        return { type: 'line', shape: { x1: gLeft, y1: ly, x2: gRight, y2: ly },
+                 style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] } };
       }
     }]
   }, { lazyUpdate: true });
