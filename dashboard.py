@@ -378,6 +378,8 @@ function layout(segs){
              if (en > lanes[lane].end) lanes[lane].end = en; }
       laneOfRec[ri] = lane;
     });
+    // 该机器人在当前窗口无可见记录：强制保留 1 条空泳道，避免机器人从纵轴消失
+    if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
     var base = rowCursor;
     rowCursor += lanes.length;
     idxs.forEach(function(ri){
@@ -407,8 +409,10 @@ function render(){
   // 触发方式筛选
   var waySel = document.getElementById('selWay').value;
   if (waySel !== '__ALL__') segs = segs.filter(function(s){ return s.r.way === waySel; });
+  // 机器人列表基于「筛选后全部记录」而非「当前时间窗口可见记录」，
+  // 保证每个机器人至少保留 1 条泳道，滚动时间窗口时不会因某机器人无可见记录而消失
+  robots = robotList(segs);
   var visible = segs.filter(function(s){ return effEnd(s) >= winStart && s.start <= nowW; });
-  robots = robotList(visible);
   var info = layout(visible);
   var yLabels = layout.yLabels;
   var lastRows = layout.groupLastRows || [];
