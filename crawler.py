@@ -142,15 +142,30 @@ def load_session(session, out_dir):
     return False
 
 
-def pick_enterprise(session, cfg):
-    """获取企业列表并选择目标企业，返回 enterprise dict 或 None"""
+def fetch_enterprises(session):
+    """拉取企业列表，登录态有效时返回 list，否则返回 None。"""
     try:
         r = session.get(DEFAULT_BASE + API_ENTERPRISES, timeout=20)
-        ents = r.json()
+        if r.status_code != 200:
+            return None
+        data = r.json()
     except Exception as e:
         print(f"[!] 获取企业列表失败: {e}")
         return None
-    if not isinstance(ents, list) or not ents:
+    if not isinstance(data, list):
+        return None
+    return data
+
+
+def pick_enterprise(session, cfg, ents=None):
+    """获取企业列表并选择目标企业，返回 enterprise dict 或 None。
+    ents 可传入已拉取的企业列表，避免重复请求。"""
+    if ents is None:
+        ents = fetch_enterprises(session)
+    if ents is None:
+        print("[!] 获取企业列表失败（可能登录态已失效）")
+        return None
+    if not ents:
         print("[!] 账号未加入任何企业（含个人账号）")
         return None
 
@@ -166,6 +181,46 @@ def pick_enterprise(session, cfg):
         if not e.get("isIndividualAccount"):
             return e
     return ents[0]
+
+
+def authenticate(session, cfg, out_dir):
+    """确保已登录且能取到企业列表，返回选中的 enterprise dict 或 None。
+    顺序：config 的 cookie → 缓存会话（有效则复用，失效则删后重登）→ 账号密码登录。"""
+    def login_by_account():
+        acc = cfg.get("account", {})
+        username = acc.get("username") or acc.get("phone") or acc.get("email") or ""
+        password = acc.get("password", "")
+        if not (username and password):
+            print("[!] 未配置账号密码，无法登录")
+            return None
+        if not login_by_password(session, username, password, out_dir):
+            print("[!] 登录失败，请检查账号密码或改用 Cookie")
+            return None
+        return pick_enterprise(session, cfg)
+
+    cookie = cfg.get("cookie", "")
+    if cookie:
+        session.headers.update({"Cookie": cookie})
+        print("[*] 使用 config.json 中的 Cookie")
+        return pick_enterprise(session, cfg)
+
+    # 优先用缓存会话，但先验证是否仍然有效
+    if load_session(session, out_dir):
+        ents = fetch_enterprises(session)
+        if ents:
+            print("[*] 缓存会话有效")
+            ent = pick_enterprise(session, cfg, ents=ents)
+            if ent is not None:
+                return ent
+            # 能取到企业却选不出（理论不会发生），降级到账号密码登录
+            print("[!] 缓存会话有效但无法选定企业，改用账号密码登录")
+        else:
+            print("[!] 缓存会话已失效（企业列表为空），删除并改用账号密码重新登录")
+            try:
+                os.remove(os.path.join(out_dir, SESSION_FILE))
+            except OSError:
+                pass
+    return login_by_account()
 
 
 def switch_enterprise(session, ent):
@@ -273,26 +328,10 @@ def main():
         "Accept": "application/json, text/plain, */*",
         "X-Requested-With": "XMLHttpRequest",
     })
-    cookie = cfg.get("cookie", "")
-    if cookie:
-        session.headers.update({"Cookie": cookie})
-        print("[*] 使用 config.json 中的 Cookie")
-    elif not load_session(session, args.out):
-        acc = cfg.get("account", {})
-        username = acc.get("username") or acc.get("phone") or acc.get("email") or ""
-        password = acc.get("password", "")
-        if username and password:
-            if not login_by_password(session, username, password, args.out):
-                print("[!] 登录失败，请检查账号密码或改用 Cookie")
-                sys.exit(1)
-        else:
-            print("[!] 未配置 Cookie 或账号密码")
-            sys.exit(1)
-
-    # 选择并切换企业
-    ent = pick_enterprise(session, cfg)
+    # 鉴权：Cookie 优先；其次缓存会话（验证失效则删除并回退账号密码重新登录）
+    ent = authenticate(session, cfg, args.out)
     if not ent:
-        print("[!] 无法确定目标企业，请确认账号已加入企业")
+        print("[!] 无法确定目标企业，请确认账号已加入企业、登录态有效")
         sys.exit(1)
     switch_enterprise(session, ent)
 

@@ -205,6 +205,7 @@ GANTT_HTML = """<!DOCTYPE html>
       <option value="runs_gantt.html" selected>八爪鱼RPA机器人运行记录</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
+    <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>
   <div class="metrics">
     <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
@@ -570,10 +571,16 @@ function refreshData(){
   fetch('/api/refresh', { method: 'POST' })
     .then(function(r){ return r.json(); })
     .then(function(d){
+      var warnEl = document.getElementById('refreshWarn');
       if (d && d.ok && Array.isArray(d.records)) {
+        if (warnEl) warnEl.style.display = 'none';
         records = d.records;
         render();
         if (d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time;
+      } else if (warnEl) {
+        // 刷新失败（如登录态过期且无法重新登录）：保留旧数据并提示，不再误报成功
+        warnEl.style.display = 'block';
+        if (d && d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time + '（刷新失败）';
       }
     })
     .catch(function(){});

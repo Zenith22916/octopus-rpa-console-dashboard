@@ -50,21 +50,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def handle_refresh(self):
-        """网页每分钟请求一次：若 60 秒内已爬取过则跳过，直接返回最新数据。"""
+        """网页每分钟请求一次：若 60 秒内已爬取过则跳过，直接返回最新数据。
+        run_refresh 失败（如登录态过期且无法重新登录）时如实返回 ok=False，
+        客户端据此提示刷新失败，而不是误以为成功、一直显示陈旧数据。"""
         now = time.time()
         skipped = False
+        ok = True
+        error = ""
         if now - LAST_REFRESH[0] < REFRESH_INTERVAL:
             skipped = True
         else:
             ok = run_refresh()
             if ok:
                 LAST_REFRESH[0] = time.time()
+            else:
+                error = "刷新失败，详见 output/update_log.txt"
         records = load_run_records()
         payload = {
-            "ok": True,
+            "ok": ok,
             "skipped": skipped,
             "count": len(records),
             "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "error": error,
             "records": records,
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

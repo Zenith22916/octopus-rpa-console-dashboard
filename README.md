@@ -72,6 +72,8 @@ python local_server.py   # 仅启动服务器（不更新）
 | `include_robots` | 只保留名称以这些前缀开头的机器人（如 `["A", "B"]` 或 `["A🍩硕晞-", "B💎宝实-"]`） |
 | `exclude_robots` | 排除名称含这些关键词的机器人（如 `["测试"]`） |
 
+> **登录态过期自动恢复**：会话缓存到 `output/session.json`，过期后 `crawler.py` 会先验证缓存会话是否有效，失效则自动删除并改用 `account` 的账号密码重新登录（因此请务必在 `config.json` 中填好账号密码，而不仅依赖 cookie）。`local_server.py` 的 `/api/refresh` 在刷新失败时会如实返回 `ok=false`，网页顶部会提示"刷新失败，登录态可能已过期"。
+
 ## 项目结构
 
 ```
