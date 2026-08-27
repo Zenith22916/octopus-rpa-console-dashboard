@@ -94,7 +94,9 @@ def parse_points(cal):
         pts = [(p["hour"], p["minute"]) for p in cal["dailyData"].get("timePoints") or []]
         return ("daily", list(range(7)), pts)
     if t == 3 and cal.get("weeklyData"):
-        days = list(cal["weeklyData"].get("dayOfWeeks") or [])
+        # 八爪鱼 dayOfWeeks：0=周日…6=周六（C# DayOfWeek 约定）；周视图横轴 WEEK_LABELS
+        # 为周一起点（0=周一…6=周日），故统一偏移映射到横轴索引，否则数据整体晚一天
+        days = [(d + 6) % 7 for d in (cal["weeklyData"].get("dayOfWeeks") or [])]
         pts = [(p["hour"], p["minute"]) for p in cal["weeklyData"].get("timePoints") or []]
         return ("weekly", days, pts)
     if t == 4 and cal.get("monthlyData"):
