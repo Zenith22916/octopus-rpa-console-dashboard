@@ -27,8 +27,18 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections import OrderedDict
 from datetime import date, datetime, timezone, timedelta
+
+# 强制 stdout/stderr 使用 UTF-8，避免中文 Windows 下（GBK）打印 ✓ 等符号时
+# 抛出 UnicodeEncodeError，进而导致「更新成功却报刷新失败」的假错误。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 # 北京时间时区（触发器 update_time 为 UTC，展示统一转北京时间）
 BJT = timezone(timedelta(hours=8))
@@ -705,7 +715,7 @@ def main():
     if args.only_gantt:
         # 快速刷新：只生成运行记录甘特图页面
         build_runs_gantt(rows, args.out)
-        print("[✓] 甘特图刷新完成")
+        print("[OK] 甘特图刷新完成")
         return
 
     today = datetime.now()
