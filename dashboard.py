@@ -74,6 +74,36 @@ def to_ms(v):
     return int(dt.timestamp() * 1000)
 
 
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def run_id(fid, pno):
+    """运行记录唯一 id（用于文件命名与跳转）。"""
+    return "%s_%s" % ((fid or ""), (pno or ""))
+
+
+def file_safe_id(fid, pno):
+    """run_id 的文件名安全版本（仅保留字母数字、. _ -，保证 id 与文件名一致）。"""
+    return _SAFE_ID_RE.sub("_", run_id(fid, pno))
+
+
+def read_log_text(path, cap_chars=800000):
+    """读取日志文本：自动探测编码（utf-8/utf-8-sig/gbk/latin-1），截断到 cap_chars 字符，返回 (text, truncated)。"""
+    text = ""
+    for enc in ("utf-8", "utf-8-sig", "gbk", "latin-1"):
+        try:
+            with open(path, "r", encoding=enc, errors="strict") as f:
+                text = f.read()
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    truncated = False
+    if len(text) > cap_chars:
+        text = text[:cap_chars]
+        truncated = True
+    return text, truncated
+
+
 def is_enabled(v):
     return str(v).lower() in ("true", "1", "yes", "启用")
 
@@ -124,14 +154,14 @@ def finalize_html(html, out_path):
     # 内联 ECharts（存在本地 assets/echarts.min.js 时），部署后不依赖国外 CDN，国内访问更快
     CDN_TAG = '<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>'
     asset = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "echarts.min.js")
-    if os.path.exists(asset):
+    if os.path.exists(asset) and CDN_TAG in html:
         with open(asset, "r", encoding="utf-8") as f:
             echarts_js = f.read()
         # 转义内部 "</script>"，避免提前闭合 script 标签（JS 中 \/ 等价 /）
         echarts_js = echarts_js.replace("</script>", "<\\/script>")
         html = html.replace(CDN_TAG, "<script>\n" + echarts_js + "\n</script>")
         print("[*] ECharts 已内联（自包含，不依赖外部 CDN）")
-    else:
+    elif CDN_TAG in html:
         print("[*] 未找到 assets/echarts.min.js，使用 CDN 引用")
 
     with open(out_path, "w", encoding="utf-8") as f:
@@ -693,7 +723,7 @@ chartEl.addEventListener('dblclick', function(){
 // 点击数据块：跳转运行记录详情页（携带记录 id）
 chart.on('click', function(params){
   if (params && params.data && params.data.rid) {
-    location.href = 'detail.html?id=' + encodeURIComponent(params.data.rid);
+    location.href = 'detail_' + encodeURIComponent(params.data.rid) + '.html';
   }
 });
 // 标题下拉切换页面
@@ -730,7 +760,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 
 
 # ==================== 运行记录详情页面 ====================
-# 单条运行记录详情：点击甘特图数据块跳转 detail.html?id=<rid>
+# 单条运行记录详情：点击甘特图数据块跳转 detail_<id>.html（每记录一个文件，日志内容已内嵌）
 # 详情包含：基础信息 + 对应机器人日志目录（局域网共享文件夹，可点击打开）
 DETAIL_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -768,6 +798,16 @@ DETAIL_HTML = """<!DOCTYPE html>
   .warn { color: #E24B4A; font-size: 13px; margin-top: 8px; }
   .tip { color: #8b8f98; font-size: 12px; margin-top: 6px; }
   .empty { color: #8b8f98; padding: 40px; text-align: center; }
+  .logfile { margin-top: 12px; border: 1px solid #262a33; border-radius: 8px; overflow: hidden; }
+  .logfile .lf-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                      padding: 9px 12px; background: #11141a; cursor: pointer; }
+  .logfile .lf-name { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; color: #d6dae0; word-break: break-all; }
+  .logfile .lf-meta { font-size: 11px; color: #8b8f98; white-space: nowrap; }
+  .logfile pre { margin: 0; max-height: 520px; overflow: auto; padding: 12px 14px;
+                 background: #0b0d11; color: #cdd3da;
+                 font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12.5px; line-height: 1.6;
+                 white-space: pre-wrap; word-break: break-all; }
+  .trunc { color: #EF9F27; font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -777,8 +817,8 @@ DETAIL_HTML = """<!DOCTYPE html>
 </div>
 <div id="app"></div>
 <script>
-var SEED = __SEED__;
-var LOGMAP = __LOGMAP__;
+var REC = __REC__;
+var LOGS = __LOGS__;
 var GEN = "__GEN__";
 function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
@@ -817,13 +857,17 @@ function getParam(name){
   var m = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
   return m ? decodeURIComponent(m[1]) : null;
 }
+function fmtSize(b){
+  if (b == null) return "";
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return (b/1024).toFixed(1) + " KB";
+  return (b/1024/1024).toFixed(2) + " MB";
+}
 function render(){
-  var id = getParam("id");
-  var rec = null;
-  for (var i=0;i<SEED.length;i++){ if (SEED[i].id === id){ rec = SEED[i]; break; } }
+  var rec = REC;
   var app = document.getElementById("app");
   if (!rec){
-    app.innerHTML = '<div class="empty">未找到该运行记录（id=' + esc(id) + '）。请从「运行记录」页点击数据块进入。</div>';
+    app.innerHTML = '<div class="empty">未找到该运行记录。</div>';
     return;
   }
   document.getElementById("sub").textContent = rec.robot + " · " + (rec.name || "运行记录");
@@ -862,6 +906,27 @@ function render(){
   } else {
     html += '<div class="warn">⚠️ 未配置该机器人的日志目录，或缺少 process_no，无法确定日志路径。'
           + '请在 robot_logs.json 中补充：<br/>"'+esc(rec.robot)+'": "\\\\主机名\\Logs"</div>';
+  }
+  html += '</div>';
+
+  // 日志内容（构建期读取并内嵌，离线/无共享权限也可直接查看）
+  html += '<div class="card"><h3>日志内容</h3>';
+  if (!LOGS || LOGS.length === 0){
+    html += '<div class="tip">未找到该记录对应的日志文件。'
+          + (rec.logOk === false ? '（日志目录不存在，请核对 robot_logs.json 的共享主机名与日期目录）' : '（目录下没有 .log 文件）') + '</div>';
+  } else {
+    for (var i=0;i<LOGS.length;i++){
+      var lf = LOGS[i];
+      var lid = "lf" + i;
+      html += '<div class="logfile">'
+            + '<div class="lf-head" onclick="var e=document.getElementById(\''+lid+'\');e.style.display=(e.style.display===\'none\')?\'block\':\'none\';">'
+            + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
+            + '<span class="lf-meta">'+fmtSize(lf.size)+(lf.truncated?' · 已截断显示':'')+' · 点击折叠/展开</span>'
+            + '</div>'
+            + '<pre id="'+lid+'">'+esc(lf.content)+'</pre>'
+            + (lf.truncated ? '<div class="trunc">⚠ 日志较大，已截断显示前半部分；完整内容请打开上方日志文件夹查看。</div>' : '')
+            + '</div>';
+    }
   }
   html += '</div>';
 
@@ -1184,7 +1249,7 @@ def build_runs_gantt(rows, out_dir):
             if start is None:
                 continue
             seed.append({
-                "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
+                "id": file_safe_id(r.get("flow_id"), r.get("process_no")),
                 "robot": r.get("bot_name") or "(未指定机器人)",
                 "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
@@ -1666,7 +1731,7 @@ def build_runs_stats(rows, out_dir):
             if start is None:
                 continue
             seed.append({
-                "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
+                "id": file_safe_id(r.get("flow_id"), r.get("process_no")),
                 "robot": r.get("bot_name") or "(未指定机器人)",
                 "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
@@ -1691,8 +1756,7 @@ def build_runs_stats(rows, out_dir):
 
 
 def build_run_detail(out_dir):
-    """生成单条运行记录详情页 detail.html。
-    点击甘特图数据块携带 id 跳转，按 id 解析记录详情 + 对应机器人日志目录（robot_logs.json）。"""
+    """为每条运行记录生成独立详情页 detail_<id>.html，日志内容在构建期读取并内嵌，无需联网即可直接查看。"""
     # 先读取机器人→日志目录映射（缺失则用空对象，详情页会提示未配置）
     logmap = {}
     log_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_logs.json")
@@ -1707,73 +1771,104 @@ def build_run_detail(out_dir):
         except Exception as e:
             print("[!] robot_logs.json 解析失败，日志目录映射为空：", e)
 
-    runs_path = os.path.join(out_dir, "runs_normalized.csv")
-    seed = []
-    if os.path.exists(runs_path):
-        with open(runs_path, "r", encoding="utf-8-sig") as f:
-            run_rows = list(csv.DictReader(f))
-        illegal = set('\\/:*?"<>|')
-        def safe_name(s):
-            return "".join("_" if c in illegal else c for c in (s or ""))
-        for r in run_rows:
-            start = to_ms(r.get("start_time"))
-            if start is None:
-                continue
-            fid = r.get("flow_id") or ""
-            pno = r.get("process_no") or ""
-            robot = r.get("bot_name") or "(未指定机器人)"
-            # 精确日志目录：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}
-            # 注意：runs_normalized.csv 的 start_time 为 UTC，日志目录以北京时间为准（差 8 小时）
-            log_path, log_ok = "", None
-            root = logmap.get(robot)
-            st = r.get("start_time")
-            if root and pno and st:
-                try:
-                    bj = datetime.fromisoformat(str(st).replace("Z", "+00:00")).astimezone(BJT)
-                except Exception:
-                    bj = None
-                if bj is not None:
-                    date_folder = bj.strftime("%Y%m%d")
-                    hhmmss = bj.strftime("%H%M%S")
-                    flow = r.get("flow_name") or ""
-                    cand_names = ["%s-%s-%s" % (hhmmss, flow, pno),
-                                  "%s-%s-%s" % (hhmmss, safe_name(flow), pno)]
-                    for cn in cand_names:
-                        p = os.path.join(root, date_folder, cn)
-                        try:
-                            if os.path.isdir(p):
-                                log_path, log_ok = p, True
-                                break
-                        except Exception:
-                            pass
-                    if not log_path:
-                        log_path = os.path.join(root, date_folder, cand_names[0])
-                        log_ok = False
-            seed.append({
-                "id": fid + "_" + pno,
-                "fid": fid,
-                "pno": pno,
-                "robot": robot,
-                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
-                "app": r.get("flow_name") or "",
-                "start": start,
-                "end": to_ms(r.get("end_time")),
-                "status": r.get("status") or "",
-                "execStart": to_ms(r.get("execution_start_time")),
-                "way": r.get("start_way") or "",
-                "log": log_path,
-                "logOk": log_ok,
-            })
-        seed.sort(key=lambda s: s["start"])
-    gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    html = (DETAIL_HTML
-            .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
-            .replace("__LOGMAP__", json.dumps(logmap, ensure_ascii=False))
-            .replace("__GEN__", gen))
-    out_path = os.path.join(out_dir, "detail.html")
-    finalize_html(html, out_path)
-    print(f"[+] 运行记录详情页已生成: {out_path}（{len(seed)} 条记录可查）")
+    # 旧版单文件详情页已废弃，清理避免误导
+    old = os.path.join(out_dir, "detail.html")
+    if os.path.exists(old):
+        try:
+            os.remove(old)
+        except Exception:
+            pass
 
+    runs_path = os.path.join(out_dir, "runs_normalized.csv")
+    if not os.path.exists(runs_path):
+        print("[!] 未找到 runs_normalized.csv，跳过详情页生成")
+        return
+    with open(runs_path, "r", encoding="utf-8-sig") as f:
+        run_rows = list(csv.DictReader(f))
+
+    gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    illegals = set(chr(92) + '/:*?"<>|')
+    total = 0
+    with_logs = 0
+    for r in run_rows:
+        start = to_ms(r.get("start_time"))
+        if start is None:
+            continue
+        fid = r.get("flow_id") or ""
+        pno = r.get("process_no") or ""
+        robot = r.get("bot_name") or "(未指定机器人)"
+        sid = file_safe_id(fid, pno)
+
+        # 精确日志目录：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}
+        # 注意：runs_normalized.csv 的 start_time 为 UTC，日志目录以北京时间为准（差 8 小时）
+        log_path, log_ok = "", None
+        root = logmap.get(robot)
+        st = r.get("start_time")
+        if root and pno and st:
+            try:
+                bj = datetime.fromisoformat(str(st).replace("Z", "+00:00")).astimezone(BJT)
+            except Exception:
+                bj = None
+            if bj is not None:
+                date_folder = bj.strftime("%Y%m%d")
+                hhmmss = bj.strftime("%H%M%S")
+                flow = r.get("flow_name") or ""
+                cand_names = ["%s-%s-%s" % (hhmmss, flow, pno),
+                              "%s-%s-%s" % (hhmmss, "".join("_" if c in illegals else c for c in (flow or "")), pno)]
+                for cn in cand_names:
+                    p = os.path.join(root, date_folder, cn)
+                    try:
+                        if os.path.isdir(p):
+                            log_path, log_ok = p, True
+                            break
+                    except Exception:
+                        pass
+                if not log_path:
+                    log_path = os.path.join(root, date_folder, cand_names[0])
+                    log_ok = False
+
+        # 读取该日志目录下所有 .log 文件内容（构建期内嵌进 HTML）
+        logs = []
+        if log_ok and log_path and os.path.isdir(log_path):
+            try:
+                for fn in sorted(os.listdir(log_path)):
+                    fp = os.path.join(log_path, fn)
+                    if not os.path.isfile(fp) or not fn.lower().endswith(".log"):
+                        continue
+                    try:
+                        size = os.path.getsize(fp)
+                        text, truncated = read_log_text(fp)
+                        logs.append({"name": fn, "size": size, "content": text, "truncated": truncated})
+                    except Exception as e:
+                        logs.append({"name": fn, "size": 0, "content": "（读取失败：%s）" % e, "truncated": False})
+            except Exception as e:
+                print("  [!] 读取日志目录失败 %s: %s" % (log_path, e))
+        if logs:
+            with_logs += 1
+
+        rec = {
+            "id": sid,
+            "fid": fid,
+            "pno": pno,
+            "robot": robot,
+            "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+            "start": start,
+            "end": to_ms(r.get("end_time")),
+            "status": r.get("status") or "",
+            "execStart": to_ms(r.get("execution_start_time")),
+            "way": r.get("start_way") or "",
+            "log": log_path,
+            "logOk": log_ok,
+        }
+        html = (DETAIL_HTML
+                .replace("__REC__", json.dumps(rec, ensure_ascii=False))
+                .replace("__LOGS__", json.dumps(logs, ensure_ascii=False))
+                .replace("__GEN__", gen))
+        out_path = os.path.join(out_dir, "detail_%s.html" % sid)
+        finalize_html(html, out_path)
+        total += 1
+
+    print(f"[+] 运行记录详情页已生成: {total} 个文件（detail_<id>.html），其中 {with_logs} 条内嵌了日志内容")
 
 if __name__ == "__main__":
     main()
