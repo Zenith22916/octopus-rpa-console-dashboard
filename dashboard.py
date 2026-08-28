@@ -687,8 +687,8 @@ setInterval(function(){
 // 自动更新开关（默认是：页面加载即开启）：勾选后立即同步一次，之后每分钟向服务器请求一次运行记录更新；
 // 服务器若 60 秒内已爬取过则跳过爬取，直接返回最新数据；前端用返回数据无刷新重绘
 function refreshData(){
-  fetch('/api/refresh', { method: 'POST' })
-    .then(function(r){ return r.json(); })
+  fetch('/api/refresh', { method: 'POST', credentials: 'same-origin' })
+    .then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); })
     .then(function(d){
       var warnEl = document.getElementById('refreshWarn');
       if (d && d.ok && Array.isArray(d.records)) {
@@ -927,7 +927,7 @@ function loadLogs(){
   }
   var url = "/api/log?dir=" + encodeURIComponent(REC.log);
   box.innerHTML = '<div class="tip">正在读取日志…</div>';
-  fetch(url).then(function(r){ return r.json(); }).then(function(d){
+  fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); }).then(function(d){
     if (!d.ok){
       box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
       return;
@@ -1216,7 +1216,7 @@ document.getElementById('btnExport').onclick = function(){
 };
 
 function refreshData(){
-  fetch('/api/refresh', {method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+  fetch('/api/refresh', {method:'POST', credentials:'same-origin'}).then(function(r){ if(r.status===401){ location.href='/'; return; } return r.json(); }).then(function(d){
     var warn = document.getElementById('refreshWarn');
     if(d && d.ok && Array.isArray(d.records)){
       if(warn) warn.style.display = 'none';

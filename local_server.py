@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-局域网仪表盘服务器
-==================
-把 output 目录通过 HTTP 共享到局域网，其他电脑浏览器访问：
+局域网/公网仪表盘服务器
+=======================
+把 output 目录通过 HTTP 共享，其他电脑或公网（配合内网穿透）浏览器访问：
     http://<本机IP>:8000   （自动打开 analysis.html 运行分析仪表盘）
+
+访问保护：config.json 的 access_password 字段为访问密码，未设置则不启用。
+公网暴露前务必设置，否则任何人可查看运行记录与日志。
 
 用法：双击 start_server.bat，或命令行执行 python local_server.py
 停止：关闭窗口 / Ctrl+C
@@ -51,6 +54,24 @@ def load_log_roots():
 LOG_ROOTS = load_log_roots()
 
 
+def load_access_password():
+    """从 config.json 读取仪表盘访问密码（复用爬虫配置文件，新增 access_password 字段）。
+    返回空字符串表示不启用密码（保持本机无密码访问的兼容）。"""
+    cfg = os.path.join(BASE, "config.json")
+    if not os.path.exists(cfg):
+        return ""
+    try:
+        with open(cfg, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("access_password", "") or ""
+    except Exception:
+        return ""
+
+
+ACCESS_PASSWORD = load_access_password()
+COOKIE_NAME = "wb_pwd"
+
+
 def is_allowed(raw):
     """目录是否在允许的日志根白名单内（防任意文件读取）。"""
     if not raw:
@@ -61,26 +82,6 @@ def is_allowed(raw):
         if p == rp or p.startswith(rp + os.sep):
             return True
     return False
-
-
-def open_folder(raw):
-    """在本机打开日志文件夹（供 /api/open-folder 使用）。"""
-    if not raw:
-        return {"ok": False, "error": "缺少目录参数"}
-    if not is_allowed(raw):
-        return {"ok": False, "error": "目录不在允许的日志根范围内"}
-    p = os.path.normpath(raw)
-    if not os.path.isdir(p):
-        return {"ok": False, "error": "目录不存在或无法访问（请确认本机已连接对应局域网共享）"}
-    try:
-        os.startfile(p)
-        return {"ok": True, "error": ""}
-    except Exception as e:
-        try:
-            subprocess.Popen(["explorer", p])
-            return {"ok": True, "error": ""}
-        except Exception as e2:
-            return {"ok": False, "error": "打开文件夹失败：%s / %s" % (e, e2)}
 
 
 def read_text_truncated(path, limit=0):
@@ -132,22 +133,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
+        path0 = self.path.split("?")[0]
+        if path0 == "/login":
+            return self.handle_login_get()
+        if not self._authorized():
+            if path0.startswith("/api/"):
+                return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
+            return self._send_login_page()
         if self.path in ("/", ""):
             self.path = "/analysis.html"
             return super().do_GET()
-        if self.path.split("?")[0] == "/api/log":
+        if path0 == "/api/log":
             self.handle_log_fetch()
-            return
-        if self.path.split("?")[0] == "/api/open-folder":
-            self.handle_open_folder()
             return
         return super().do_GET()
 
     def do_POST(self):
-        if self.path.split("?")[0] == "/api/refresh":
+        path0 = self.path.split("?")[0]
+        if path0 == "/login":
+            return self.handle_login_post()
+        if path0 == "/api/refresh":
+            if not self._authorized():
+                return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
             self.handle_refresh()
-        else:
-            self.send_error(404, "Not Found")
+            return
+        self.send_error(404, "Not Found")
 
     def handle_refresh(self):
         """网页每分钟请求一次：若 60 秒内已爬取过则跳过，直接返回最新数据。
@@ -206,18 +216,101 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def handle_open_folder(self):
-        """详情页「打开日志文件夹」：在本机打开对应共享目录（白名单校验，避免任意路径）。"""
+    # ---- 访问密码保护 ----
+    def _provided_pwd(self):
+        cookies = {}
+        c = self.headers.get("Cookie", "")
+        for part in c.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                cookies[k.strip()] = v
+        if COOKIE_NAME in cookies:
+            return cookies[COOKIE_NAME]
         q = parse_qs(urlparse(self.path).query)
-        raw = unquote(q.get("dir", [""])[0])
-        payload = open_folder(raw)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        return unquote(q.get("pwd", [""])[0])
+
+    def _authorized(self):
+        if not ACCESS_PASSWORD:
+            return True
+        return self._provided_pwd() == ACCESS_PASSWORD
+
+    def _send_401(self, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(401)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_login_page(self, error=""):
+        page = (
+            "<!doctype html><html lang='zh'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>访问验证</title><style>"
+            "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+            "background:#0f1115;color:#e6e6e6;font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}"
+            ".box{background:#181b21;border:1px solid #262a33;border-radius:12px;padding:28px 32px;width:300px;text-align:center}"
+            "h2{margin:0 0 6px;font-size:18px;font-weight:600}.sub{color:#8b8f98;font-size:13px;margin-bottom:18px}"
+            "input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #343a45;"
+            "background:#0f1115;color:#e6e6e6;font-size:14px;margin-bottom:12px;outline:none}"
+            "input:focus{border-color:#4a90d9}"
+            "button{width:100%;padding:10px;border:0;border-radius:8px;background:#4a90d9;color:#fff;"
+            "font-size:14px;cursor:pointer}"
+            "button:hover{background:#5a9ee6}.err{color:#ff6b6b;font-size:13px;margin-bottom:12px;min-height:16px}"
+            "</style></head><body><div class='box'>"
+            "<h2>仪表盘访问验证</h2><div class='sub'>请输入访问密码</div>"
+            "<form method='post' action='/login'>"
+            "<div class='err'>__ERR__</div>"
+            "<input type='password' name='pwd' placeholder='访问密码' autofocus>"
+            "<button type='submit'>进入</button></form></div></body></html>"
+        ).replace("__ERR__", error)
+        body = page.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _do_login(self, pwd):
+        if ACCESS_PASSWORD and pwd == ACCESS_PASSWORD:
+            body = ("<html><body style='font-family:sans-serif;background:#0f1115;color:#e6e6e6;"
+                    "text-align:center;padding-top:90px'><h3>验证成功，正在跳转…</h3>"
+                    "<script>setTimeout(function(){location.href='/'},700)</script></body></html>"
+                    ).encode("utf-8")
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie",
+                             "%s=%s; Path=/; Max-Age=2592000; HttpOnly" % (COOKIE_NAME, pwd))
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        return False
+
+    def handle_login_get(self):
+        q = parse_qs(urlparse(self.path).query)
+        pwd = unquote(q.get("pwd", [""])[0])
+        if pwd:
+            if self._do_login(pwd):
+                return
+            return self._send_login_page("密码错误")
+        return self._send_login_page()
+
+    def handle_login_post(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            raw = self.rfile.read(length).decode("utf-8", "replace")
+        except Exception:
+            raw = ""
+        qs = parse_qs(raw)
+        pwd = qs.get("pwd", [""])[0]
+        if self._do_login(pwd):
+            return
+        return self._send_login_page("密码错误")
 
 def lan_ips():
     ips = []
@@ -376,6 +469,10 @@ def main():
         print("  本机访问:   http://localhost:%d" % PORT)
         for ip in lan_ips():
             print("  局域网访问: http://%s:%d" % (ip, PORT))
+        if ACCESS_PASSWORD:
+            print("  访问密码:   已启用（config.json -> access_password，登录后 Cookie 30 天有效）")
+        else:
+            print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
         print("  运行记录刷新: 网页每分钟请求 /api/refresh 触发（%d 秒内去重）" % REFRESH_INTERVAL)
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
