@@ -244,9 +244,9 @@ GANTT_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html">触发器日程表</option>
-      <option value="timeline.html" selected>运行记录时间轴</option>
       <option value="analysis.html">运行分析仪表盘</option>
+      <option value="timeline.html" selected>运行记录时间轴</option>
+      <option value="schedule.html">触发器日程表</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -1036,9 +1036,9 @@ STATS_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html">触发器日程表</option>
-      <option value="timeline.html">运行记录时间轴</option>
       <option value="analysis.html" selected>运行分析仪表盘</option>
+      <option value="timeline.html">运行记录时间轴</option>
+      <option value="schedule.html">触发器日程表</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -1469,9 +1469,9 @@ def main():
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html" selected>触发器日程表</option>
-      <option value="timeline.html">运行记录时间轴</option>
       <option value="analysis.html">运行分析仪表盘</option>
+      <option value="timeline.html">运行记录时间轴</option>
+      <option value="schedule.html" selected>触发器日程表</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
   </div>
