@@ -184,6 +184,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
 
+    def handle_error(self, request, client_address):
+        import sys
+        exc = sys.exc_info()[1]
+        # 客户端中途断开连接（关标签页 / 网络中断 / 跨设备访问时对方关闭）属正常情况，
+        # 典型为 WinError 10053 / BrokenPipe / ConnectionReset；静默忽略，避免控制台刷满 traceback
+        if isinstance(exc, (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
     def handle_log_fetch(self):
         """详情页实时读取日志：?dir=<编码后的日志目录 UNC 路径>，返回该目录下所有 .log 文件内容（截断）。"""
         q = parse_qs(urlparse(self.path).query)
