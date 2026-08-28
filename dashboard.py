@@ -288,7 +288,8 @@ function buildSegs(){
   records.forEach(function(r){
     var st = r.start;
     var exec = (r.execStart && r.execStart > st) ? r.execStart : null;
-    if (exec) segs.push({ r: r, start: st, end: exec, kind: 'wait' });
+    // 排队时间 < 1 分钟不显示排队段（蓝条）：过短的排队只是窄缝、且悬停信息冗余
+    if (exec && exec - st >= 60*1000) segs.push({ r: r, start: st, end: exec, kind: 'wait' });
     segs.push({ r: r, start: exec || st, end: r.end, kind: 'run' });
   });
   return segs;
@@ -500,13 +501,12 @@ function render(){
                    + '<br/>状态：<span style="color:' + stColor + '">' + esc(stName) + '</span>';
                  var runFrom = (d.execStart && d.execStart > d.start) ? d.execStart : d.start;
                  if (d.execStart && d.execStart > d.start) {
-                   s += '<br/><span style="color:#378ADD">阶段：排队中（等待机器人空闲）</span>';
                    s += '<br/>排队：' + fmtTime(d.start) + ' ~ ' + fmtTime(d.execStart)
                       + '（' + fmtDur(d.execStart - d.start) + '）';
                  }
                  s += '<br/>' + fmtTime(d.start) + ' ~ ' + (d.endRaw == null ? '（进行中）' : fmtTime(d.end));
                  if (d.endRaw != null) s += '（运行 ' + fmtDur(d.end - runFrom) + '）';
-                 if (d.execStart && d.kind !== 'wait') s += '<br/>开始运行：' + fmtTime(d.execStart);
+                 if (d.execStart && d.execStart > d.start) s += '<br/>开始运行：' + fmtTime(d.execStart);
                  return s;
                } },
     grid: { left: 100, right: 20, top: 20, bottom: 44 },
