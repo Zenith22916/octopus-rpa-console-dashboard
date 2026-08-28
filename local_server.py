@@ -273,7 +273,7 @@ def load_run_records():
             records.append({
                 "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
                 "robot": r.get("bot_name") or "(未指定机器人)",
-                "name": r.get("trigger_name") or r.get("flow_name") or "运行记录",
+                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
                 "start": start,
                 "end": _to_ms(r.get("end_time")),  # 为空 = 运行中/排队中，前端延伸到现在
