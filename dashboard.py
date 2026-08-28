@@ -3,9 +3,9 @@
 生成 RPA 触发器日程 / 运行记录时间轴 / 运行分析（ECharts HTML）
 ==========================================================
 读取 crawler 产出的 triggers_normalized.csv / runs_normalized.csv，生成三张页面：
-  - output/schedule.html：触发器日程（周/月循环任务时刻表）
-  - output/timeline.html：运行记录（时间轴，数据源优先 runs_normalized.csv 真实运行记录）
-  - output/analysis.html：运行分析（成功率/状态/星期×小时热力图/各机器人排队与负载）
+  - output/schedule.html：触发器日程表（周/月循环任务时刻表）
+  - output/timeline.html：运行记录时间轴（数据源优先 runs_normalized.csv 真实运行记录）
+  - output/analysis.html：运行分析仪表盘（成功率/状态/星期×小时热力图/各机器人排队与负载）
 
 日程仪表盘特性：
   - 单张日程时间轴，通过「每周/每月」下拉切换视图：
@@ -187,7 +187,7 @@ GANTT_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-store">
 <meta http-equiv="Pragma" content="no-cache">
-<title>运行记录</title>
+<title>运行记录时间轴</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -210,7 +210,7 @@ GANTT_HTML = """<!DOCTYPE html>
             border-radius: 8px; padding: 6px 14px; text-align: center; }
   .metric .k { font-size: 11px; color: #8b8f98; }
   .metric .v { font-size: 18px; font-weight: 500; line-height: 1.25; }
-  .chart-head { display: flex; align-items: center; gap: 10px; flex: none;
+  .chart-head { display: flex; align-items: center; gap: 10px; flex: none; box-sizing: border-box;
                 background: #181b21; border: 1px solid #262a33; border-radius: 10px 10px 0 0;
                 padding: 8px 14px; }
   .filter-label { font-size: 13px; color: #8b8f98; margin-right: 4px; }
@@ -220,7 +220,7 @@ GANTT_HTML = """<!DOCTYPE html>
   .way-label { margin-left: 18px; }
   #chkAuto { width: 14px; height: 14px; accent-color: #378ADD; cursor: pointer;
              margin: 0; vertical-align: -2px; }
-  .chart { flex: 1; min-height: 0; width: 100%; background: #181b21;
+  .chart { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; background: #181b21;
            border: 1px solid #262a33; border-top: none; border-radius: 0 0 10px 10px; }
   .hint { color: #6f7480; font-size: 11px; margin-top: 6px; flex: none; }
   .hint .legend { display: inline-block; margin-left: 12px; }
@@ -232,7 +232,7 @@ GANTT_HTML = """<!DOCTYPE html>
 <!-- __LOCK_START__ -->
 <div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
   <div style="text-align:center;width:300px;">
-    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">运行记录</div>
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">运行记录时间轴</div>
     <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
     <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
@@ -244,9 +244,9 @@ GANTT_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html">触发器日程</option>
-      <option value="timeline.html" selected>运行记录</option>
-      <option value="analysis.html">运行分析</option>
+      <option value="schedule.html">触发器日程表</option>
+      <option value="timeline.html" selected>运行记录时间轴</option>
+      <option value="analysis.html">运行分析仪表盘</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -839,7 +839,7 @@ DETAIL_HTML = """<!DOCTYPE html>
 <body>
 <div class="topbar">
   <div class="title"><span id="ttl">运行记录详情</span></div>
-  <button class="back" onclick="location.href='timeline.html'">← 返回运行记录</button>
+  <button class="back" onclick="location.href='timeline.html'">← 返回运行记录时间轴</button>
 </div>
 <div id="app"></div>
 <script>
@@ -976,7 +976,7 @@ STATS_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-store">
 <meta http-equiv="Pragma" content="no-cache">
-<title>运行分析</title>
+<title>运行分析仪表盘</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -1036,9 +1036,9 @@ STATS_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html">触发器日程</option>
-      <option value="timeline.html">运行记录</option>
-      <option value="analysis.html" selected>运行分析</option>
+      <option value="schedule.html">触发器日程表</option>
+      <option value="timeline.html">运行记录时间轴</option>
+      <option value="analysis.html" selected>运行分析仪表盘</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -1412,7 +1412,7 @@ def main():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>触发器日程</title>
+<title>触发器日程表</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -1469,9 +1469,9 @@ def main():
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="schedule.html" selected>触发器日程</option>
-      <option value="timeline.html">运行记录</option>
-      <option value="analysis.html">运行分析</option>
+      <option value="schedule.html" selected>触发器日程表</option>
+      <option value="timeline.html">运行记录时间轴</option>
+      <option value="analysis.html">运行分析仪表盘</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
   </div>
