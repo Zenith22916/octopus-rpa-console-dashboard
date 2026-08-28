@@ -536,7 +536,7 @@ function render(){
                  var stColor = statusColor({status: d.status, app: d.app});
                  var s = '<b>' + esc(d.name) + '</b>'
                    + '<br/>机器人：' + esc(d.robot)
-                   + '<br/>应用：' + esc(d.app)
+                   + (d.way && d.way !== "Manual" && d.trigger ? '<br/>触发器：' + esc(d.trigger) : '')
                    + '<br/>触发方式：' + esc(wayOf({way: d.way}))
                    + '<br/>状态：<span style="color:' + stColor + '">' + esc(stName) + '</span>';
                  var runFrom = (d.execStart && d.execStart > d.start) ? d.execStart : d.start;
@@ -849,8 +849,8 @@ function wayCN(w){ return ({Manual:"手动",TimingTrigger:"定时触发器",Webh
 // 局域网 UNC 路径 → file:// URL（浏览器可直接打开共享文件夹）
 function uncToUrl(p){
   if (!p) return "";
-  var s = p.split(String.fromCharCode(92)).join("/").replace(/[/]+/g, "/").replace(/^[/]/, "");
-  return "file://" + s;
+  var parts = p.split(String.fromCharCode(92)).filter(function(x){ return x.length > 0; });
+  return "file:////" + parts.join("/");
 }
 function getParam(name){
   var m = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
@@ -900,7 +900,8 @@ function render(){
     html += '<div class="logroot"><div class="path">'+esc(rec.log)+'</div>'
           + '<div class="tip">路径构成：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}'
           + (badge ? ' &nbsp;'+badge : '') + '</div>'
-          + '<a class="btn" href="'+esc(url)+'" target="_blank" rel="noopener">打开日志文件夹</a>'
+          + '<a class="btn" href="javascript:void(0)" onclick="openFolder()">打开日志文件夹</a>'
+          + '<span id="openMsg" class="tip"></span>'
           + '</div>';
   } else {
     html += '<div class="warn">⚠️ 未配置该机器人的日志目录，或缺少 process_no，无法确定日志路径。'
@@ -964,7 +965,21 @@ function loadLogs(){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
   });
 }
+function openFolder(){
+  var box = document.getElementById("openMsg");
+  fetch("/api/open-folder?dir=" + encodeURIComponent(REC.log)).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok){
+      var u = uncToUrl(REC.log);
+      if (box) box.innerHTML = '<span style="color:#E24B4A">⚠ ' + esc(d.error || "无法打开") + '。可手动打开：<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + '</a></span>';
+    } else if (box) {
+      box.innerHTML = '<span style="color:#1D9E75">✓ 已在本机打开文件夹</span>';
+    }
+  }).catch(function(e){
+    if (box) box.innerHTML = '<span style="color:#E24B4A">⚠ 无法连接本地服务器</span>';
+  });
+}
 render();
+loadLogs();
 </script>
 </body>
 </html>
@@ -1284,6 +1299,7 @@ def build_runs_gantt(rows, out_dir):
                 "robot": r.get("bot_name") or "(未指定机器人)",
                 "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
+                "trigger": r.get("trigger_name") or "",
                 "start": start,
                 "end": to_ms(r.get("end_time")),  # 为空 = 运行中/排队中，前端延伸到现在
                 "status": r.get("status") or "",
@@ -1766,6 +1782,7 @@ def build_runs_stats(rows, out_dir):
                 "robot": r.get("bot_name") or "(未指定机器人)",
                 "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
+                "trigger": r.get("trigger_name") or "",
                 "start": start,
                 "end": to_ms(r.get("end_time")),
                 "status": r.get("status") or "",

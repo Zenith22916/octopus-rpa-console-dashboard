@@ -51,6 +51,38 @@ def load_log_roots():
 LOG_ROOTS = load_log_roots()
 
 
+def is_allowed(raw):
+    """目录是否在允许的日志根白名单内（防任意文件读取）。"""
+    if not raw:
+        return False
+    p = os.path.normpath(raw)
+    for root in LOG_ROOTS:
+        rp = os.path.normpath(root)
+        if p == rp or p.startswith(rp + os.sep):
+            return True
+    return False
+
+
+def open_folder(raw):
+    """在本机打开日志文件夹（供 /api/open-folder 使用）。"""
+    if not raw:
+        return {"ok": False, "error": "缺少目录参数"}
+    if not is_allowed(raw):
+        return {"ok": False, "error": "目录不在允许的日志根范围内"}
+    p = os.path.normpath(raw)
+    if not os.path.isdir(p):
+        return {"ok": False, "error": "目录不存在或无法访问（请确认本机已连接对应局域网共享）"}
+    try:
+        os.startfile(p)
+        return {"ok": True, "error": ""}
+    except Exception as e:
+        try:
+            subprocess.Popen(["explorer", p])
+            return {"ok": True, "error": ""}
+        except Exception as e2:
+            return {"ok": False, "error": "打开文件夹失败：%s / %s" % (e, e2)}
+
+
 def read_text_truncated(path, limit=200000):
     """读取文本文件前 limit 个字符，超出则标记截断（用于日志预览）。"""
     truncated = False
@@ -71,15 +103,9 @@ def read_log_dir(raw):
     """读取日志目录下的 .log 文件（实时，供 /api/log 使用）。"""
     if not raw:
         return {"ok": False, "error": "缺少目录参数", "logs": []}
-    p = os.path.normpath(raw)
-    allowed = False
-    for root in LOG_ROOTS:
-        rp = os.path.normpath(root)
-        if p == rp or p.startswith(rp + os.sep):
-            allowed = True
-            break
-    if not allowed:
+    if not is_allowed(raw):
         return {"ok": False, "error": "目录不在允许的日志根范围内", "logs": []}
+    p = os.path.normpath(raw)
     if not os.path.isdir(p):
         return {"ok": False, "error": "目录不存在或无法访问（请确认本机已连接对应局域网共享）", "logs": []}
     logs = []
@@ -115,6 +141,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return super().do_GET()
         if self.path.split("?")[0] == "/api/log":
             self.handle_log_fetch()
+            return
+        if self.path.split("?")[0] == "/api/open-folder":
+            self.handle_open_folder()
             return
         return super().do_GET()
 
@@ -172,6 +201,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def handle_open_folder(self):
+        """详情页「打开日志文件夹」：在本机打开对应共享目录（白名单校验，避免任意路径）。"""
+        q = parse_qs(urlparse(self.path).query)
+        raw = unquote(q.get("dir", [""])[0])
+        payload = open_folder(raw)
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
 def lan_ips():
     ips = []
