@@ -738,7 +738,6 @@ DETAIL_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>运行记录详情</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
   body { margin: 0; padding: 14px 16px; box-sizing: border-box;
@@ -811,8 +810,8 @@ function wayCN(w){ return ({Manual:"手动",TimingTrigger:"定时触发器",Webh
 // 局域网 UNC 路径 → file:// URL（浏览器可直接打开共享文件夹）
 function uncToUrl(p){
   if (!p) return "";
-  var s = p.replace(/\\\\/g, "\\").replace(/\\/g, "/");
-  return "file:////" + s.replace(/^[/]+/, "");
+  var s = p.split(String.fromCharCode(92)).join("/").replace(/[/]+/g, "/").replace(/^[/]/, "");
+  return "file://" + s;
 }
 function getParam(name){
   var m = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
@@ -846,18 +845,23 @@ function render(){
     + (runMs!=null ? fld("运行时长", fmtDur(runMs)) : "")
     + '</div></div>';
 
-  // 日志信息：按机器人解析局域网共享目录
-  var share = LOGMAP[rec.robot];
+  // 日志信息：精确指向该条记录对应的日志子目录（共享根 + 北京日期 + {HHMMSS}-{流程名}-{process_no}）
   html += '<div class="card"><h3>日志目录（局域网共享）</h3>';
-  if (share){
-    var url = uncToUrl(share);
-    html += '<div class="logroot"><div class="path">'+esc(share)+'</div>'
-          + '<div class="tip">对应机器人：'+esc(rec.robot)+' 的本地日志共享文件夹</div>'
+  if (rec.log){
+    var url = uncToUrl(rec.log);
+    var badge = (rec.logOk === true)
+      ? '<span class="badge" style="background:rgba(29,158,117,0.18);color:#1D9E75">✓ 目录存在</span>'
+      : (rec.logOk === false
+          ? '<span class="badge" style="background:rgba(226,75,74,0.18);color:#E24B4A">⚠ 目录未找到</span>'
+          : '');
+    html += '<div class="logroot"><div class="path">'+esc(rec.log)+'</div>'
+          + '<div class="tip">路径构成：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}'
+          + (badge ? ' &nbsp;'+badge : '') + '</div>'
           + '<a class="btn" href="'+esc(url)+'" target="_blank" rel="noopener">打开日志文件夹</a>'
           + '</div>';
   } else {
-    html += '<div class="warn">⚠️ 未配置该机器人的日志目录。请在 robot_logs.json 中补充：'
-          + '<br/>"'+esc(rec.robot)+'": "\\\\主机名\\Logs"</div>';
+    html += '<div class="warn">⚠️ 未配置该机器人的日志目录，或缺少 process_no，无法确定日志路径。'
+          + '请在 robot_logs.json 中补充：<br/>"'+esc(rec.robot)+'": "\\\\主机名\\Logs"</div>';
   }
   html += '</div>';
 
@@ -1689,32 +1693,7 @@ def build_runs_stats(rows, out_dir):
 def build_run_detail(out_dir):
     """生成单条运行记录详情页 detail.html。
     点击甘特图数据块携带 id 跳转，按 id 解析记录详情 + 对应机器人日志目录（robot_logs.json）。"""
-    runs_path = os.path.join(out_dir, "runs_normalized.csv")
-    seed = []
-    if os.path.exists(runs_path):
-        with open(runs_path, "r", encoding="utf-8-sig") as f:
-            run_rows = list(csv.DictReader(f))
-        for r in run_rows:
-            start = to_ms(r.get("start_time"))
-            if start is None:
-                continue
-            fid = r.get("flow_id") or ""
-            pno = r.get("process_no") or ""
-            seed.append({
-                "id": fid + "_" + pno,
-                "fid": fid,
-                "pno": pno,
-                "robot": r.get("bot_name") or "(未指定机器人)",
-                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
-                "app": r.get("flow_name") or "",
-                "start": start,
-                "end": to_ms(r.get("end_time")),
-                "status": r.get("status") or "",
-                "execStart": to_ms(r.get("execution_start_time")),
-                "way": r.get("start_way") or "",
-            })
-        seed.sort(key=lambda s: s["start"])
-    # 读取机器人→日志目录映射（缺失则用空对象，详情页会提示未配置）
+    # 先读取机器人→日志目录映射（缺失则用空对象，详情页会提示未配置）
     logmap = {}
     log_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_logs.json")
     if os.path.exists(log_cfg):
@@ -1727,6 +1706,65 @@ def build_run_detail(out_dir):
                 logmap[k] = v
         except Exception as e:
             print("[!] robot_logs.json 解析失败，日志目录映射为空：", e)
+
+    runs_path = os.path.join(out_dir, "runs_normalized.csv")
+    seed = []
+    if os.path.exists(runs_path):
+        with open(runs_path, "r", encoding="utf-8-sig") as f:
+            run_rows = list(csv.DictReader(f))
+        illegal = set('\\/:*?"<>|')
+        def safe_name(s):
+            return "".join("_" if c in illegal else c for c in (s or ""))
+        for r in run_rows:
+            start = to_ms(r.get("start_time"))
+            if start is None:
+                continue
+            fid = r.get("flow_id") or ""
+            pno = r.get("process_no") or ""
+            robot = r.get("bot_name") or "(未指定机器人)"
+            # 精确日志目录：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}
+            # 注意：runs_normalized.csv 的 start_time 为 UTC，日志目录以北京时间为准（差 8 小时）
+            log_path, log_ok = "", None
+            root = logmap.get(robot)
+            st = r.get("start_time")
+            if root and pno and st:
+                try:
+                    bj = datetime.fromisoformat(str(st).replace("Z", "+00:00")).astimezone(BJT)
+                except Exception:
+                    bj = None
+                if bj is not None:
+                    date_folder = bj.strftime("%Y%m%d")
+                    hhmmss = bj.strftime("%H%M%S")
+                    flow = r.get("flow_name") or ""
+                    cand_names = ["%s-%s-%s" % (hhmmss, flow, pno),
+                                  "%s-%s-%s" % (hhmmss, safe_name(flow), pno)]
+                    for cn in cand_names:
+                        p = os.path.join(root, date_folder, cn)
+                        try:
+                            if os.path.isdir(p):
+                                log_path, log_ok = p, True
+                                break
+                        except Exception:
+                            pass
+                    if not log_path:
+                        log_path = os.path.join(root, date_folder, cand_names[0])
+                        log_ok = False
+            seed.append({
+                "id": fid + "_" + pno,
+                "fid": fid,
+                "pno": pno,
+                "robot": robot,
+                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+                "app": r.get("flow_name") or "",
+                "start": start,
+                "end": to_ms(r.get("end_time")),
+                "status": r.get("status") or "",
+                "execStart": to_ms(r.get("execution_start_time")),
+                "way": r.get("start_way") or "",
+                "log": log_path,
+                "logOk": log_ok,
+            })
+        seed.sort(key=lambda s: s["start"])
     gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html = (DETAIL_HTML
             .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
