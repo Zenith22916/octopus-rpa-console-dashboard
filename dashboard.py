@@ -276,7 +276,7 @@ GANTT_HTML = """<!DOCTYPE html>
     <option value="Webhook">Webhook</option>
   </select>
   <span class="filter-label auto-update-label">自动更新：</span>
-  <input type="checkbox" id="chkAuto">
+  <input type="checkbox" id="chkAuto" checked>
 </div>
 <div id="chart" class="chart"></div>
 <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook；滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
@@ -684,7 +684,7 @@ setInterval(function(){
   state.end = Date.now();
   updateWindow();
 }, 200);
-// 自动更新开关（默认否）：勾选后立即同步一次，之后每分钟向服务器请求一次运行记录更新；
+// 自动更新开关（默认是：页面加载即开启）：勾选后立即同步一次，之后每分钟向服务器请求一次运行记录更新；
 // 服务器若 60 秒内已爬取过则跳过爬取，直接返回最新数据；前端用返回数据无刷新重绘
 function refreshData(){
   fetch('/api/refresh', { method: 'POST' })
@@ -714,6 +714,11 @@ document.getElementById('chkAuto').onchange = function(){
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
 };
+// 默认开启自动更新：页面加载即同步一次并启动定时刷新
+if (document.getElementById('chkAuto').checked) {
+  refreshData();
+  if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
+}
 // 双击图表：恢复实时跟随（保留下拉选择的时间窗口）
 chartEl.addEventListener('dblclick', function(){
   state.offset = 0;
@@ -1039,7 +1044,7 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>
   <div class="toolbar">
-    <span class="auto-update-label">自动更新：</span><input type="checkbox" id="chkAuto">
+    <span class="auto-update-label">自动更新：</span><input type="checkbox" id="chkAuto" checked>
   </div>
 </div>
 <div class="metrics" id="metrics"></div>
@@ -1228,6 +1233,11 @@ document.getElementById('chkAuto').onchange = function(){
   if(this.checked){ refreshData(); if(!autoTimer) autoTimer = setInterval(refreshData, 60000); }
   else { if(autoTimer){ clearInterval(autoTimer); autoTimer = null; } }
 };
+// 默认开启自动更新：页面加载即同步一次并启动定时刷新
+if (document.getElementById('chkAuto').checked) {
+  refreshData();
+  if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
+}
 document.getElementById('navSel').onchange = function(){ location.href = this.value; };
 initCharts(); renderAll(SEED);
 </script>
