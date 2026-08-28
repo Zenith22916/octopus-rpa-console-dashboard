@@ -266,12 +266,20 @@ var records = SEED.slice();
 var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0 };
 // 数据时间范围（限制滚轮平移边界，避免滚出数据区看不到内容）
+// 注意：DATA_MAX 用「记录中最大的已结束时间」，运行中记录（end=null）不算进去，
+// 否则页面开久了 DATA_MAX 仍是某次陈旧快照、或被无限延伸到很远的未来，导致
+// 往回滚动时 offMax 卡在负值回不到「现在」。
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
-records.forEach(function(r){
-  if (r.start < DATA_MIN) DATA_MIN = r.start;
-  var e = r.end == null ? Math.max(Date.now(), r.start) : r.end;
-  if (e > DATA_MAX) DATA_MAX = e;
-});
+function recomputeBounds(){
+  DATA_MIN = Infinity; DATA_MAX = -Infinity;
+  var nowT = Date.now();
+  records.forEach(function(r){
+    if (r.start < DATA_MIN) DATA_MIN = r.start;
+    var e = r.end == null ? nowT : r.end;   // 运行中/排队中记录延伸到现在，但不固定死
+    if (e > DATA_MAX) DATA_MAX = e;
+  });
+}
+recomputeBounds();
 
 function robotList(segs){
   var arr = [];
@@ -624,7 +632,7 @@ chartEl.addEventListener('wheel', function(e){
   // 限制平移边界：过去方向窗口始终与数据范围有交集；未来方向右缘最多到当前时刻（看不到未来）
   var nowT = Date.now();
   var offMin = DATA_MIN - nowT;               // 窗口右缘不早于最早记录开始
-  var offMax = Math.min(0, DATA_MAX - nowT + state.span);  // 窗口右缘不晚于当前时刻
+  var offMax = 0;                            // 窗口右缘不晚于当前时刻（DATA_MAX 会随运行中记录延伸，不可作上界）
   state.offset = Math.min(offMax, Math.max(offMin, state.offset));
   updateWindow();
 }, { passive: false });
@@ -654,6 +662,7 @@ function refreshData(){
       if (d && d.ok && Array.isArray(d.records)) {
         if (warnEl) warnEl.style.display = 'none';
         records = d.records;
+        recomputeBounds();   // 数据刷新后重算数据时间范围，否则滚轮边界用陈旧 DATA_MAX 会卡死
         render();
         if (d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time;
       } else if (warnEl) {
