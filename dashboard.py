@@ -818,7 +818,6 @@ DETAIL_HTML = """<!DOCTYPE html>
 <div id="app"></div>
 <script>
 var REC = __REC__;
-var LOGS = __LOGS__;
 var GEN = "__GEN__";
 function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
@@ -909,30 +908,62 @@ function render(){
   }
   html += '</div>';
 
-  // 日志内容（构建期读取并内嵌，离线/无共享权限也可直接查看）
-  html += '<div class="card"><h3>日志内容</h3>';
-  if (!LOGS || LOGS.length === 0){
-    html += '<div class="tip">未找到该记录对应的日志文件。'
-          + (rec.logOk === false ? '（日志目录不存在，请核对 robot_logs.json 的共享主机名与日期目录）' : '（目录下没有 .log 文件）') + '</div>';
-  } else {
-    for (var i=0;i<LOGS.length;i++){
-      var lf = LOGS[i];
-      var lid = "lf" + i;
-      html += '<div class="logfile">'
-            + '<div class="lf-head" onclick="var e=document.getElementById(\''+lid+'\');e.style.display=(e.style.display===\'none\')?\'block\':\'none\';">'
-            + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
-            + '<span class="lf-meta">'+fmtSize(lf.size)+(lf.truncated?' · 已截断显示':'')+' · 点击折叠/展开</span>'
-            + '</div>'
-            + '<pre id="'+lid+'">'+esc(lf.content)+'</pre>'
-            + (lf.truncated ? '<div class="trunc">⚠ 日志较大，已截断显示前半部分；完整内容请打开上方日志文件夹查看。</div>' : '')
-            + '</div>';
-    }
-  }
-  html += '</div>';
+  // 日志内容：构建期不再内嵌，打开页面时由本地服务器 /api/log 实时读取（见 loadLogs）
+  html += '<div class="card"><h3>日志内容</h3><div id="logbox" class="tip">正在读取日志…</div></div>';
 
   app.innerHTML = html;
 }
 function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+function loadLogs(){
+  var box = document.getElementById("logbox");
+  if (!box) return;
+  if (!REC.log){
+    box.innerHTML = '<div class="tip">未配置该机器人的日志目录，无法确定日志路径。请在 robot_logs.json 中补充该机器人的共享日志目录（参考其他机器人配置）。</div>';
+    return;
+  }
+  if (location.protocol === "file:"){
+    var cur = location.pathname.split("/").pop();
+    box.innerHTML = '<div class="warn">⚠ 当前以 file:// 方式打开，浏览器禁止实时读取日志。请改用本地服务器：运行 start_server.bat，再打开 <a href="http://localhost:8000/'+esc(cur)+'" target="_blank" rel="noopener">http://localhost:8000/'+esc(cur)+'</a></div>';
+    return;
+  }
+  var url = "/api/log?dir=" + encodeURIComponent(REC.log);
+  box.innerHTML = '<div class="tip">正在读取日志…</div>';
+  fetch(url).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok){
+      box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
+      return;
+    }
+    if (!d.logs || d.logs.length === 0){
+      box.innerHTML = '<div class="tip">目录下没有 .log 文件。</div>';
+      return;
+    }
+    var h = "";
+    for (var i=0;i<d.logs.length;i++){
+      var lf = d.logs[i], lid = "lf"+i;
+      h += '<div class="logfile">'
+        + '<div class="lf-head" data-tid="'+lid+'">'
+        + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
+        + '<span class="lf-meta">'+fmtSize(lf.size)+(lf.truncated?' · 已截断显示':'')+' · 点击折叠/展开</span>'
+        + '</div>'
+        + '<pre id="'+lid+'">'+esc(lf.content)+'</pre>'
+        + (lf.truncated ? '<div class="trunc">⚠ 日志较大，已截断显示前半部分；完整内容请打开上方日志文件夹查看。</div>' : '')
+        + '</div>';
+    }
+    box.innerHTML = h;
+    var heads = box.querySelectorAll(".lf-head");
+    for (var j=0;j<heads.length;j++){
+      (function(el){
+        el.addEventListener("click", function(){
+          var e = document.getElementById(el.getAttribute("data-tid"));
+          if (e.style.display === "none"){ e.style.display = "block"; }
+          else { e.style.display = "none"; }
+        });
+      })(heads[j]);
+    }
+  }).catch(function(e){
+    box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
+  });
+}
 render();
 </script>
 </body>
@@ -1755,8 +1786,13 @@ def build_runs_stats(rows, out_dir):
     print(f"    {data_desc}")
 
 
+def js_json(obj):
+    """JSON 转 JS 字面量并防止 </script> 提前闭合脚本标签。"""
+    return json.dumps(obj, ensure_ascii=False).replace("</", r"<\/")
+
+
 def build_run_detail(out_dir):
-    """为每条运行记录生成独立详情页 detail_<id>.html，日志内容在构建期读取并内嵌，无需联网即可直接查看。"""
+    """为每条运行记录生成独立详情页 detail_<id>.html。日志内容不再构建期内嵌，由详情页打开时通过本地服务器 /api/log 实时读取（避免 HTML 膨胀与内容过期）。"""
     # 先读取机器人→日志目录映射（缺失则用空对象，详情页会提示未配置）
     logmap = {}
     log_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_logs.json")
@@ -1789,7 +1825,6 @@ def build_run_detail(out_dir):
     gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     illegals = set(chr(92) + '/:*?"<>|')
     total = 0
-    with_logs = 0
     for r in run_rows:
         start = to_ms(r.get("start_time"))
         if start is None:
@@ -1827,24 +1862,6 @@ def build_run_detail(out_dir):
                     log_path = os.path.join(root, date_folder, cand_names[0])
                     log_ok = False
 
-        # 读取该日志目录下所有 .log 文件内容（构建期内嵌进 HTML）
-        logs = []
-        if log_ok and log_path and os.path.isdir(log_path):
-            try:
-                for fn in sorted(os.listdir(log_path)):
-                    fp = os.path.join(log_path, fn)
-                    if not os.path.isfile(fp) or not fn.lower().endswith(".log"):
-                        continue
-                    try:
-                        size = os.path.getsize(fp)
-                        text, truncated = read_log_text(fp)
-                        logs.append({"name": fn, "size": size, "content": text, "truncated": truncated})
-                    except Exception as e:
-                        logs.append({"name": fn, "size": 0, "content": "（读取失败：%s）" % e, "truncated": False})
-            except Exception as e:
-                print("  [!] 读取日志目录失败 %s: %s" % (log_path, e))
-        if logs:
-            with_logs += 1
 
         rec = {
             "id": sid,
@@ -1861,14 +1878,13 @@ def build_run_detail(out_dir):
             "logOk": log_ok,
         }
         html = (DETAIL_HTML
-                .replace("__REC__", json.dumps(rec, ensure_ascii=False))
-                .replace("__LOGS__", json.dumps(logs, ensure_ascii=False))
+                .replace("__REC__", js_json(rec))
                 .replace("__GEN__", gen))
         out_path = os.path.join(out_dir, "detail_%s.html" % sid)
         finalize_html(html, out_path)
         total += 1
 
-    print(f"[+] 运行记录详情页已生成: {total} 个文件（detail_<id>.html），其中 {with_logs} 条内嵌了日志内容")
+    print(f"[+] 运行记录详情页已生成: {total} 个文件（detail_<id>.html），日志内容改为打开时由本地服务器实时读取")
 
 if __name__ == "__main__":
     main()

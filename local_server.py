@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlparse, parse_qs, unquote
 
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +28,76 @@ UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
 REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
 LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
+
+
+def load_log_roots():
+    """从 robot_logs.json 读取允许的日志根目录（白名单，防止任意文件读取）。"""
+    roots = []
+    cfg = os.path.join(BASE, "robot_logs.json")
+    if os.path.exists(cfg):
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for k, v in data.items():
+                if k.startswith("_"):
+                    continue
+                if isinstance(v, str) and v:
+                    roots.append(v)
+        except Exception:
+            pass
+    return roots
+
+
+LOG_ROOTS = load_log_roots()
+
+
+def read_text_truncated(path, limit=200000):
+    """读取文本文件前 limit 个字符，超出则标记截断（用于日志预览）。"""
+    truncated = False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read(limit + 1)
+    except Exception:
+        with open(path, "rb") as f:
+            data = f.read(limit + 1)
+        text = data.decode("utf-8", errors="replace")
+    if len(text) > limit:
+        text = text[:limit]
+        truncated = True
+    return text, truncated
+
+
+def read_log_dir(raw):
+    """读取日志目录下的 .log 文件（实时，供 /api/log 使用）。"""
+    if not raw:
+        return {"ok": False, "error": "缺少目录参数", "logs": []}
+    p = os.path.normpath(raw)
+    allowed = False
+    for root in LOG_ROOTS:
+        rp = os.path.normpath(root)
+        if p == rp or p.startswith(rp + os.sep):
+            allowed = True
+            break
+    if not allowed:
+        return {"ok": False, "error": "目录不在允许的日志根范围内", "logs": []}
+    if not os.path.isdir(p):
+        return {"ok": False, "error": "目录不存在或无法访问（请确认本机已连接对应局域网共享）", "logs": []}
+    logs = []
+    try:
+        for fn in sorted(os.listdir(p)):
+            fp = os.path.join(p, fn)
+            if not os.path.isfile(fp) or not fn.lower().endswith(".log"):
+                continue
+            try:
+                size = os.path.getsize(fp)
+                text, truncated = read_text_truncated(fp)
+                logs.append({"name": fn, "size": size, "content": text, "truncated": truncated})
+            except Exception as e:
+                logs.append({"name": fn, "size": 0, "content": "（读取失败：%s）" % e, "truncated": False})
+    except Exception as e:
+        return {"ok": False, "error": "读取目录失败：%s" % e, "logs": []}
+    return {"ok": True, "error": "", "logs": logs}
+
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -41,6 +112,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", ""):
             self.path = "/schedule.html"
+            return super().do_GET()
+        if self.path.split("?")[0] == "/api/log":
+            self.handle_log_fetch()
+            return
         return super().do_GET()
 
     def do_POST(self):
@@ -83,6 +158,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
+
+    def handle_log_fetch(self):
+        """详情页实时读取日志：?dir=<编码后的日志目录 UNC 路径>，返回该目录下所有 .log 文件内容（截断）。"""
+        q = parse_qs(urlparse(self.path).query)
+        raw = unquote(q.get("dir", [""])[0])
+        payload = read_log_dir(raw)
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
 
 def lan_ips():
