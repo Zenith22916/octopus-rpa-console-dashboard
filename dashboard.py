@@ -452,18 +452,23 @@ function render(){
     if (en > m.max) m.max = en;
   });
   var data = [];
-  var textData = [];   // 顶层文字层（zlevel 2）：跨「排队段+运行段」整体居中，任何块悬停高亮都不会盖住文字
+  var textData = [];   // 顶层文字层（zlevel 2）：跨「排队+运行」整条居中，任何块悬停高亮都不会盖住文字
   visible.forEach(function(s, i){
     var li = info[i];
     var rid = String(s.r.id);
     var merge = recMerge[rid];
-    data.push({
-      // 颜色仍拆分（排队蓝 + 运行状态色）；文字由独立 textData 层绘制
-      value: [s.start, effEnd(s), li.row, 0, 1, segColor(s)],
-      rid: rid, name: s.r.name, app: s.r.app, robot: s.r.robot,
-      status: s.r.status, kind: s.kind, way: s.r.way,
-      start: s.start, end: s.end, execStart: s.r.execStart
-    });
+    // 排队段与运行段合并为同一块：只推 run 段一条数据（区间=记录完整合并区间），
+    // 排队部分的蓝色在 renderItem 里用子矩形绘制；wait 段仅参与泳道布局，不再单独成块
+    if (s.kind === 'run') {
+      data.push({
+        // value[6]=execStart, value[7]=endRaw（renderItem 没有 params.data，必须放进 value 数组）
+        value: [merge.min, merge.max, li.row, 0, 1, segColor(s), s.r.execStart || 0, s.end == null ? 0 : s.end],
+        rid: rid, name: s.r.name, app: s.r.app, robot: s.r.robot,
+        status: s.r.status, kind: 'run', way: s.r.way,
+        start: merge.min, end: merge.max,
+        endRaw: s.end, execStart: s.r.execStart
+      });
+    }
     // 文字只画一次：运行段承载，位置=记录合并区间中心
     if (s.kind === 'run' && s.r.name) {
       textData.push({
@@ -493,13 +498,14 @@ function render(){
                    + '<br/>应用：' + esc(d.app)
                    + '<br/>触发方式：' + esc(wayOf({way: d.way}))
                    + '<br/>状态：<span style="color:' + stColor + '">' + esc(stName) + '</span>';
-                 if (d.kind === 'wait') {
+                 var runFrom = (d.execStart && d.execStart > d.start) ? d.execStart : d.start;
+                 if (d.execStart && d.execStart > d.start) {
                    s += '<br/><span style="color:#378ADD">阶段：排队中（等待机器人空闲）</span>';
-                   s += '<br/>排队：' + fmtTime(d.start) + ' 起';
-                   if (d.execStart) s += '（约 ' + fmtDur(d.execStart - d.start) + '）';
+                   s += '<br/>排队：' + fmtTime(d.start) + ' ~ ' + fmtTime(d.execStart)
+                      + '（' + fmtDur(d.execStart - d.start) + '）';
                  }
-                 s += '<br/>' + fmtTime(d.start) + ' ~ ' + (d.end == null ? '（进行中）' : fmtTime(d.end));
-                 if (d.end != null && d.kind !== 'wait') s += '（' + fmtDur(d.end - d.start) + '）';
+                 s += '<br/>' + fmtTime(d.start) + ' ~ ' + (d.endRaw == null ? '（进行中）' : fmtTime(d.end));
+                 if (d.endRaw != null) s += '（运行 ' + fmtDur(d.end - runFrom) + '）';
                  if (d.execStart && d.kind !== 'wait') s += '<br/>开始运行：' + fmtTime(d.execStart);
                  return s;
                } },
@@ -534,8 +540,32 @@ function render(){
         if (w >= 2) {
           // 条高 = 行高 - 间距（动态平均，数据格少则格大、多则格小）
           var bh = Math.max(10, band - 4);
+          // ECharts 自定义 series 的 renderItem 没有 params.data/value，
+          // 自定义属性必须放进 value 数组：value[6]=execStart, value[7]=endRaw
+          var exec = api.value(6);
+          var hasWait = exec && exec > api.value(0);
+          // 排队子段 [记录起点, execStart]：统一半透明蓝，不描边
+          if (hasWait) {
+            var wxs = Math.max(api.coord([api.value(0), row])[0], gLeft);
+            var wxe = Math.min(api.coord([exec, row])[0], gRight);
+            var qw = wxe - wxs;
+            if (qw >= 2) {
+              children.push({ type: 'rect', shape: { x: wxs, y: y - bh / 2, width: qw, height: bh },
+                              style: { fill: 'rgba(55,138,221,0.6)' } });
+            }
+          }
+          // 运行子段 [max(execStart,记录起点), 记录终点]：按状态着色，不描边
+          var rs = hasWait ? exec : api.value(0);
+          var rxs = Math.max(api.coord([rs, row])[0], gLeft);
+          var rxe = Math.min(api.coord([api.value(1), row])[0], gRight);
+          var rw = rxe - rxs;
+          if (rw >= 2) {
+            children.push({ type: 'rect', shape: { x: rxs, y: y - bh / 2, width: rw, height: bh },
+                            style: { fill: api.value(5) } });
+          }
+          // 整条外框：透明填充 + 白描边，把排队+运行框成同一个块
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh },
-                          style: { fill: api.value(5), stroke: 'rgba(255,255,255,.35)', lineWidth: 1 } });
+                          style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255,255,255,.35)', lineWidth: 1 } });
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
