@@ -3,7 +3,7 @@
 局域网仪表盘服务器
 ==================
 把 output 目录通过 HTTP 共享到局域网，其他电脑浏览器访问：
-    http://<本机IP>:8000   （自动打开 dashboard.html）
+    http://<本机IP>:8000   （自动打开 schedule.html）
 
 用法：双击 start_server.bat，或命令行执行 python local_server.py
 停止：关闭窗口 / Ctrl+C
@@ -40,7 +40,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", ""):
-            self.path = "/dashboard.html"
+            self.path = "/schedule.html"
         return super().do_GET()
 
     def do_POST(self):

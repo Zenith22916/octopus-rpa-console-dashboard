@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-生成 RPA 触发器日程仪表盘 + 运行记录甘特图（ECharts HTML）
+生成 RPA 触发器日程 / 运行记录时间轴 / 运行分析（ECharts HTML）
 ==========================================================
-读取 crawler 产出的 triggers_normalized.csv，生成两张页面：
-  - output/dashboard.html：触发器日程仪表盘
-  - output/runs_gantt.html：运行记录甘特图（数据源优先 runs_normalized.csv 真实运行记录）
+读取 crawler 产出的 triggers_normalized.csv / runs_normalized.csv，生成三张页面：
+  - output/schedule.html：触发器日程（周/月循环任务时刻表）
+  - output/timeline.html：运行记录（时间轴，数据源优先 runs_normalized.csv 真实运行记录）
+  - output/analysis.html：运行分析（成功率/状态/星期×小时热力图/各机器人排队与负载）
 
 日程仪表盘特性：
   - 单张日程时间轴，通过「每周/每月」下拉切换视图：
@@ -18,7 +19,7 @@
 
 用法：
     python dashboard.py --input output/triggers_normalized.csv --out output
-    python dashboard.py --input output/triggers_normalized.csv --out output --only-gantt   # 仅甘特图
+    python dashboard.py --input output/triggers_normalized.csv --out output --only-gantt   # 仅重新生成时间轴与分析页
 """
 import argparse
 import calendar
@@ -138,7 +139,7 @@ def finalize_html(html, out_path):
     return html
 
 
-# ==================== 运行记录甘特图页面 ====================
+# ==================== 运行记录时间轴页面 ====================
 # 页面特性：
 #   - 竖轴=机器人（同一机器人时间重叠的记录自动分多行泳道堆叠），横轴=时间（右缘=当前时刻，内容随时间缓慢左移）
 #   - 时间窗口下拉切换 30 分钟 ~ 7 天（锚定当前时刻）
@@ -156,7 +157,7 @@ GANTT_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-store">
 <meta http-equiv="Pragma" content="no-cache">
-<title>八爪鱼RPA机器人运行记录</title>
+<title>运行记录</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -201,7 +202,7 @@ GANTT_HTML = """<!DOCTYPE html>
 <!-- __LOCK_START__ -->
 <div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
   <div style="text-align:center;width:300px;">
-    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">八爪鱼RPA机器人运行记录</div>
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">运行记录</div>
     <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
     <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
@@ -213,9 +214,9 @@ GANTT_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="dashboard.html">八爪鱼RPA触发器日程</option>
-      <option value="runs_gantt.html" selected>八爪鱼RPA机器人运行记录</option>
-      <option value="runs_stats.html">八爪鱼RPA运行记录分析</option>
+      <option value="schedule.html">触发器日程</option>
+      <option value="timeline.html" selected>运行记录</option>
+      <option value="analysis.html">运行分析</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -729,7 +730,7 @@ STATS_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-store">
 <meta http-equiv="Pragma" content="no-cache">
-<title>八爪鱼RPA运行记录分析</title>
+<title>运行分析</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -777,7 +778,7 @@ STATS_HTML = """<!DOCTYPE html>
 <!-- __LOCK_START__ -->
 <div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
   <div style="text-align:center;width:300px;">
-    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">八爪鱼RPA运行记录分析</div>
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">运行分析</div>
     <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
     <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
@@ -789,9 +790,9 @@ STATS_HTML = """<!DOCTYPE html>
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="dashboard.html">八爪鱼RPA触发器日程</option>
-      <option value="runs_gantt.html">八爪鱼RPA机器人运行记录</option>
-      <option value="runs_stats.html" selected>八爪鱼RPA运行记录分析</option>
+      <option value="schedule.html">触发器日程</option>
+      <option value="timeline.html">运行记录</option>
+      <option value="analysis.html" selected>运行分析</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -1017,7 +1018,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 
 
 def build_runs_gantt(rows, out_dir):
-    """生成运行记录甘特图页面。
+    """生成运行记录时间轴页面。
     数据源优先：output/runs_normalized.csv（爬虫抓取的真实运行记录，手动/定时/Webhook 全部）；
     无该文件时回退：triggers_normalized.csv 中 trigger_type=Webhook 的触发器配置。
     """
@@ -1067,10 +1068,10 @@ def build_runs_gantt(rows, out_dir):
     html = (GANTT_HTML
             .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
             .replace("__GEN__", gen))
-    out_path = os.path.join(out_dir, "runs_gantt.html")
+    out_path = os.path.join(out_dir, "timeline.html")
     finalize_html(html, out_path)
     robots_n = len({s["robot"] for s in seed})
-    print(f"[+] 运行记录甘特图已生成: {out_path}")
+    print(f"[+] 运行记录时间轴已生成: {out_path}")
     print(f"    {data_desc}，{robots_n} 台机器人")
 
 
@@ -1079,17 +1080,17 @@ def main():
     ap.add_argument("--input", default="output/triggers_normalized.csv")
     ap.add_argument("--out", default="output")
     ap.add_argument("--only-gantt", action="store_true",
-                    help="仅生成运行记录甘特图页面（快速刷新用，跳过日程仪表盘）")
+                    help="仅重新生成运行记录时间轴与分析页（快速刷新用，跳过触发器日程）")
     args = ap.parse_args()
 
     with open(args.input, "r", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
 
     if args.only_gantt:
-        # 快速刷新：只生成运行记录甘特图 + 分析页（同源 runs_normalized.csv）
+        # 快速刷新：只生成运行记录时间轴 + 分析页（同源 runs_normalized.csv）
         build_runs_gantt(rows, args.out)
         build_runs_stats(rows, args.out)
-        print("[OK] 甘特图/分析页刷新完成")
+        print("[OK] 时间轴/分析页刷新完成")
         return
 
     today = datetime.now()
@@ -1158,7 +1159,7 @@ def main():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>八爪鱼RPA触发器日程</title>
+<title>触发器日程</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
   html, body { height: 100%; }
@@ -1203,7 +1204,7 @@ def main():
 <!-- __LOCK_START__ -->
 <div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
   <div style="text-align:center;width:300px;">
-    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">八爪鱼RPA触发器日程</div>
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">触发器日程</div>
     <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
     <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
       style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
@@ -1215,9 +1216,9 @@ def main():
 <div class="head">
   <div class="titlebar">
     <select id="navSel">
-      <option value="dashboard.html" selected>八爪鱼RPA触发器日程</option>
-      <option value="runs_gantt.html">八爪鱼RPA机器人运行记录</option>
-      <option value="runs_stats.html">八爪鱼RPA运行记录分析</option>
+      <option value="schedule.html" selected>触发器日程</option>
+      <option value="timeline.html">运行记录</option>
+      <option value="analysis.html">运行分析</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
   </div>
@@ -1485,15 +1486,15 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
             .replace("__MONTH_LABELS__", json.dumps(month_labels, ensure_ascii=False)))
 
     # 统一收尾：密码门 + ECharts 内联 + 写出
-    out_path = os.path.join(args.out, "dashboard.html")
+    out_path = os.path.join(args.out, "schedule.html")
     finalize_html(html, out_path)
     week_pts = sum(len(p) for rb in robots.values() for p in [rb["week"]])
     month_pts = sum(len(p) for rb in robots.values() for p in [rb["month"]])
-    print(f"[+] 仪表盘已生成: {out_path}")
+    print(f"[+] 触发器日程已生成: {out_path}")
     print(f"    月视图({year}年{month}月): 有任务日期 {len(month_labels)} 天")
     print(f"    周视图任务点: {week_pts} 个 / 月视图任务点: {month_pts} 个")
 
-    # 运行记录甘特图页面（数据源优先 runs_normalized.csv 真实运行记录）
+    # 运行记录时间轴页面（数据源优先 runs_normalized.csv 真实运行记录）
     build_runs_gantt(rows, args.out)
     build_runs_stats(rows, args.out)
 
@@ -1501,7 +1502,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 def build_runs_stats(rows, out_dir):
     """生成运行记录统计分析页面（A 组）。
     总览卡 + 触发方式/状态饼图 + 星期×小时热力图 + 各机器人平均排队条形图 +
-    机器人负载榜 + 失败记录看板（含 CSV 导出）。数据源同甘特图：runs_normalized.csv。"""
+    机器人负载榜 + 失败记录看板（含 CSV 导出）。数据源同时间轴：runs_normalized.csv。"""
     seed = []
     runs_path = os.path.join(out_dir, "runs_normalized.csv")
     if os.path.exists(runs_path):
@@ -1530,7 +1531,7 @@ def build_runs_stats(rows, out_dir):
     html = (STATS_HTML
             .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
             .replace("__GEN__", gen))
-    out_path = os.path.join(out_dir, "runs_stats.html")
+    out_path = os.path.join(out_dir, "analysis.html")
     finalize_html(html, out_path)
     print(f"[+] 运行记录分析页已生成: {out_path}")
     print(f"    {data_desc}")

@@ -75,8 +75,9 @@ if errorlevel 1 (
 echo.
 echo ============================================
 echo   DONE!
-echo   Dashboard: output\dashboard.html
-echo   Gantt    : output\runs_gantt.html
+echo   Schedule : output\schedule.html
+echo   Timeline : output\timeline.html
+echo   Analysis : output\analysis.html
 echo ============================================
 echo.
 

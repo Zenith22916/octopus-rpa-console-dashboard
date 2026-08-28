@@ -2,10 +2,11 @@
 
 # 八爪鱼 RPA 触发器 & 运行记录仪表盘
 
-抓取八爪鱼 RPA 企业管理台的机器人触发器和运行记录，本地可视化两张仪表盘：
+抓取八爪鱼 RPA 企业管理台的机器人触发器和运行记录，本地可视化三张页面：
 
-- **日程仪表盘**（`dashboard.html`）：触发器每周/每月循环任务时刻表
-- **运行记录甘特图**（`runs_gantt.html`）：每台机器人的真实运行记录（手动 / 定时 / Webhook），排队与执行两段彩色区分
+- **触发器日程**（`schedule.html`）：触发器每周/每月循环任务时刻表
+- **运行记录**（`timeline.html`）：每台机器人的真实运行记录（手动 / 定时 / Webhook），排队与执行两段彩色区分
+- **运行分析**（`analysis.html`）：概览指标、触发/状态分布、星期×小时热力图、各机器人排队与负载、失败看板
 
 ## 一键启动
 
@@ -14,21 +15,21 @@
 ```
 1. 抓取      crawler.py    触发器 + 运行记录 → output/triggers_normalized.csv / runs_normalized.csv
 2. 整理      organize.py   按机器人整理时刻表 → output/schedule_all.md / .xlsx / .csv
-3. 仪表盘    dashboard.py  生成 ECharts 仪表盘 → output/dashboard.html / runs_gantt.html
+3. 仪表盘    dashboard.py  生成三张页面 → output/schedule.html / timeline.html / analysis.html
 4. 局域网服务器 local_server.py  端口 8000（本机 http://localhost:8000 即可访问）
 ```
 
 启动横幅会输出本机局域网 IP，其他电脑用 `http://<本机IP>:8000` 访问；关窗即停止。
 
-## 两张仪表盘
+## 三张页面
 
-### 日程仪表盘 `dashboard.html`
+### 触发器日程 `schedule.html`
 - 周视图 / 月视图切换
 - 筛选：视图（每周/每月）、机器人（按名称前缀）、状态（启用/停用/全部）
 - 按应用配色（12 色浅色调）
 - 红色十字线 = 当前时刻（10 秒刷新）
 
-### 运行记录甘特图 `runs_gantt.html`
+### 运行记录 `timeline.html`
 - **竖轴 = 机器人**（按 `include_robots` 过滤的机器人；同一机器人时间重叠的记录自动分多行泳道堆叠）
 - **横轴 = 时间**，内容随时间缓慢左移
 - **数据拆分**：每条记录按"排队（蓝）→ 执行（状态色）"两段彩色区分；同一机器人时间重叠的记录自动分多行泳道堆叠
@@ -40,6 +41,14 @@
 - 块颜色（浅色）：已完成绿、运行中橙、排队蓝、失败红、已停止灰
 - 标题下小字：数据获取时间（精确到秒）
 
+### 运行分析 analysis.html
+- 概览指标卡：总运行数、成功率、失败数、运行中、平均排队/运行、最长单次、并发峰值
+- 触发方式分布、状态分布 两个饼图
+- 星期 × 小时 热力图（找出运行高峰时段）
+- 各机器人平均排队时长条形图 + 机器人负载榜
+- 失败记录看板，支持「导出失败记录 CSV」
+- 自动更新开关；三页导航互通
+
 ## 数据更新机制（无需 Windows 任务计划）
 
 服务器内置后台调度 + 网页触发混合模式：
@@ -47,7 +56,7 @@
 | 调度 | 频率 | 内容 |
 |---|---|---|
 | 网页自动更新 | 每 60 秒（可选） | 网页勾选后向服务器请求 `/api/refresh`；服务器 60 秒内去重直接返回 |
-| 每日完整更新 | 每天 12:00 | 抓取触发器、整理、生成两张仪表盘 |
+| 每日完整更新 | 每天 12:00 | 抓取触发器、整理、生成三张页面 |
 
 只需打开 `start_server.bat`，让浏览器保持页面打开即可持续自动更新运行记录。
 
@@ -57,8 +66,8 @@
 python crawler.py --config config.json --out output
 python crawler.py --config config.json --out output --only-runs --days 7   # 仅快速刷新运行记录
 python organize.py --input output\triggers_normalized.csv --out output
-python dashboard.py --input output\triggers_normalized.csv --out output       # 同时生成两张仪表盘
-python dashboard.py --input output\triggers_normalized.csv --out output --only-gantt   # 仅生成甘特图
+python dashboard.py --input output\triggers_normalized.csv --out output       # 同时生成三张页面
+python dashboard.py --input output\triggers_normalized.csv --out output --only-gantt   # 仅重新生成时间轴与分析页
 python local_server.py   # 仅启动服务器（不更新）
 ```
 
@@ -81,7 +90,7 @@ python local_server.py   # 仅启动服务器（不更新）
 ```
 bazhuayu_crawler/
 ├── crawler.py              # 抓取触发器 + 运行记录
-├── dashboard.py            # 生成两张仪表盘
+├── dashboard.py            # 生成三张页面
 ├── local_server.py         # 局域网 HTTP 服务器（端口 8000）
 ├── organize.py             # 按机器人整理时刻表
 ├── start_server.bat        # 一键：更新 + 启动服务器（双击）
