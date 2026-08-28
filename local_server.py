@@ -426,11 +426,14 @@ def run_refresh():
             for cmd in cmds:
                 r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
                                    errors="replace", timeout=180)
-                if r.returncode != 0:
+                out = (r.stdout or "")
+                # 登录态失效且重新登录失败：crawler 会打印 [AUTH_FAILED]（此时退出码为 0，不会中断服务器启动），
+                # 这里据此把刷新判为失败，让网页提示「刷新失败」而不是误以为成功。
+                if r.returncode != 0 or "[AUTH_FAILED]" in out:
                     with open(log, "a", encoding="utf-8") as f:
                         f.write("[%s] 刷新失败: %s\n%s\n" % (
                             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            " ".join(cmd), ((r.stdout or "") + (r.stderr or ""))[-600:]))
+                            " ".join(cmd), (out + (r.stderr or ""))[-600:]))
                     return False
             print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
             return True

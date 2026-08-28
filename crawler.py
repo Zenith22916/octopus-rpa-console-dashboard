@@ -185,26 +185,40 @@ def pick_enterprise(session, cfg, ents=None):
 
 def authenticate(session, cfg, out_dir):
     """确保已登录且能取到企业列表，返回选中的 enterprise dict 或 None。
-    顺序：config 的 cookie → 缓存会话（有效则复用，失效则删后重登）→ 账号密码登录。"""
+    任一方式成功即返回；只要前面方式失效，都会自动回退到账号密码重新登录，不会直接退出。
+    尝试顺序：config 的 cookie → 缓存会话（有效复用，失效删后重登）→ 账号密码登录。"""
     def login_by_account():
         acc = cfg.get("account", {})
         username = acc.get("username") or acc.get("phone") or acc.get("email") or ""
         password = acc.get("password", "")
         if not (username and password):
-            print("[!] 未配置账号密码，无法登录")
+            print("[!] 未配置账号密码，无法重新登录（请在 config.json 的 account 中填写用户名与密码）")
             return None
-        if not login_by_password(session, username, password, out_dir):
-            print("[!] 登录失败，请检查账号密码或改用 Cookie")
+        try:
+            ok = login_by_password(session, username, password, out_dir)
+        except Exception as e:
+            print("[!] 账号密码登录过程出错: %s" % e)
             return None
+        if not ok:
+            print("[!] 账号密码登录失败，请检查账号密码是否正确、账号是否已加入企业")
+            return None
+        print("[*] 已通过账号密码重新登录")
         return pick_enterprise(session, cfg)
 
+    # 1) config 中的 cookie（若配置）
     cookie = cfg.get("cookie", "")
     if cookie:
-        session.headers.update({"Cookie": cookie})
         print("[*] 使用 config.json 中的 Cookie")
-        return pick_enterprise(session, cfg)
+        # 用 session.cookies 承载，避免与后续账号登录的 cookie 冲突
+        session.headers.update({"Cookie": cookie})
+        ent = pick_enterprise(session, cfg)
+        if ent is not None:
+            return ent
+        # cookie 失效：清除手动 Cookie 头，回退到缓存会话 / 账号密码登录
+        print("[!] 配置的 Cookie 已失效，改走账号密码重新登录")
+        session.headers.pop("Cookie", None)
 
-    # 优先用缓存会话，但先验证是否仍然有效
+    # 2) 缓存会话
     if load_session(session, out_dir):
         ents = fetch_enterprises(session)
         if ents:
@@ -220,6 +234,8 @@ def authenticate(session, cfg, out_dir):
                 os.remove(os.path.join(out_dir, SESSION_FILE))
             except OSError:
                 pass
+
+    # 3) 账号密码重新登录
     return login_by_account()
 
 
@@ -331,8 +347,12 @@ def main():
     # 鉴权：Cookie 优先；其次缓存会话（验证失效则删除并回退账号密码重新登录）
     ent = authenticate(session, cfg, args.out)
     if not ent:
-        print("[!] 无法确定目标企业，请确认账号已加入企业、登录态有效")
-        sys.exit(1)
+        # 不再直接退出（否则 start_server.bat 会中断、服务器起不来）。
+        # 打印 [AUTH_FAILED] 哨兵，服务器仍会启动并显示最近一次成功抓取的数据；
+        # 网页的自动刷新会持续尝试重新登录。
+        print("[AUTH_FAILED] 登录失败：无法确定目标企业。服务器仍会启动并显示最近一次成功抓取的数据；"
+              "网页自动刷新会持续尝试重新登录。请检查 config.json 的 account 账号密码是否正确。")
+        return
     switch_enterprise(session, ent)
 
     # 机器人过滤规则（运行记录与触发器共用）
