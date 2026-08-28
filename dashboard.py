@@ -573,9 +573,9 @@ function render(){
             children.push({ type: 'rect', shape: { x: rxs, y: y - bh / 2, width: rw, height: bh },
                             style: { fill: api.value(5) } });
           }
-          // 整条外框：透明填充 + 白描边，把排队+运行框成同一个块
+          // 整条外框：透明填充 + 白描边，把排队+运行框成同一个块；pointer 提示可点击
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh },
-                          style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255,255,255,.35)', lineWidth: 1 } });
+                          style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255,255,255,.35)', lineWidth: 1, cursor: 'pointer' } });
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
@@ -690,6 +690,12 @@ chartEl.addEventListener('dblclick', function(){
   state.span = parseInt(document.getElementById('selSpan').value, 10);
   updateWindow();
 });
+// 点击数据块：跳转运行记录详情页（携带记录 id）
+chart.on('click', function(params){
+  if (params && params.data && params.data.rid) {
+    location.href = 'detail.html?id=' + encodeURIComponent(params.data.rid);
+  }
+});
 // 标题下拉切换页面
 document.getElementById('navSel').onchange = function(){ location.href = this.value; };
 window.addEventListener('resize', function(){ chart.resize(); });
@@ -722,6 +728,147 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 </body>
 </html>"""
 
+
+# ==================== 运行记录详情页面 ====================
+# 单条运行记录详情：点击甘特图数据块跳转 detail.html?id=<rid>
+# 详情包含：基础信息 + 对应机器人日志目录（局域网共享文件夹，可点击打开）
+DETAIL_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>运行记录详情</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; padding: 14px 16px; box-sizing: border-box;
+         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: #0f1115; color: #e6e6e6; }
+  .topbar { display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .title { font-size: 20px; font-weight: 600; }
+  .title small { font-size: 12px; color: #8b8f98; font-weight: 400; margin-left: 8px; }
+  .back { background: #22262e; color: #e6e6e6; border: 1px solid #333a45;
+          border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .back:hover { background: #2c313a; }
+  .card { background: #181b21; border: 1px solid #262a33; border-radius: 10px;
+          padding: 16px 18px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 12px; font-size: 14px; color: #c9cdd4; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 10px 18px; }
+  .field { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 10px 12px; }
+  .field .k { font-size: 11px; color: #8b8f98; margin-bottom: 4px; }
+  .field .v { font-size: 14px; font-weight: 500; word-break: break-all; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 13px; font-weight: 500; }
+  .logroot { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 12px 14px;
+             font-family: Consolas, "Microsoft YaHei", monospace; word-break: break-all; }
+  .logroot .path { color: #378ADD; font-size: 14px; }
+  .btn { display: inline-block; margin-top: 10px; background: #378ADD; color: #fff; border: none;
+         border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  .btn:hover { background: #2f7ac1; }
+  .warn { color: #E24B4A; font-size: 13px; margin-top: 8px; }
+  .tip { color: #8b8f98; font-size: 12px; margin-top: 6px; }
+  .empty { color: #8b8f98; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="title">运行记录详情 <small id="sub">—</small></div>
+  <button class="back" onclick="location.href='timeline.html'">← 返回运行记录</button>
+</div>
+<div id="app"></div>
+<script>
+var SEED = __SEED__;
+var LOGMAP = __LOGMAP__;
+var GEN = "__GEN__";
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function pad(n){ return String(n).padStart(2,"0"); }
+function fmtFull(ms){
+  if (ms == null) return "—";
+  var d = new Date(ms);
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+
+         pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
+}
+function fmtDur(ms){
+  if (ms == null || ms < 0) return "—";
+  var s = Math.round(ms/1000);
+  if (s < 60) return s + " 秒";
+  var m = Math.floor(s/60), sec = s%60;
+  if (m < 60) return m + " 分" + (sec? " "+sec+" 秒":"");
+  var h = Math.floor(m/60), mm = m%60;
+  return h + " 小时" + (mm? " "+mm+" 分":"");
+}
+function statusBadge(st){
+  var map = { Failed:["失败","rgba(226,75,74,0.18)","#E24B4A"],
+             Executing:["运行中","rgba(239,159,39,0.18)","#EF9F27"],
+             Waiting:["排队中","rgba( 55,138,221,0.18)","#378ADD"],
+             Stopped:["已停止","rgba(95,94,90,0.18)","#8b8f98"] };
+  var m = map[st] || ["已完成","rgba(29,158,117,0.18)","#1D9E75"];
+  return '<span class="badge" style="background:'+m[1]+';color:'+m[2]+'">'+m[0]+'</span>';
+}
+function wayCN(w){ return ({Manual:"手动",TimingTrigger:"定时触发器",Webhook:"Webhook"}[w]) || w || "—"; }
+// 局域网 UNC 路径 → file:// URL（浏览器可直接打开共享文件夹）
+function uncToUrl(p){
+  if (!p) return "";
+  var s = p.replace(/\\\\/g, "\\").replace(/\\/g, "/");
+  return "file:////" + s.replace(/^[/]+/, "");
+}
+function getParam(name){
+  var m = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function render(){
+  var id = getParam("id");
+  var rec = null;
+  for (var i=0;i<SEED.length;i++){ if (SEED[i].id === id){ rec = SEED[i]; break; } }
+  var app = document.getElementById("app");
+  if (!rec){
+    app.innerHTML = '<div class="empty">未找到该运行记录（id=' + esc(id) + '）。请从「运行记录」页点击数据块进入。</div>';
+    return;
+  }
+  document.getElementById("sub").textContent = rec.robot + " · " + (rec.name || "运行记录");
+  var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
+  var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
+  var runMs = (rec.end == null) ? null : (rec.end - runFrom);
+
+  var html = '<div class="card"><h3>基础信息</h3><div class="grid">'
+    + fld("流程名称", esc(rec.name || "—"))
+    + fld("机器人", esc(rec.robot))
+    + fld("状态", statusBadge(rec.status))
+    + fld("触发方式", wayCN(rec.way))
+    + fld("流程ID (flow_id)", esc(rec.fid || "—"))
+    + fld("流程编号 (process_no)", esc(rec.pno || "—"))
+    + fld("开始时间", fmtFull(rec.start))
+    + (rec.execStart ? fld("开始运行", fmtFull(rec.execStart)) : "")
+    + fld("结束时间", rec.end == null ? '<span style="color:#EF9F27">进行中</span>' : fmtFull(rec.end))
+    + (queueMs ? fld("排队时长", fmtDur(queueMs)) : "")
+    + (runMs!=null ? fld("运行时长", fmtDur(runMs)) : "")
+    + '</div></div>';
+
+  // 日志信息：按机器人解析局域网共享目录
+  var share = LOGMAP[rec.robot];
+  html += '<div class="card"><h3>日志目录（局域网共享）</h3>';
+  if (share){
+    var url = uncToUrl(share);
+    html += '<div class="logroot"><div class="path">'+esc(share)+'</div>'
+          + '<div class="tip">对应机器人：'+esc(rec.robot)+' 的本地日志共享文件夹</div>'
+          + '<a class="btn" href="'+esc(url)+'" target="_blank" rel="noopener">打开日志文件夹</a>'
+          + '</div>';
+  } else {
+    html += '<div class="warn">⚠️ 未配置该机器人的日志目录。请在 robot_logs.json 中补充：'
+          + '<br/>"'+esc(rec.robot)+'": "\\\\主机名\\Logs"</div>';
+  }
+  html += '</div>';
+
+  app.innerHTML = html;
+}
+function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+render();
+</script>
+</body>
+</html>
+"""
 
 STATS_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1087,10 +1234,11 @@ def main():
         rows = list(csv.DictReader(f))
 
     if args.only_gantt:
-        # 快速刷新：只生成运行记录时间轴 + 分析页（同源 runs_normalized.csv）
+        # 快速刷新：只生成运行记录时间轴 + 分析页 + 详情页（同源 runs_normalized.csv）
         build_runs_gantt(rows, args.out)
         build_runs_stats(rows, args.out)
-        print("[OK] 时间轴/分析页刷新完成")
+        build_run_detail(args.out)
+        print("[OK] 时间轴/分析页/详情页刷新完成")
         return
 
     today = datetime.now()
@@ -1497,6 +1645,7 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
     # 运行记录时间轴页面（数据源优先 runs_normalized.csv 真实运行记录）
     build_runs_gantt(rows, args.out)
     build_runs_stats(rows, args.out)
+    build_run_detail(args.out)
 
 
 def build_runs_stats(rows, out_dir):
@@ -1535,6 +1684,57 @@ def build_runs_stats(rows, out_dir):
     finalize_html(html, out_path)
     print(f"[+] 运行记录分析页已生成: {out_path}")
     print(f"    {data_desc}")
+
+
+def build_run_detail(out_dir):
+    """生成单条运行记录详情页 detail.html。
+    点击甘特图数据块携带 id 跳转，按 id 解析记录详情 + 对应机器人日志目录（robot_logs.json）。"""
+    runs_path = os.path.join(out_dir, "runs_normalized.csv")
+    seed = []
+    if os.path.exists(runs_path):
+        with open(runs_path, "r", encoding="utf-8-sig") as f:
+            run_rows = list(csv.DictReader(f))
+        for r in run_rows:
+            start = to_ms(r.get("start_time"))
+            if start is None:
+                continue
+            fid = r.get("flow_id") or ""
+            pno = r.get("process_no") or ""
+            seed.append({
+                "id": fid + "_" + pno,
+                "fid": fid,
+                "pno": pno,
+                "robot": r.get("bot_name") or "(未指定机器人)",
+                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+                "app": r.get("flow_name") or "",
+                "start": start,
+                "end": to_ms(r.get("end_time")),
+                "status": r.get("status") or "",
+                "execStart": to_ms(r.get("execution_start_time")),
+                "way": r.get("start_way") or "",
+            })
+        seed.sort(key=lambda s: s["start"])
+    # 读取机器人→日志目录映射（缺失则用空对象，详情页会提示未配置）
+    logmap = {}
+    log_cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_logs.json")
+    if os.path.exists(log_cfg):
+        try:
+            with open(log_cfg, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            for k, v in raw.items():
+                if k.startswith("_"):
+                    continue
+                logmap[k] = v
+        except Exception as e:
+            print("[!] robot_logs.json 解析失败，日志目录映射为空：", e)
+    gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html = (DETAIL_HTML
+            .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
+            .replace("__LOGMAP__", json.dumps(logmap, ensure_ascii=False))
+            .replace("__GEN__", gen))
+    out_path = os.path.join(out_dir, "detail.html")
+    finalize_html(html, out_path)
+    print(f"[+] 运行记录详情页已生成: {out_path}（{len(seed)} 条记录可查）")
 
 
 if __name__ == "__main__":
