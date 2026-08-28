@@ -700,7 +700,7 @@ def build_runs_gantt(rows, out_dir):
             seed.append({
                 "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
                 "robot": r.get("bot_name") or "(未指定机器人)",
-                "name": r.get("trigger_name") or r.get("flow_name") or "运行记录",
+                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
                 "app": r.get("flow_name") or "",
                 "start": start,
                 "end": to_ms(r.get("end_time")),  # 为空 = 运行中/排队中，前端延伸到现在
@@ -720,7 +720,7 @@ def build_runs_gantt(rows, out_dir):
             seed.append({
                 "id": r.get("trigger_id") or ("seed_%d" % len(seed)),
                 "robot": r.get("robot_name") or "(未指定机器人)",
-                "name": r.get("trigger_name") or r.get("trigger_id"),
+                "name": r.get("app_name") or r.get("trigger_name") or r.get("trigger_id"),
                 "app": r.get("app_name") or "",
                 "start": start,
                 "end": start + DEFAULT_RUN_MS,
