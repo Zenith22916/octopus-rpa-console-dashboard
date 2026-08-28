@@ -83,20 +83,16 @@ def open_folder(raw):
             return {"ok": False, "error": "打开文件夹失败：%s / %s" % (e, e2)}
 
 
-def read_text_truncated(path, limit=200000):
-    """读取文本文件前 limit 个字符，超出则标记截断（用于日志预览）。"""
-    truncated = False
+def read_text_truncated(path, limit=0):
+    """读取日志文件完整内容（按要求完整显示，不再截断）。"""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read(limit + 1)
+            text = f.read()
     except Exception:
         with open(path, "rb") as f:
-            data = f.read(limit + 1)
+            data = f.read()
         text = data.decode("utf-8", errors="replace")
-    if len(text) > limit:
-        text = text[:limit]
-        truncated = True
-    return text, truncated
+    return text, False
 
 
 def read_log_dir(raw):

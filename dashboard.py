@@ -781,20 +781,17 @@ DETAIL_HTML = """<!DOCTYPE html>
           border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
   .back:hover { background: #2c313a; }
   .card { background: #181b21; border: 1px solid #262a33; border-radius: 10px;
-          padding: 16px 18px; margin-bottom: 14px; }
+          padding: 16px 18px; }
   .card h3 { margin: 0 0 12px; font-size: 14px; color: #c9cdd4; font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-          gap: 10px 18px; }
-  .field { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 10px 12px; }
+  .detail-wrap { display: flex; gap: 14px; align-items: flex-start; }
+  .info-card { flex: 0 0 400px; max-width: 400px; min-width: 0; }
+  .log-card { flex: 1 1 auto; min-width: 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 10px 12px;
+           min-height: 60px; display: flex; flex-direction: column; justify-content: center; }
   .field .k { font-size: 11px; color: #8b8f98; margin-bottom: 4px; }
   .field .v { font-size: 14px; font-weight: 500; word-break: break-all; }
   .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 13px; font-weight: 500; }
-  .logroot { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 12px 14px;
-             font-family: Consolas, "Microsoft YaHei", monospace; word-break: break-all; }
-  .logroot .path { color: #378ADD; font-size: 14px; }
-  .btn { display: inline-block; margin-top: 10px; background: #378ADD; color: #fff; border: none;
-         border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
-  .btn:hover { background: #2f7ac1; }
   .warn { color: #E24B4A; font-size: 13px; margin-top: 8px; }
   .tip { color: #8b8f98; font-size: 12px; margin-top: 6px; }
   .empty { color: #8b8f98; padding: 40px; text-align: center; }
@@ -803,16 +800,22 @@ DETAIL_HTML = """<!DOCTYPE html>
                       padding: 9px 12px; background: #11141a; cursor: pointer; }
   .logfile .lf-name { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; color: #d6dae0; word-break: break-all; }
   .logfile .lf-meta { font-size: 11px; color: #8b8f98; white-space: nowrap; }
-  .logfile pre { margin: 0; max-height: 520px; overflow: auto; padding: 12px 14px;
+  .logfile pre { margin: 0; max-height: 72vh; overflow: auto; padding: 12px 14px;
                  background: #0b0d11; color: #cdd3da;
                  font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12.5px; line-height: 1.6;
                  white-space: pre-wrap; word-break: break-all; }
-  .trunc { color: #EF9F27; font-size: 12px; margin-top: 8px; }
+  @media (max-width: 900px) {
+    .detail-wrap { flex-direction: column; }
+    .info-card { flex: 1 1 auto; max-width: none; width: 100%; }
+  }
+  @media (max-width: 480px) {
+    .grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div class="title">运行记录详情 <small id="sub">—</small></div>
+  <div class="title"><span id="ttl">运行记录详情</span> <small id="sub"></small></div>
   <button class="back" onclick="location.href='timeline.html'">← 返回运行记录</button>
 </div>
 <div id="app"></div>
@@ -846,12 +849,6 @@ function statusBadge(st){
   return '<span class="badge" style="background:'+m[1]+';color:'+m[2]+'">'+m[0]+'</span>';
 }
 function wayCN(w){ return ({Manual:"手动",TimingTrigger:"定时触发器",Webhook:"Webhook"}[w]) || w || "—"; }
-// 局域网 UNC 路径 → file:// URL（浏览器可直接打开共享文件夹）
-function uncToUrl(p){
-  if (!p) return "";
-  var parts = p.split(String.fromCharCode(92)).filter(function(x){ return x.length > 0; });
-  return "file:////" + parts.join("/");
-}
 function getParam(name){
   var m = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
   return m ? decodeURIComponent(m[1]) : null;
@@ -869,16 +866,17 @@ function render(){
     app.innerHTML = '<div class="empty">未找到该运行记录。</div>';
     return;
   }
-  document.getElementById("sub").textContent = rec.robot + " · " + (rec.name || "运行记录");
+  document.getElementById("ttl").textContent = rec.name || "运行记录";
+  document.getElementById("sub").textContent = rec.robot || "";
   var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
   var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
   var runMs = (rec.end == null) ? null : (rec.end - runFrom);
 
-  var html = '<div class="card"><h3>基础信息</h3><div class="grid">'
-    + fld("流程名称", esc(rec.name || "—"))
+  var info = '<div class="card info-card"><h3>基础信息</h3><div class="grid">'
     + fld("机器人", esc(rec.robot))
     + fld("状态", statusBadge(rec.status))
     + fld("触发方式", wayCN(rec.way))
+    + (rec.way && rec.way !== "Manual" && rec.trigger ? fld("触发器", esc(rec.trigger)) : "")
     + fld("流程ID (flow_id)", esc(rec.fid || "—"))
     + fld("流程编号 (process_no)", esc(rec.pno || "—"))
     + fld("开始时间", fmtFull(rec.start))
@@ -888,31 +886,9 @@ function render(){
     + (runMs!=null ? fld("运行时长", fmtDur(runMs)) : "")
     + '</div></div>';
 
-  // 日志信息：精确指向该条记录对应的日志子目录（共享根 + 北京日期 + {HHMMSS}-{流程名}-{process_no}）
-  html += '<div class="card"><h3>日志目录（局域网共享）</h3>';
-  if (rec.log){
-    var url = uncToUrl(rec.log);
-    var badge = (rec.logOk === true)
-      ? '<span class="badge" style="background:rgba(29,158,117,0.18);color:#1D9E75">✓ 目录存在</span>'
-      : (rec.logOk === false
-          ? '<span class="badge" style="background:rgba(226,75,74,0.18);color:#E24B4A">⚠ 目录未找到</span>'
-          : '');
-    html += '<div class="logroot"><div class="path">'+esc(rec.log)+'</div>'
-          + '<div class="tip">路径构成：共享根 + 北京日期(YYYYMMDD) + {HHMMSS}-{流程名}-{process_no}'
-          + (badge ? ' &nbsp;'+badge : '') + '</div>'
-          + '<a class="btn" href="javascript:void(0)" onclick="openFolder()">打开日志文件夹</a>'
-          + '<span id="openMsg" class="tip"></span>'
-          + '</div>';
-  } else {
-    html += '<div class="warn">⚠️ 未配置该机器人的日志目录，或缺少 process_no，无法确定日志路径。'
-          + '请在 robot_logs.json 中补充：<br/>"'+esc(rec.robot)+'": "\\\\主机名\\Logs"</div>';
-  }
-  html += '</div>';
+  var logCard = '<div class="card log-card"><h3>日志内容</h3><div id="logbox" class="tip">正在读取日志…</div></div>';
 
-  // 日志内容：构建期不再内嵌，打开页面时由本地服务器 /api/log 实时读取（见 loadLogs）
-  html += '<div class="card"><h3>日志内容</h3><div id="logbox" class="tip">正在读取日志…</div></div>';
-
-  app.innerHTML = html;
+  app.innerHTML = '<div class="detail-wrap">' + info + logCard + '</div>';
 }
 function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
 function loadLogs(){
@@ -944,10 +920,9 @@ function loadLogs(){
       h += '<div class="logfile">'
         + '<div class="lf-head" data-tid="'+lid+'">'
         + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
-        + '<span class="lf-meta">'+fmtSize(lf.size)+(lf.truncated?' · 已截断显示':'')+' · 点击折叠/展开</span>'
+        + '<span class="lf-meta">'+fmtSize(lf.size)+' · 点击折叠/展开</span>'
         + '</div>'
         + '<pre id="'+lid+'">'+esc(lf.content)+'</pre>'
-        + (lf.truncated ? '<div class="trunc">⚠ 日志较大，已截断显示前半部分；完整内容请打开上方日志文件夹查看。</div>' : '')
         + '</div>';
     }
     box.innerHTML = h;
@@ -963,19 +938,6 @@ function loadLogs(){
     }
   }).catch(function(e){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
-  });
-}
-function openFolder(){
-  var box = document.getElementById("openMsg");
-  fetch("/api/open-folder?dir=" + encodeURIComponent(REC.log)).then(function(r){ return r.json(); }).then(function(d){
-    if (!d.ok){
-      var u = uncToUrl(REC.log);
-      if (box) box.innerHTML = '<span style="color:#E24B4A">⚠ ' + esc(d.error || "无法打开") + '。可手动打开：<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + '</a></span>';
-    } else if (box) {
-      box.innerHTML = '<span style="color:#1D9E75">✓ 已在本机打开文件夹</span>';
-    }
-  }).catch(function(e){
-    if (box) box.innerHTML = '<span style="color:#E24B4A">⚠ 无法连接本地服务器</span>';
   });
 }
 render();
@@ -1886,6 +1848,7 @@ def build_run_detail(out_dir):
             "pno": pno,
             "robot": robot,
             "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+            "trigger": r.get("trigger_name") or "",
             "start": start,
             "end": to_ms(r.get("end_time")),
             "status": r.get("status") or "",
