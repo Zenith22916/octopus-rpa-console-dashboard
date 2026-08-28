@@ -795,6 +795,12 @@ DETAIL_HTML = """<!DOCTYPE html>
   .warn { color: #E24B4A; font-size: 13px; margin-top: 8px; }
   .tip { color: #8b8f98; font-size: 12px; margin-top: 6px; }
   .empty { color: #8b8f98; padding: 40px; text-align: center; }
+  /* 深色滚动条（适配暗色主题） */
+  * { scrollbar-width: thin; scrollbar-color: #3a4150 #15181e; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #15181e; }
+  ::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 6px; border: 2px solid #15181e; }
+  ::-webkit-scrollbar-thumb:hover { background: #4a5263; }
   .logfile { margin-top: 12px; border: 1px solid #262a33; border-radius: 8px; overflow: hidden; }
   .logfile .lf-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
                       padding: 9px 12px; background: #11141a; cursor: pointer; }
@@ -811,11 +817,23 @@ DETAIL_HTML = """<!DOCTYPE html>
   @media (max-width: 480px) {
     .grid { grid-template-columns: 1fr; }
   }
+  /* 仅宽屏：基础信息单列、两框等高、超出部分各自内部滚动 */
+  @media (min-width: 901px) {
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .topbar { flex: 0 0 auto; }
+    #app { flex: 1 1 auto; min-height: 0; display: flex; }
+    .detail-wrap { flex: 1 1 auto; min-height: 0; align-items: stretch; overflow: hidden; }
+    .info-card { overflow-y: auto; min-height: 0; }
+    .info-card .grid { grid-template-columns: 1fr; }
+    .log-card { display: flex; flex-direction: column; min-height: 0; }
+    #logbox { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .logfile pre { max-height: none; }
+  }
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div class="title"><span id="ttl">运行记录详情</span> <small id="sub"></small></div>
+  <div class="title"><span id="ttl">运行记录详情</span></div>
   <button class="back" onclick="location.href='timeline.html'">← 返回运行记录</button>
 </div>
 <div id="app"></div>
@@ -867,7 +885,6 @@ function render(){
     return;
   }
   document.getElementById("ttl").textContent = rec.name || "运行记录";
-  document.getElementById("sub").textContent = rec.robot || "";
   var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
   var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
   var runMs = (rec.end == null) ? null : (rec.end - runFrom);
