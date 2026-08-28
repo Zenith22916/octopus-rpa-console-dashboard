@@ -215,6 +215,7 @@ GANTT_HTML = """<!DOCTYPE html>
     <select id="navSel">
       <option value="dashboard.html">八爪鱼RPA触发器日程</option>
       <option value="runs_gantt.html" selected>八爪鱼RPA机器人运行记录</option>
+      <option value="runs_stats.html">八爪鱼RPA运行记录分析</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
@@ -721,6 +722,300 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 </html>"""
 
 
+STATS_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store">
+<meta http-equiv="Pragma" content="no-cache">
+<title>八爪鱼RPA运行记录分析</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; padding: 10px 14px; box-sizing: border-box;
+         font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: #0f1115; color: #e6e6e6; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between;
+          gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .titlebar { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .datatime { font-size: 11px; color: #6f7480; margin-left: 8px; }
+  #navSel { width: auto; background: transparent; color: #e6e6e6; border: 1px solid transparent;
+            border-radius: 6px; padding: 2px 8px; font-size: 22px; font-weight: 600;
+            cursor: pointer; font-family: inherit; }
+  #navSel:hover { border-color: #333a45; background: #22262e; }
+  #navSel:focus { outline: none; border-color: #333a45; }
+  .metrics { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .metric { flex: 1 1 0; min-width: 104px; background: #181b21; border: 1px solid #262a33;
+            border-radius: 8px; padding: 8px 12px; text-align: center; }
+  .metric .k { font-size: 11px; color: #8b8f98; }
+  .metric .v { font-size: 20px; font-weight: 500; line-height: 1.3; }
+  .metric .s { font-size: 10px; color: #6f7480; margin-top: 2px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .panel { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 10px 14px; }
+  .panel.full { grid-column: 1 / -1; }
+  .panel h2 { font-size: 14px; font-weight: 500; margin: 0 0 8px; color: #c9cdd4; }
+  .cbox { width: 100%; height: 280px; }
+  .cbox.tall { height: 300px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .btn { background: #22262e; color: #e6e6e6; border: 1px solid #333a45; border-radius: 6px;
+         padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  .btn:hover { background: #2b3038; }
+  .auto-update-label { font-size: 13px; color: #8b8f98; }
+  #chkAuto { width: 14px; height: 14px; accent-color: #378ADD; cursor: pointer; vertical-align: -2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #262a33; }
+  th { color: #8b8f98; font-weight: 500; position: sticky; top: 0; background: #181b21; z-index: 1; }
+  tbody tr:hover { background: #1f232b; }
+  .scroll { max-height: 320px; overflow: auto; }
+  .warn { color: #E24B4A; font-size: 11px; margin-left: 8px; }
+  @media (max-width: 900px){ .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<!-- __LOCK_START__ -->
+<div id="lock" style="position:fixed;inset:0;background:#0f1115;z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="text-align:center;width:300px;">
+    <div style="font-size:20px;font-weight:500;margin-bottom:4px;color:#e6e6e6;">八爪鱼RPA运行记录分析</div>
+    <div style="color:#8b8f98;font-size:12px;margin-bottom:18px;">请输入访问密码</div>
+    <input id="pwd" type="password" placeholder="访问密码" autocomplete="off"
+      style="width:100%;box-sizing:border-box;padding:9px 12px;font-size:14px;border-radius:6px;border:1px solid #333a45;background:#22262e;color:#e6e6e6;">
+    <button id="unlock" style="width:100%;margin-top:12px;padding:9px 0;background:#378ADD;border:none;border-radius:6px;color:#fff;font-size:14px;cursor:pointer;">进入</button>
+    <div id="err" style="color:#E24B4A;font-size:12px;margin-top:10px;display:none;">密码错误，请重试</div>
+  </div>
+</div>
+<!-- __LOCK_END__ -->
+<div class="head">
+  <div class="titlebar">
+    <select id="navSel">
+      <option value="dashboard.html">八爪鱼RPA触发器日程</option>
+      <option value="runs_gantt.html">八爪鱼RPA机器人运行记录</option>
+      <option value="runs_stats.html" selected>八爪鱼RPA运行记录分析</option>
+    </select>
+    <div class="datatime" id="dataTime">数据获取：__GEN__</div>
+    <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
+  </div>
+  <div class="toolbar">
+    <span class="auto-update-label">自动更新：</span><input type="checkbox" id="chkAuto">
+  </div>
+</div>
+<div class="metrics" id="metrics"></div>
+<div class="grid">
+  <div class="panel"><h2>触发方式分布</h2><div id="pie" class="cbox"></div></div>
+  <div class="panel"><h2>状态分布</h2><div id="statusPie" class="cbox"></div></div>
+  <div class="panel full"><h2>运行量热力图（星期 × 小时）</h2><div id="heat" class="cbox tall"></div></div>
+  <div class="panel"><h2>各机器人平均排队时长（资源争抢）</h2><div id="waitBar" class="cbox"></div></div>
+  <div class="panel"><h2>机器人负载榜</h2><div class="scroll"><table id="robotTbl"></table></div></div>
+</div>
+<div class="panel full">
+  <div class="toolbar"><h2 style="margin:0;">失败记录看板</h2>
+    <button class="btn" id="btnExport">导出失败记录 CSV</button>
+    <span id="failCount" class="datatime"></span>
+  </div>
+  <div class="scroll"><table id="failTbl"></table></div>
+</div>
+<script>
+var SEED = __SEED__;
+var STATUS_CN = { Waiting:"排队中", Executing:"运行中", Finished:"已完成", Failed:"失败", Stopped:"已停止" };
+var STATUS_COLOR = { Finished:"#1D9E75", Executing:"#EF9F27", Waiting:"#378ADD", Failed:"#E24B4A", Stopped:"#5F5E5A" };
+var WAY_CN = { Manual:"手动", TimingTrigger:"定时触发器", Webhook:"Webhook" };
+function wayOf(w){ return WAY_CN[w] || w || "-"; }
+function pad(n){ return String(n).padStart(2, "0"); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function fmtTime(ms){ if(ms == null) return "-"; var d = new Date(ms); return (d.getMonth()+1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function fmtDur(ms){ if(ms == null || isNaN(ms)) return "-"; var m = ms/60000; if(m < 1) return Math.round(ms/1000) + " 秒"; if(m < 60) return m.toFixed(1) + " 分钟"; var h = Math.floor(m/60), mm = Math.round(m%60); return h + " 时" + (mm ? (" " + mm + " 分") : ""); }
+
+var charts = {};
+function initCharts(){
+  charts.pie = echarts.init(document.getElementById('pie'));
+  charts.statusPie = echarts.init(document.getElementById('statusPie'));
+  charts.waitBar = echarts.init(document.getElementById('waitBar'));
+  charts.heat = echarts.init(document.getElementById('heat'));
+  window.addEventListener('resize', function(){ for(var k in charts) charts[k].resize(); });
+}
+
+function renderAll(recs){
+  var now = Date.now();
+  var total = 0, finished = 0, failed = 0, running = 0, stopped = 0, waiting = 0;
+  var waitSum = 0, waitN = 0, runSum = 0, runN = 0, maxRun = 0;
+  var events = [];
+  var byRobot = {}, byWay = {}, statusCount = {};
+  var heat = []; for(var w = 0; w < 7; w++){ heat.push(new Array(24).fill(0)); }
+  recs.forEach(function(r){
+    var st = r.start, en = (r.end == null) ? now : r.end;
+    var s = r.status;
+    total++;
+    statusCount[s] = (statusCount[s] || 0) + 1;
+    if(s === 'Finished') finished++; else if(s === 'Failed') failed++;
+    else if(s === 'Executing') running++; else if(s === 'Stopped') stopped++;
+    else if(s === 'Waiting') waiting++;
+    if(r.execStart && r.execStart > st){ waitSum += r.execStart - st; waitN++; }
+    if(r.execStart && r.end != null && r.end > r.execStart){ var rd = r.end - r.execStart; runSum += rd; runN++; if(rd > maxRun) maxRun = rd; }
+    else if(r.end != null && r.end > st){ var rd2 = r.end - st; if(rd2 > maxRun) maxRun = rd2; }
+    events.push([st, 1]); events.push([en, -1]);
+    var wd = (new Date(st).getDay() + 6) % 7; var hh = new Date(st).getHours(); heat[wd][hh]++;
+    var rk = r.robot; var u = byRobot[rk] || (byRobot[rk] = {robot:rk, count:0, failed:0, waitSum:0, waitN:0, runSum:0, runN:0});
+    u.count++; if(s === 'Failed') u.failed++;
+    if(r.execStart && r.execStart > st){ u.waitSum += r.execStart - st; u.waitN++; }
+    if(r.execStart && r.end != null && r.end > r.execStart){ u.runSum += r.end - r.execStart; u.runN++; }
+    var wv = r.way || "-"; byWay[wv] = (byWay[wv] || 0) + 1;
+  });
+  events.sort(function(a, b){ return (a[0] - b[0]) || (a[1] - b[1]); });
+  var peak = 0, cur = 0; events.forEach(function(e){ cur += e[1]; if(cur > peak) peak = cur; });
+  var avgWait = waitN ? waitSum / waitN : 0, avgRun = runN ? runSum / runN : 0;
+  renderMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, peak, waitN, runN);
+  renderPie(byWay);
+  renderStatus(statusCount);
+  renderWaitBar(byRobot);
+  renderHeat(heat);
+  renderRobotTbl(byRobot);
+  renderFailTbl(recs);
+}
+
+function card(k, v, s, color){
+  return '<div class="metric"><div class="k">' + k + '</div><div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
+}
+function renderMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, peak, waitN, runN){
+  var sr = (finished + failed) ? finished / (finished + failed) : 0;
+  var html = '';
+  html += card('总运行数', total, '最近 7 天');
+  html += card('成功率', (sr*100).toFixed(1) + '%', '成功 ' + finished + ' / 结果 ' + (finished + failed));
+  html += card('失败数', failed, '失败率 ' + (total ? (failed/total*100).toFixed(1) : 0) + '%', failed ? '#E24B4A' : '');
+  html += card('运行中', running, '');
+  html += card('平均排队', fmtDur(avgWait), waitN + ' 条有排队');
+  html += card('平均运行', fmtDur(avgRun), runN + ' 条已完成');
+  html += card('最长单次', fmtDur(maxRun), '');
+  html += card('并发峰值', peak, '同时运行最多');
+  document.getElementById('metrics').innerHTML = html;
+}
+function renderPie(byWay){
+  var data = Object.keys(byWay).map(function(k){ return {name: wayOf(k), value: byWay[k]}; });
+  charts.pie.setOption({
+    tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
+    legend:{bottom:0, textStyle:{color:'#8b8f98'}},
+    series:[{type:'pie', radius:['42%','68%'], center:['50%','46%'], label:{color:'#e6e6e6', formatter:'{b}\\n{d}%'}, data:data}]
+  });
+}
+function renderStatus(sc){
+  var data = Object.keys(sc).map(function(k){ return {name: STATUS_CN[k] || k, value: sc[k], itemStyle:{color: STATUS_COLOR[k] || '#888'}}; });
+  data.sort(function(a, b){ return b.value - a.value; });
+  charts.statusPie.setOption({
+    tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
+    legend:{bottom:0, textStyle:{color:'#8b8f98'}},
+    series:[{type:'pie', radius:['42%','68%'], center:['50%','46%'], label:{color:'#e6e6e6', formatter:'{b}\\n{d}%'}, data:data}]
+  });
+}
+function renderWaitBar(byRobot){
+  var arr = Object.keys(byRobot).map(function(k){ var u = byRobot[k]; return {robot:u.robot, avg: u.waitN ? u.waitSum / u.waitN : 0}; }).sort(function(a, b){ return b.avg - a.avg; });
+  charts.waitBar.setOption({
+    grid:{left:130, right:40, top:10, bottom:24},
+    tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDur(p[0].value); }},
+    xAxis:{type:'value', axisLabel:{color:'#8b8f98', formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
+    yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), axisLabel:{color:'#c9cdd4'}, inverse:true},
+    series:[{type:'bar', data:arr.map(function(d){ return d.avg; }), itemStyle:{color:'#378ADD'}, barWidth:'55%'}]
+  });
+}
+function renderHeat(heat){
+  var days = ['一','二','三','四','五','六','日'];
+  var data = [], maxV = 0;
+  for(var w = 0; w < 7; w++) for(var h = 0; h < 24; h++){ var v = heat[w][h]; if(v > maxV) maxV = v; data.push([h, w, v]); }
+  charts.heat.setOption({
+    tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
+    grid:{left:46, right:20, top:10, bottom:54},
+    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98'}, splitArea:{show:true}},
+    yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4'}},
+    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:0, textStyle:{color:'#8b8f98'}, inRange:{color:['#181b21','#378ADD','#EF9F27','#E24B4A']}},
+    series:[{type:'heatmap', data:data, label:{show:false}, emphasis:{itemStyle:{borderColor:'#fff', borderWidth:1}}}]
+  });
+}
+function renderRobotTbl(byRobot){
+  var rows = Object.keys(byRobot).map(function(k){ return byRobot[k]; }).sort(function(a, b){ return b.count - a.count; });
+  var html = '<thead><tr><th>机器人</th><th>记录数</th><th>失败</th><th>失败率</th><th>平均排队</th><th>平均运行</th></tr></thead><tbody>';
+  rows.forEach(function(u){
+    var fr = u.count ? u.failed / u.count * 100 : 0;
+    html += '<tr><td>' + esc(u.robot) + '</td><td>' + u.count + '</td><td>' + u.failed + '</td>' +
+      '<td' + (fr >= 20 ? ' style="color:#E24B4A"' : '') + '>' + fr.toFixed(0) + '%</td>' +
+      '<td>' + fmtDur(u.waitN ? u.waitSum / u.waitN : 0) + '</td>' +
+      '<td>' + fmtDur(u.runN ? u.runSum / u.runN : 0) + '</td></tr>';
+  });
+  html += '</tbody>';
+  document.getElementById('robotTbl').innerHTML = html;
+}
+function renderFailTbl(recs){
+  var fails = recs.filter(function(r){ return r.status === 'Failed'; });
+  var html = '<thead><tr><th>开始时间</th><th>机器人</th><th>应用</th><th>触发方式</th><th>流程编号</th></tr></thead><tbody>';
+  fails.forEach(function(r){
+    html += '<tr><td>' + fmtTime(r.start) + '</td><td>' + esc(r.robot) + '</td><td>' + esc(r.name || r.app) + '</td><td>' + wayOf(r.way) + '</td><td>' + esc(r.id || '') + '</td></tr>';
+  });
+  html += '</tbody>';
+  document.getElementById('failTbl').innerHTML = html;
+  document.getElementById('failCount').textContent = '共 ' + fails.length + ' 条失败';
+  window.__fails = fails;
+}
+
+document.getElementById('btnExport').onclick = function(){
+  var fails = window.__fails || [];
+  if(!fails.length){ alert('没有失败记录'); return; }
+  var head = ['开始时间','机器人','应用','触发方式','流程编号','状态'];
+  var lines = [head.join(',')];
+  fails.forEach(function(r){
+    var row = [fmtTime(r.start), r.robot, r.name || r.app, wayOf(r.way), r.id || '', '失败'];
+    lines.push(row.map(function(x){ return '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"'; }).join(','));
+  });
+  var blob = new Blob(['﻿' + lines.join('\\n')], {type:'text/csv;charset=utf-8'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = '失败运行记录_' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
+};
+
+function refreshData(){
+  fetch('/api/refresh', {method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    var warn = document.getElementById('refreshWarn');
+    if(d && d.ok && Array.isArray(d.records)){
+      if(warn) warn.style.display = 'none';
+      SEED = d.records; renderAll(SEED);
+      if(d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time;
+    } else if(warn){
+      warn.style.display = 'block';
+      if(d && d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time + '（刷新失败）';
+    }
+  }).catch(function(){});
+}
+var autoTimer = null;
+document.getElementById('chkAuto').onchange = function(){
+  if(this.checked){ refreshData(); if(!autoTimer) autoTimer = setInterval(refreshData, 60000); }
+  else { if(autoTimer){ clearInterval(autoTimer); autoTimer = null; } }
+};
+document.getElementById('navSel').onchange = function(){ location.href = this.value; };
+initCharts(); renderAll(SEED);
+</script>
+<script>
+function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){return(n<<t)|(n>>>(32-t))}function s2b(s){var i,b=[],c=0;for(i=0;i<s.length*8;i+=8)c=c<<8|s.charCodeAt(i/8),i%32==24&&(b.push(c),c=0);return b}function b2h(b){var h="",i;for(i=0;i<b.length;i++)h+=((b[i]>>>24)&255).toString(16).padStart(2,"0")+((b[i]>>>16)&255).toString(16).padStart(2,"0")+((b[i]>>>8)&255).toString(16).padStart(2,"0")+(b[i]&255).toString(16).padStart(2,"0");return h}var K=[1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1915078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];var H=[1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225],l=a.length*8,M=s2b(a),i;M[l>>5]|=128<<24-l%32;for(i=0;i<64;i++)M.push(0);M[(l+64>>9<<4)+15]=l;for(var n=0;n<M.length;n+=16){var W=[],A=H[0],B=H[1],C=H[2],D=H[3],E=H[4],F=H[5],G=H[6],J=H[7],j,t;for(i=0;i<64;i++){if(i<16)W[i]=M[n+i];else{var w1=W[i-15],w2=W[i-2];W[i]=ror(w1,7)^ror(w1,18)^(w1>>>3)^ror(w2,17)^ror(w2,19)^(w2>>>10)}var S1=ror(E,6)^ror(E,11)^ror(E,25),ch=E&F^~E&G,t1=J+S1+ch+K[i]+W[i],S0=ror(A,2)^ror(A,13)^ror(A,22),maj=A&B^A&C^B&C,t2=S0+maj;J=G;G=F;F=E;E=D+t1>>>0;D=C;C=B;B=A;A=t1+t2>>>0}H[0]=H[0]+A>>>0;H[1]=H[1]+B>>>0;H[2]=H[2]+C>>>0;H[3]=H[3]+D>>>0;H[4]=H[4]+E>>>0;H[5]=H[5]+F>>>0;H[6]=H[6]+G>>>0;H[7]=H[7]+J>>>0}return b2h(H)}
+(function(){
+  var HASH = '__PWD_HASH__';
+  var lock = document.getElementById('lock');
+  if (!lock) return;  // 未启用密码门（本地使用）
+  function tryUnlock(){
+    var v = document.getElementById('pwd').value;
+    if (sha256(v) === HASH) {
+      sessionStorage.setItem('rpa_dash_ok', '1');
+      lock.style.display = 'none';
+    } else {
+      document.getElementById('err').style.display = 'block';
+    }
+  }
+  if (sessionStorage.getItem('rpa_dash_ok') === '1') { lock.style.display = 'none'; }
+  else {
+    document.getElementById('unlock').onclick = tryUnlock;
+    document.getElementById('pwd').onkeydown = function(e){ if (e.key === 'Enter') tryUnlock(); };
+    document.getElementById('pwd').focus();
+  }
+})();
+</script>
+</body>
+</html>"""
+
+
 def build_runs_gantt(rows, out_dir):
     """生成运行记录甘特图页面。
     数据源优先：output/runs_normalized.csv（爬虫抓取的真实运行记录，手动/定时/Webhook 全部）；
@@ -791,9 +1086,10 @@ def main():
         rows = list(csv.DictReader(f))
 
     if args.only_gantt:
-        # 快速刷新：只生成运行记录甘特图页面
+        # 快速刷新：只生成运行记录甘特图 + 分析页（同源 runs_normalized.csv）
         build_runs_gantt(rows, args.out)
-        print("[OK] 甘特图刷新完成")
+        build_runs_stats(rows, args.out)
+        print("[OK] 甘特图/分析页刷新完成")
         return
 
     today = datetime.now()
@@ -921,6 +1217,7 @@ def main():
     <select id="navSel">
       <option value="dashboard.html" selected>八爪鱼RPA触发器日程</option>
       <option value="runs_gantt.html">八爪鱼RPA机器人运行记录</option>
+      <option value="runs_stats.html">八爪鱼RPA运行记录分析</option>
     </select>
     <div class="datatime" id="dataTime">数据获取：__GEN__</div>
   </div>
@@ -1198,6 +1495,45 @@ function sha256(a){function r(n,t){return(n>>>t)|(n<<(32-t))}function ror(n,t){r
 
     # 运行记录甘特图页面（数据源优先 runs_normalized.csv 真实运行记录）
     build_runs_gantt(rows, args.out)
+    build_runs_stats(rows, args.out)
+
+
+def build_runs_stats(rows, out_dir):
+    """生成运行记录统计分析页面（A 组）。
+    总览卡 + 触发方式/状态饼图 + 星期×小时热力图 + 各机器人平均排队条形图 +
+    机器人负载榜 + 失败记录看板（含 CSV 导出）。数据源同甘特图：runs_normalized.csv。"""
+    seed = []
+    runs_path = os.path.join(out_dir, "runs_normalized.csv")
+    if os.path.exists(runs_path):
+        with open(runs_path, "r", encoding="utf-8-sig") as f:
+            run_rows = list(csv.DictReader(f))
+        for r in run_rows:
+            start = to_ms(r.get("start_time"))
+            if start is None:
+                continue
+            seed.append({
+                "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
+                "robot": r.get("bot_name") or "(未指定机器人)",
+                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+                "app": r.get("flow_name") or "",
+                "start": start,
+                "end": to_ms(r.get("end_time")),
+                "status": r.get("status") or "",
+                "execStart": to_ms(r.get("execution_start_time")),
+                "way": r.get("start_way") or "",
+            })
+        seed.sort(key=lambda s: s["start"])
+        data_desc = f"真实运行记录 {len(seed)} 条"
+    else:
+        data_desc = "无 runs_normalized.csv（未抓取运行记录）"
+    gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html = (STATS_HTML
+            .replace("__SEED__", json.dumps(seed, ensure_ascii=False))
+            .replace("__GEN__", gen))
+    out_path = os.path.join(out_dir, "runs_stats.html")
+    finalize_html(html, out_path)
+    print(f"[+] 运行记录分析页已生成: {out_path}")
+    print(f"    {data_desc}")
 
 
 if __name__ == "__main__":
