@@ -218,8 +218,15 @@ GANTT_HTML = """<!DOCTYPE html>
                        border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
   .auto-update-label { margin-left: 18px; }
   .way-label { margin-left: 18px; }
-  #chkAuto { width: 14px; height: 14px; accent-color: #378ADD; cursor: pointer;
-             margin: 0; vertical-align: -2px; }
+  /* 手机风格暗色开关 */
+  .switch { position: relative; display: inline-block; width: 42px; height: 24px; vertical-align: middle; }
+  .switch input { opacity: 0; width: 0; height: 0; margin: 0; }
+  .switch .slider { position: absolute; inset: 0; cursor: pointer; background: #2a2f38;
+                    border: 1px solid #3a4150; border-radius: 24px; transition: background .2s, border-color .2s; }
+  .switch .slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 2px;
+                            background: #c9cdd4; border-radius: 50%; transition: transform .2s, background .2s; }
+  .switch input:checked + .slider { background: #34C759; border-color: #34C759; }
+  .switch input:checked + .slider::before { transform: translateX(18px); background: #fff; }
   .chart { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; background: #181b21;
            border: 1px solid #262a33; border-top: none; border-radius: 0 0 10px 10px; }
   .hint { color: #6f7480; font-size: 11px; margin-top: 6px; flex: none; }
@@ -283,7 +290,7 @@ GANTT_HTML = """<!DOCTYPE html>
     <option value="Webhook">Webhook</option>
   </select>
   <span class="filter-label auto-update-label">自动更新：</span>
-  <input type="checkbox" id="chkAuto" checked>
+  <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
 </div>
 <div id="chart" class="chart"></div>
 <div id="toast"></div>
@@ -830,13 +837,19 @@ DETAIL_HTML = """<!DOCTYPE html>
   ::-webkit-scrollbar-thumb:hover { background: #4a5263; }
   .logfile { margin-top: 12px; border: 1px solid #262a33; border-radius: 8px; overflow: hidden; }
   .logfile .lf-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-                      padding: 9px 12px; background: #11141a; cursor: pointer; }
+                      padding: 9px 12px; background: #11141a; }
   .logfile .lf-name { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; color: #d6dae0; word-break: break-all; }
   .logfile .lf-meta { font-size: 11px; color: #8b8f98; white-space: nowrap; }
   .logfile pre { margin: 0; max-height: 72vh; overflow: auto; padding: 12px 14px; position: relative;
                  background: #0b0d11; color: #cdd3da;
                  font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12.5px; line-height: 1.6;
                  white-space: pre-wrap; word-break: break-all; }
+  .logfile .lf-body { display: block; }
+  .logfile .lf-more { padding: 8px 12px; text-align: center; background: #0b0d11; border-top: 1px solid #1c2027; }
+  .logfile .btn-more { background: #22262e; color: #cdd3da; border: 1px solid #333a45; border-radius: 6px;
+                       padding: 6px 16px; font-size: 12px; cursor: pointer; }
+  .logfile .btn-more:hover { background: #2a2f38; }
+  .logfile .btn-more:disabled { opacity: .6; cursor: default; }
   /* ---- 日志工具栏（统计 / 跳转 / 搜索 / 过滤） ---- */
   .log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
               flex-wrap: wrap; margin-bottom: 8px; }
@@ -1454,6 +1467,8 @@ function lgInit(){
     });
   }
 }
+var LOG_PAGE = 2000;            // 每次分段拉取的日志行数（与服务器 LOG_PAGE 对应）
+var LOG_FILES = [];            // 每个日志文件的加载状态：name/size/total/loaded/open/content
 function loadLogs(){
   var box = document.getElementById("logbox");
   if (!box) return;
@@ -1468,8 +1483,9 @@ function loadLogs(){
     mmSchedule(true); lgReset();
     return;
   }
+  // 列表模式：只拉取目录元数据（名称/大小/行数），不含内容；内容按需分段加载
   var url = "/api/log?dir=" + encodeURIComponent(REC.log);
-  box.innerHTML = '<div class="tip">正在读取日志…</div>';
+  box.innerHTML = '<div class="tip">正在读取日志目录…</div>';
   fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); }).then(function(d){
     if (!d.ok){
       box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
@@ -1481,37 +1497,75 @@ function loadLogs(){
       mmSchedule(true); lgReset();
       return;
     }
+    LOG_FILES = [];
     var h = "";
     for (var i=0;i<d.logs.length;i++){
-      var lf = d.logs[i], lid = "lf"+i;
-      h += '<div class="logfile">'
-        + '<div class="lf-head" data-tid="'+lid+'">'
+      var lf = d.logs[i];
+      LOG_FILES.push({ name: lf.name, size: lf.size, total: lf.lines || 0, loaded: 0, content: "", open: true });
+      var moreTxt = lf.lines ? (' · 共 '+lf.lines+' 行') : '';
+      h += '<div class="logfile" data-fi="'+i+'">'
+        + '<div class="lf-head" data-fi="'+i+'">'
         + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
-        + '<span class="lf-meta">'+fmtSize(lf.size)+' · 点击折叠/展开</span>'
+        + '<span class="lf-meta">'+fmtSize(lf.size)+moreTxt+' · 分段加载</span>'
         + '</div>'
-        + '<pre id="'+lid+'">'+esc(lf.content)+'</pre>'
+        + '<div class="lf-body">'
+        + '<pre id="lf'+i+'"></pre>'
+        + '<div class="lf-more" data-fi="'+i+'" style="display:none"><button class="btn-more" type="button">加载更多</button></div>'
+        + '</div>'
         + '</div>';
     }
     box.innerHTML = h;
     LG.files = [];
-    var ps = box.querySelectorAll("pre");
-    for (var p0 = 0; p0 < ps.length; p0++) LG.files.push({ content: ps[p0].textContent });
-    var heads = box.querySelectorAll(".lf-head");
-    for (var j=0;j<heads.length;j++){
+    for (var k=0;k<LOG_FILES.length;k++) LG.files.push({ content: "" });
+    // 加载更多：逐段追加
+    var mores = box.querySelectorAll(".lf-more");
+    for (var m=0;m<mores.length;m++){
       (function(el){
-        el.addEventListener("click", function(){
-          var e = document.getElementById(el.getAttribute("data-tid"));
-          if (e.style.display === "none"){ e.style.display = "block"; }
-          else { e.style.display = "none"; }
-          mmSchedule(true); lgAnalyze();
+        el.addEventListener("click", function(e){
+          e.stopPropagation();
+          var fi = parseInt(el.getAttribute("data-fi"), 10);
+          loadLogPage(fi, LOG_FILES[fi].loaded);
         });
-      })(heads[j]);
+      })(mores[m]);
     }
     mmSchedule(true);
-    if (window.requestAnimationFrame) requestAnimationFrame(lgAnalyze); else lgAnalyze();
+    // 所有日志块默认展开（不再支持点击折叠），逐文件加载首段；每段仅 2000 行，避免一次性加载全部内容卡死
+    for (var i2=0;i2<LOG_FILES.length;i2++){
+      loadLogPage(i2, 0);
+    }
   }).catch(function(e){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
     mmSchedule(true); lgReset();
+  });
+}
+// 分段拉取单个日志文件某一页并追加渲染
+function loadLogPage(fi, offset){
+  var f = LOG_FILES[fi];
+  if (!f) return;
+  var moreEl = document.querySelector('.logfile[data-fi="'+fi+'"] .lf-more');
+  var btn = moreEl ? moreEl.querySelector(".btn-more") : null;
+  if (btn){ btn.disabled = true; btn.textContent = "加载中…"; }
+  var url = "/api/log?dir=" + encodeURIComponent(REC.log)
+          + "&file=" + encodeURIComponent(f.name)
+          + "&offset=" + offset + "&limit=" + LOG_PAGE;
+  fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); }).then(function(d){
+    if (!d.ok){
+      if (btn){ btn.disabled = false; btn.textContent = "加载失败，点击重试"; }
+      return;
+    }
+    if (offset === 0) f.content = "";
+    if (d.content) f.content += (f.content ? "\\n" : "") + d.content;
+    f.loaded = offset + (d.lines || 0);
+    LG.files[fi].content = f.content;
+    // 仅当文件处于展开状态才显示"加载更多"
+    if (moreEl) moreEl.style.display = (d.hasMore && f.open) ? "block" : "none";
+    if (btn){
+      btn.disabled = false;
+      btn.textContent = d.hasMore ? ("加载更多（剩 " + Math.max(0, f.total - f.loaded) + " 行）") : "已全部加载";
+    }
+    lgApply();   // 复用既有渲染/分析/缩略图逻辑（基于 LG.files 内容）
+  }).catch(function(){
+    if (btn){ btn.disabled = false; btn.textContent = "加载失败，点击重试"; }
   });
 }
 render();
@@ -1563,8 +1617,16 @@ STATS_HTML = """<!DOCTYPE html>
   .btn { background: #22262e; color: #e6e6e6; border: 1px solid #333a45; border-radius: 6px;
          padding: 4px 12px; font-size: 12px; cursor: pointer; }
   .btn:hover { background: #2b3038; }
-  .auto-update-label { font-size: 13px; color: #8b8f98; }
-  #chkAuto { width: 14px; height: 14px; accent-color: #378ADD; cursor: pointer; vertical-align: -2px; }
+  .auto-update-label { font-size: 13px; color: #8b8f98; margin-right: 6px; }
+  /* 手机风格暗色开关 */
+  .switch { position: relative; display: inline-block; width: 42px; height: 24px; vertical-align: middle; }
+  .switch input { opacity: 0; width: 0; height: 0; margin: 0; }
+  .switch .slider { position: absolute; inset: 0; cursor: pointer; background: #2a2f38;
+                    border: 1px solid #3a4150; border-radius: 24px; transition: background .2s, border-color .2s; }
+  .switch .slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 2px;
+                            background: #c9cdd4; border-radius: 50%; transition: transform .2s, background .2s; }
+  .switch input:checked + .slider { background: #34C759; border-color: #34C759; }
+  .switch input:checked + .slider::before { transform: translateX(18px); background: #fff; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #262a33; }
   th { color: #8b8f98; font-weight: 500; position: sticky; top: 0; background: #181b21; z-index: 1; }
@@ -1598,7 +1660,7 @@ STATS_HTML = """<!DOCTYPE html>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>
   <div class="toolbar">
-    <span class="auto-update-label">自动更新：</span><input type="checkbox" id="chkAuto" checked>
+    <span class="auto-update-label">自动更新：</span><label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
   </div>
 </div>
 <div class="metrics" id="metrics"></div>
