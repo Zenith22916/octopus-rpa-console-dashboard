@@ -362,7 +362,7 @@ function tlRender(){
                             style: { fill: api.value(5) } });
           }
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh },
-                          style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255,255,255,.35)', lineWidth: 1, cursor: 'pointer' } });
+                          style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' } });
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
