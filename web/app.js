@@ -176,16 +176,16 @@ var _mc = (function(){
   try { var c = document.createElement('canvas').getContext('2d'); c.font = '500 20px ' + FONT_STACK; return c; }
   catch(e){ return null; }
 })();
-function measureW(s){ if (!_mc) return s.length * 10; return _mc.measureText(s).width; }
-function wrapLabel(name, maxW){
+function measureW(s, fs){ if (!_mc) return s.length * 10; _mc.font = '500 ' + (fs || 20) + 'px ' + FONT_STACK; return _mc.measureText(s).width; }
+function wrapLabel(name, maxW, fs){
   if (!name) return '';
   if (maxW < 8) return '';
-  var full = measureW(name);
+  var full = measureW(name, fs);
   if (full <= maxW) return name;
   var lines = [], cur = '', curW = 0;
   for (var i = 0; i < name.length; i++){
     var ch = name[i];
-    var cw = measureW(ch);
+    var cw = measureW(ch, fs);
     if (curW + cw > maxW){
       if (lines.length >= 1) return '';
       lines.push(cur); cur = ch; curW = cw;
@@ -383,11 +383,16 @@ function tlRender(){
         var cx = api.coord([vc, row])[0];
         var y = api.coord([vc, row])[1];
         var wTotal = Math.abs(api.coord([vEnd, row])[0] - api.coord([vStart, row])[0]);
-        var label = wrapLabel(api.value(2), Math.max(2, wTotal - 4));
+        // 字号随数据块高度动态：一行高 = 块高/2（最多两行），字号约为行高的 0.85
+        var band = api.size([0, 1])[1];
+        var bh = Math.max(10, band - 4);
+        var lh = Math.round(bh / 2);
+        var fs = Math.max(8, Math.round(lh * 0.85));
+        var label = wrapLabel(api.value(2), Math.max(2, wTotal - 4), fs);
         if (!label) return null;
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
-                 textVerticalAlign: 'middle', fill: '#10141a', fontSize: 20,
-                 fontWeight: 500, fontFamily: FONT_STACK } };
+                 textVerticalAlign: 'middle', fill: '#10141a', fontSize: fs,
+                 lineHeight: lh, fontWeight: 500, fontFamily: FONT_STACK } };
       }
     }, {
       type: 'custom', data: sepData, zlevel: 1, silent: true,
