@@ -24,15 +24,28 @@ import threading
 import time
 from urllib.parse import urlparse, parse_qs, unquote
 
+import dashboard  # 数据聚合层（load_records / build_schedule_payload）
+
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
 DIR = os.path.join(BASE, "output")
+WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html/app.js/style.css）
+ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
 REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
 LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
 LOG_PAGE = 2000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
+
+RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
+
+
+def reload_records():
+    """从 runs_normalized.csv 重载运行记录到内存（含日志目录解析）。"""
+    global RECORDS
+    RECORDS = dashboard.load_records(DIR)
+    return RECORDS
 
 
 def load_log_roots():
@@ -176,7 +189,7 @@ def read_log_file_slice(raw, fn, offset, limit):
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=DIR, **kwargs)
+        super().__init__(*args, directory=WEB, **kwargs)
 
     def end_headers(self):
         # 页面数据每分钟刷新，禁用缓存避免浏览器拿到旧版本
@@ -192,10 +205,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
             return self._send_login_page()
         if self.path in ("/", ""):
-            self.path = "/analysis.html"
+            self.path = "/index.html"
             return super().do_GET()
+        if path0 == "/echarts.min.js":
+            return self._serve_echarts()
         if path0 == "/api/log":
             self.handle_log_fetch()
+            return
+        if path0 == "/api/runs":
+            self.handle_api_runs()
+            return
+        if path0 == "/api/run":
+            self.handle_api_run()
+            return
+        if path0 == "/api/schedule":
+            self.handle_api_schedule()
             return
         return super().do_GET()
 
@@ -226,7 +250,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 LAST_REFRESH[0] = time.time()
             else:
                 error = "刷新失败，详见 output/update_log.txt"
-        records = load_run_records()
+        records = reload_records()
         payload = {
             "ok": ok,
             "skipped": skipped,
@@ -278,6 +302,72 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             payload = read_log_file_slice(raw, fn, offset, limit)
         else:
             payload = read_log_dir(raw)
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_echarts(self):
+        """提供本地 echarts.min.js（assets/ 下，前端离线可用，不依赖 CDN）。"""
+        try:
+            with open(ECHARTS, "rb") as f:
+                data = f.read()
+        except Exception:
+            self.send_error(404, "echarts.min.js not found")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def handle_api_runs(self):
+        """GET /api/runs：返回运行记录（时间轴/分析视图共用），数据来自内存缓存。"""
+        payload = {"ok": True, "records": RECORDS, "count": len(RECORDS),
+                   "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_api_run(self):
+        """GET /api/run?id=<rid>：返回单条运行记录详情（含日志目录路径）。"""
+        q = parse_qs(urlparse(self.path).query)
+        rid = unquote(q.get("id", [""])[0])
+        rec = None
+        if rid:
+            for r in RECORDS:
+                if r.get("id") == rid:
+                    rec = r
+                    break
+        payload = {"ok": rec is not None, "rec": rec}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_api_schedule(self):
+        """GET /api/schedule：触发器日程表数据（周/月视图 + 统计）。"""
+        path = os.path.join(DIR, "triggers_normalized.csv")
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8-sig") as f:
+                    rows = list(csv.DictReader(f))
+                payload = dashboard.build_schedule_payload(rows)
+            except Exception as e:
+                payload = {"ok": False, "error": "日程数据聚合失败：%s" % e}
+        else:
+            payload = {"ok": False, "error": "缺少 triggers_normalized.csv"}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -412,60 +502,15 @@ def seconds_until(hour, minute):
     return (target - now).total_seconds()
 
 
-def _to_ms(v):
-    """ISO 8601（含时区）/时间戳 -> 北京时间毫秒（与 dashboard.to_ms 一致）"""
-    if not v:
-        return None
-    s = str(v)
-    try:
-        if s.isdigit() and len(s) in (10, 13):
-            return int(s) * (1000 if len(s) == 10 else 1)
-        dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    bjt = datetime.timezone(datetime.timedelta(hours=8))
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=bjt)
-    else:
-        dt = dt.astimezone(bjt)
-    return int(dt.timestamp() * 1000)
-
-
-def load_run_records():
-    """读取 runs_normalized.csv 转甘特图 records（与 dashboard.build_runs_gantt 的 seed 结构一致）"""
-    path = os.path.join(DIR, "runs_normalized.csv")
-    if not os.path.exists(path):
-        return []
-    records = []
-    with open(path, "r", encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            start = _to_ms(r.get("start_time"))
-            if start is None:
-                continue
-            records.append({
-                "id": (r.get("flow_id") or "") + "_" + (r.get("process_no") or ""),
-                "robot": r.get("bot_name") or "(未指定机器人)",
-                "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
-                "app": r.get("flow_name") or "",
-                "start": start,
-                "end": _to_ms(r.get("end_time")),  # 为空 = 运行中/排队中，前端延伸到现在
-                "status": r.get("status") or "",
-                "execStart": _to_ms(r.get("execution_start_time")),  # 实际开始运行时间（此前为排队阶段）
-                "way": r.get("start_way") or "",
-            })
-    records.sort(key=lambda s: s["start"])
-    return records
-
-
 def run_update():
-    """执行完整更新流程：抓取 -> 整理时刻表 -> 生成仪表盘（日志写 output/update_log.txt）"""
+    """执行完整更新流程：抓取 -> 整理文档（数据进内存缓存，不生成 HTML）。
+    日志写 output/update_log.txt。"""
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
         commands = [
             [py, "crawler.py", "--config", "config.json", "--out", "output"],
             [py, "organize.py", "--input", os.path.join("output", "triggers_normalized.csv"), "--out", "output"],
-            [py, "dashboard.py", "--input", os.path.join("output", "triggers_normalized.csv"), "--out", "output"],
         ]
         with open(log, "a", encoding="utf-8") as f:
             f.write("\n[%s] ===== 每日自动更新开始 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -478,19 +523,19 @@ def run_update():
                 except Exception as e:
                     f.write("!! 执行异常: %s\n" % e)
             f.write("[%s] ===== 每日自动更新结束 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        reload_records()   # 完整更新后刷新内存缓存
 
 
 def run_refresh():
-    """快速刷新：运行记录（最近 7 天，手动/定时/Webhook 全部触发方式）+ 甘特图页面（由网页 /api/refresh 触发）。
-    成功仅打印一行时间戳；失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
+    """快速刷新：运行记录（最近 7 天，手动/定时/Webhook 全部触发方式），由网页 /api/refresh 触发。
+    数据进入内存缓存（reload_records），不再生成任何 HTML。成功仅打印一行时间戳；
+    失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
         cmds = [
             [py, "crawler.py", "--config", "config.json", "--out", "output",
              "--only-runs", "--days", "7"],
-            [py, "dashboard.py", "--input", os.path.join("output", "triggers_normalized.csv"),
-             "--out", "output", "--only-gantt"],
         ]
         try:
             for cmd in cmds:
@@ -534,6 +579,8 @@ def main():
     except Exception:
         pass
     os.chdir(DIR)
+    reload_records()   # 启动时把运行记录读入内存缓存（/api/runs、/api/run 数据源）
+    print("[启动] 运行记录 %d 条已载入内存" % len(RECORDS))
     threading.Thread(target=scheduler, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)

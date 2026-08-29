@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>RPA 运行仪表盘</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/echarts.min.js"></script>
+</head>
+<body>
+<div class="head">
+  <div class="titlebar">
+    <nav class="nav" id="nav">
+      <a href="#/timeline" data-view="timeline">运行记录时间轴</a>
+      <a href="#/analysis" data-view="analysis">运行分析仪表盘</a>
+      <a href="#/schedule" data-view="schedule">触发器日程表</a>
+    </nav>
+    <div class="datatime" id="dataTime">数据获取：—</div>
+    <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
+  </div>
+  <div class="auto-bar">
+    <span class="auto-update-label">自动更新：</span>
+    <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
+  </div>
+</div>
+
+<!-- ==================== 时间轴视图 ==================== -->
+<div id="view-timeline" class="view" style="display:none;">
+  <div class="metrics">
+    <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
+    <div class="metric"><div class="k">机器人</div><div class="v" id="mRobots" style="color:#378ADD">0</div></div>
+  </div>
+  <div class="chart-head">
+    <span class="filter-label">时间窗口：</span>
+    <select id="selSpan">
+      <option value="1800000">30 分钟</option>
+      <option value="3600000">1 小时</option>
+      <option value="7200000" selected>2 小时</option>
+      <option value="21600000">6 小时</option>
+      <option value="43200000">12 小时</option>
+      <option value="86400000">1 天</option>
+      <option value="259200000">3 天</option>
+      <option value="604800000">7 天</option>
+    </select>
+    <span class="filter-label way-label">触发方式：</span>
+    <select id="selWay">
+      <option value="__ALL__" selected>全部</option>
+      <option value="Manual">手动</option>
+      <option value="TimingTrigger">定时触发器</option>
+      <option value="Webhook">Webhook</option>
+    </select>
+  </div>
+  <div id="chart" class="chart"></div>
+  <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook；滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
+    <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
+    <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
+    <span class="legend"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
+    <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
+    <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+  </div>
+  <div id="toast"></div>
+</div>
+
+<!-- ==================== 分析视图 ==================== -->
+<div id="view-analysis" class="view" style="display:none;">
+  <div class="metrics" id="metrics"></div>
+  <div class="grid">
+    <div class="panel"><h2>触发方式分布</h2><div id="pie" class="cbox"></div></div>
+    <div class="panel"><h2>状态分布</h2><div id="statusPie" class="cbox"></div></div>
+    <div class="panel full"><h2>运行量热力图（星期 × 小时）</h2><div id="heat" class="cbox tall"></div></div>
+    <div class="panel"><h2>各机器人平均排队时长（资源争抢）</h2><div id="waitBar" class="cbox"></div></div>
+    <div class="panel"><h2>机器人负载榜</h2><div class="scroll"><table id="robotTbl"></table></div></div>
+  </div>
+  <div class="panel full">
+    <div class="toolbar"><h2 style="margin:0;">失败记录看板</h2>
+      <button class="btn" id="btnExport">导出失败记录 CSV</button>
+      <span id="failCount" class="datatime"></span>
+    </div>
+    <div class="scroll"><table id="failTbl"></table></div>
+  </div>
+</div>
+
+<!-- ==================== 详情视图 ==================== -->
+<div id="view-detail" class="view" style="display:none;">
+  <div class="topbar">
+    <div class="title"><span id="ttl">运行记录详情</span></div>
+    <button class="back" id="btnBack">← 返回运行记录时间轴</button>
+  </div>
+  <div id="app"></div>
+</div>
+
+<!-- ==================== 日程视图 ==================== -->
+<div id="view-schedule" class="view" style="display:none;">
+  <div class="metrics">
+    <div class="metric"><div class="k">触发器总数</div><div class="v" id="sTotal" style="color:#378ADD">0</div></div>
+    <div class="metric"><div class="k">已启用</div><div class="v" id="sEnabled" style="color:#1D9E75">0</div></div>
+    <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
+    <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
+  </div>
+  <div class="panels">
+    <div class="panel">
+      <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select></h2>
+      <div id="c1" class="chart"></div>
+      <div class="hint">视图：每周=周一~周日（每天/每周任务），每月=当月有任务的日期（每月任务）；同色=同一应用，格内为应用短名，悬停看明细；红色十字线=当前时刻与今天。</div>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
