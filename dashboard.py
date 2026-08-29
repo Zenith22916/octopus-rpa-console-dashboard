@@ -812,10 +812,39 @@ DETAIL_HTML = """<!DOCTYPE html>
                       padding: 9px 12px; background: #11141a; cursor: pointer; }
   .logfile .lf-name { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; color: #d6dae0; word-break: break-all; }
   .logfile .lf-meta { font-size: 11px; color: #8b8f98; white-space: nowrap; }
-  .logfile pre { margin: 0; max-height: 72vh; overflow: auto; padding: 12px 14px;
+  .logfile pre { margin: 0; max-height: 72vh; overflow: auto; padding: 12px 14px; position: relative;
                  background: #0b0d11; color: #cdd3da;
                  font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12.5px; line-height: 1.6;
                  white-space: pre-wrap; word-break: break-all; }
+  /* ---- 日志工具栏（统计 / 跳转 / 搜索 / 过滤） ---- */
+  .log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+              flex-wrap: wrap; margin-bottom: 8px; }
+  .log-head h3 { margin: 0; }
+  .log-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .stat { font-size: 12px; color: #8b8f98; white-space: nowrap; }
+  .stat b { font-weight: 500; }
+  .stat .s-err { color: #FF6B6D; }
+  .stat .s-warn { color: #FFB020; }
+  .chip { font-size: 12px; color: #c9cdd4; background: #22262e; border: 1px solid #333a45;
+          border-radius: 6px; padding: 3px 10px; cursor: pointer; font-family: inherit; }
+  .chip:disabled { opacity: 0.45; cursor: default; }
+  .chip:hover { background: #2c313a; }
+  .chip.on { background: #3a2020; border-color: #7a3b3b; color: #ffb3b3; }
+  .find { width: 150px; background: #0f1115; color: #e6e6e6; border: 1px solid #333a45;
+          border-radius: 6px; padding: 4px 9px; font-size: 12px; font-family: inherit; }
+  .find:focus { outline: none; border-color: #378ADD; }
+  /* ---- 正文错误/警告行高亮层（浮在 pre 上，不改动日志文本） ---- */
+  .lnmarks { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+  .lnmarks .lm { position: absolute; left: 0; right: 0; }
+  .lnmarks .lm-err { background: rgba(226, 75, 74, 0.20); box-shadow: inset 3px 0 0 #FF4D4F; }
+  .lnmarks .lm-warn { background: rgba(239, 159, 39, 0.16); box-shadow: inset 3px 0 0 #FFB020; }
+  .lnmarks .lm-cur { background: rgba(255, 77, 79, 0.42); box-shadow: inset 3px 0 0 #FF4D4F; }
+  /* ---- 过滤/搜索模式下的行 ---- */
+  .lrow { display: block; }
+  .lrow .lno { color: #6f7480; margin-right: 8px; user-select: none; }
+  .lrow.hit { background: rgba(226, 75, 74, 0.16); box-shadow: inset 3px 0 0 #FF4D4F; }
+  .lrow.hitkw { background: rgba(55, 138, 221, 0.16); box-shadow: inset 3px 0 0 #378ADD; }
+  .lrow mark { background: rgba(239, 159, 39, 0.35); color: #ffd79a; padding: 0 1px; border-radius: 2px; }
   /* ---- 日志缩略图（仿 VSCode 右侧 minimap） ---- */
   [hidden] { display: none !important; }
   .log-body { display: flex; flex: 1 1 auto; min-height: 0; }
@@ -921,7 +950,16 @@ function render(){
     + (runMs!=null ? fld("运行时长", fmtDur(runMs)) : "")
     + '</div></div>';
 
-  var logCard = '<div class="card log-card"><h3>日志内容</h3>'
+  var logCard = '<div class="card log-card">'
+    + '<div class="log-head"><h3>日志内容</h3>'
+    +   '<div class="log-tools">'
+    +     '<span class="stat" id="logStat">—</span>'
+    +     '<input class="find" id="logFind" type="search" placeholder="搜索关键词" disabled>'
+    +     '<button class="chip" id="btnPrev" disabled>上一处</button>'
+    +     '<button class="chip" id="btnNext" disabled>下一处</button>'
+    +     '<button class="chip" id="btnOnlyErr" disabled>仅看异常</button>'
+    +   '</div>'
+    + '</div>'
     + '<div class="log-body">'
     +   '<div id="logbox" class="tip">正在读取日志…</div>'
     +   '<div class="minimap" id="minimap" hidden title="拖动可快速定位日志">'
@@ -935,10 +973,14 @@ function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div cl
 /* ==================== 日志缩略图（仿 VSCode 右侧 minimap） ====================
    把 #logbox 内所有 <pre> 的真实排版（含自动换行）按比例绘制到右侧 canvas，
    叠加可视区域指示块，支持点击跳转与拖拽定位。 */
-var MM = { box:null, mm:null, cv:null, vp:null, drag:false, grab:0, raf:0, vraf:0, sig:"", h:0, stop:false };
-var MM_COLORS = ["#79839a", "#E24B4A", "#EF9F27", "#1D9E75"];   // 普通 / 错误 / 警告 / 成功
+var MM = { box:null, mm:null, cv:null, vp:null, drag:false, grab:0, raf:0, vraf:0, sig:"", h:0, stop:false, ticks:[], mctx:null };
+/* 0=普通 1=错误 2=警告 3=成功：普通压暗、成功暗绿，让错误亮红成为画面里最抢眼的颜色 */
+var MM_COLORS = ["#4d5666", "#FF4D4F", "#FFB020", "#2A7F62"];
 /* 一次扫描判定关键词类别：组1=错误 组2=警告 组3=成功 */
-var MM_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
+var MM_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
+/* 带"异常/错误"字样但属于正常流程的措辞，不参与标红 */
+var MM_EXC = /(已启用异常监控|触发错误处理的|忽略异常并执行)/;
+var MM_TICK_W = 11;                      // 缩略图最右侧的独立刻度条宽度，只画错误/警告
 var MM_WA = null, MM_WO = null;          // 字符宽度缓存（ASCII 用数组，其余用对象）
 var MM_CAT = null;                       // 行内类别缓冲（复用，避免每行分配）
 function mmCharW(ctx, code){
@@ -964,6 +1006,7 @@ function mmFillCats(line){
     buf[i] = (ch === " " || ch === "\\t" || ch === "\\r") ? -1 : 0;
   }
   if (n > 20000) return buf;             // 超长行不做关键词匹配，避免正则开销
+  if (MM_EXC.test(line)) return buf;     // 正常流程措辞，全部按普通处理
   MM_RE.lastIndex = 0;
   while ((m = MM_RE.exec(line)) !== null){
     var c = m[1] ? 1 : (m[2] ? 2 : 3);
@@ -972,80 +1015,143 @@ function mmFillCats(line){
   }
   return buf;
 }
-/* 绘制一个 <pre>：自行模拟换行布局（pre-wrap + break-all），避免逐行 Range 测量带来的卡顿 */
-function mmDrawPre(ctx, pre, contentTop, scale, W, drawn){
-  if (MM.stop || !pre.offsetParent) return drawn;         // 折叠/隐藏的日志不绘制
+function mmCtx(){
+  if (!MM.mctx){ MM.mctx = document.createElement("canvas").getContext("2d"); }
+  return MM.mctx;
+}
+/* 行级别：1=错误 2=警告 3=成功 0=普通（一次正则扫描，取最严重的一档） */
+function mmLineLevel(line){
+  if (!line || line.length > 20000) return 0;
+  if (MM_EXC.test(line)) return 0;
+  var lv = 0, m;
+  MM_RE.lastIndex = 0;
+  while ((m = MM_RE.exec(line)) !== null){
+    var c = m[1] ? 1 : (m[2] ? 2 : 3);
+    if (c === 1) return 1;                 // 错误最严重，直接返回
+    if (lv === 0 || c < lv) lv = c;
+  }
+  return lv;
+}
+/* 遍历一个 <pre> 的每个视觉行：自行模拟换行布局（pre-wrap + break-all），
+   回调 (line, s, e, y, lh, lineNo)，y 为相对 pre 内容顶部的偏移；返回 false 可中断。 */
+function mmEachLine(pre, ctx, cb){
   var tn = pre.firstChild;
-  if (!tn || tn.nodeType !== 3) return drawn;
+  if (!tn || tn.nodeType !== 3) return 0;
   var text = tn.nodeValue || "";
-  if (!text) return drawn;
+  if (!text) return 0;
   var cs = window.getComputedStyle(pre);
-  var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0, padT = parseFloat(cs.paddingTop) || 0;
+  var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
   var contentW = pre.clientWidth - padL - padR;
-  if (contentW <= 0) return drawn;
+  if (contentW <= 0) return 0;
   var fs = parseFloat(cs.fontSize) || 12.5;
   var lh = parseFloat(cs.lineHeight);
   if (!lh || lh < 1) lh = fs * 1.6;
   ctx.font = (cs.fontStyle || "normal") + " " + (cs.fontWeight || "400") + " " + fs + "px " + (cs.fontFamily || "monospace");
-  var rowH = Math.max(1, lh * scale);
-  var tiny = rowH < 2;                                    // 行太密：每行只画一条色带
-  var kx = W / contentW;                                  // 像素宽 → 缩略图宽
-  var yDoc = (pre.getBoundingClientRect().top + padT) - contentTop;
-  var H = MM.h;
-  var n = text.length, i = 0;
+  var y = 0, n = text.length, i = 0, lineNo = 0;
   while (i < n){
     var nl = text.indexOf("\\n", i);
     var end = (nl === -1) ? n : nl;
     var line = text.slice(i, end);
-    var cats = mmFillCats(line);
-    var j = 0, L = line.length, acc = 0;
-    var runCat = -2, runX0 = 0, best = -1, minX = 1e9, maxX = 0;
+    var j = 0, segStart = 0, acc = 0, L = line.length;
     while (j <= L){
       if (j === L || (acc > 0 && acc + mmCharW(ctx, line.charCodeAt(j)) > contentW)){
-        /* 输出一个视觉行 */
-        var y = yDoc * scale;
-        if (y > H + rowH){ MM.stop = true; return drawn; }
-        if (y + rowH > 0){
-          if (tiny){
-            if (best >= 0 && maxX > minX){
-              ctx.fillStyle = MM_COLORS[best];
-              ctx.fillRect(minX * kx, y, Math.max((maxX - minX) * kx, 0.8), rowH);
-            }
-          } else {
-            if (runCat >= 0 && acc > runX0){
-              ctx.fillStyle = MM_COLORS[runCat];
-              ctx.fillRect(runX0 * kx, y, Math.max((acc - runX0) * kx, 0.7), rowH);
-            }
-          }
-        }
-        drawn++;
-        yDoc += lh;
+        if (cb(line, segStart, j, y, lh, lineNo, j === L) === false) return y;
+        y += lh;
         if (j === L) break;
-        acc = 0; runCat = -2; best = -1; minX = 1e9; maxX = 0;
+        segStart = j; acc = 0;
       }
-      var c = cats[j], w = mmCharW(ctx, line.charCodeAt(j));
-      if (c >= 0){
-        if (c > best) best = c;
-        if (acc < minX) minX = acc;
-        if (acc + w > maxX) maxX = acc + w;
-      }
-      if (!tiny && c !== runCat){
-        if (runCat >= 0 && acc > runX0){
-          var yy = yDoc * scale;
-          if (yy + rowH > 0 && yy <= H + rowH){
-            ctx.fillStyle = MM_COLORS[runCat];
-            ctx.fillRect(runX0 * kx, yy, Math.max((acc - runX0) * kx, 0.7), rowH);
-          }
-        }
-        runCat = c; runX0 = acc;
-      }
-      acc += w;
+      acc += mmCharW(ctx, line.charCodeAt(j));
       j++;
     }
-    i = end + 1;
+    i = end + 1; lineNo++;
     if (nl === -1) break;
   }
+  return y;
+}
+/* 绘制一个 <pre>：把每个视觉行按比例画成色带，并把错误/警告行位置记入 MM.ticks */
+function mmDrawPre(ctx, pre, contentTop, scale, W, drawn){
+  if (MM.stop || !pre.offsetParent) return drawn;         // 折叠/隐藏的日志不绘制
+  var cs = window.getComputedStyle(pre);
+  var padT = parseFloat(cs.paddingTop) || 0;
+  var base = (pre.getBoundingClientRect().top + padT) - contentTop;
+  var H = MM.h, tickW = MM_TICK_W;
+  // 过滤/搜索视图：pre 内是 .lrow span，直接按 span 绘制
+  var lrows = pre.querySelectorAll(".lrow");
+  if (lrows.length){
+    for (var r0 = 0; r0 < lrows.length; r0++){
+      var r = lrows[r0];
+      var h = Math.max(1, r.offsetHeight * scale);
+      var yDoc = base + r.offsetTop;
+      var yy = yDoc * scale;
+      if (yy > H + h){ MM.stop = true; return drawn; }
+      var lv = parseInt(r.getAttribute("data-level") || "0", 10);
+      if (yy + h > 0 && lv > 0 && lv < MM_COLORS.length){
+        ctx.fillStyle = MM_COLORS[lv];
+        ctx.fillRect(0, yy, W - tickW, h);
+      }
+      if (lv === 1 || lv === 2) MM.ticks.push({ y: yDoc, h: r.offsetHeight, lv: lv });
+      drawn++;
+    }
+    return drawn;
+  }
+  // 全文视图：自行模拟换行布局
+  mmEachLine(pre, ctx, function(line, s, e, y, lh){
+    var rowH = Math.max(1, lh * scale);
+    var yDoc = base + y;
+    var yy = yDoc * scale;
+    if (yy > H + rowH){ MM.stop = true; return false; }
+    var cats = mmFillCats(line.slice(s, e));
+    var kx = W / (pre.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0));
+    var tiny = rowH < 2;                                  // 行太密：每行只画一条色带
+    var x = 0, runCat = -2, runX0 = 0, best = -1, minX = 1e9, maxX = 0, k, c, w;
+    for (k = s; k < e; k++){
+      c = (k - s) < cats.length ? cats[k - s] : 0;
+      w = mmCharW(ctx, line.charCodeAt(k));
+      if (c >= 0){
+        if (best < 0 || (c > 0 && c < best)) best = c;    // 错误(1) 优先于 警告(2) 优先于 成功(3)
+        if (x < minX) minX = x;
+        if (x + w > maxX) maxX = x + w;
+      }
+      if (!tiny && c !== runCat){
+        if (runCat >= 0 && x > runX0){
+          ctx.fillStyle = MM_COLORS[runCat];
+          ctx.fillRect(runX0 * kx, yy, Math.max((x - runX0) * kx, 0.7), rowH);
+        }
+        runCat = c; runX0 = x;
+      }
+      x += w;
+    }
+    if (yy + rowH > 0){
+      if (best === 1 || best === 2){                       // 错误/警告行即使压缩也强制画满宽，确保最显眼
+        ctx.fillStyle = MM_COLORS[best];
+        ctx.fillRect(0, yy, W - tickW, Math.max(rowH, 2));
+      } else if (!tiny && runCat >= 0 && x > runX0){
+        ctx.fillStyle = MM_COLORS[runCat];
+        ctx.fillRect(runX0 * kx, yy, Math.max((x - runX0) * kx, 0.7), rowH);
+      } else if (tiny && best >= 0 && maxX > minX && minX * kx < W - tickW){
+        ctx.fillStyle = MM_COLORS[best];
+        ctx.fillRect(minX * kx, yy, Math.min(Math.max((maxX - minX) * kx, 0.8), W - tickW - minX * kx), rowH);
+      }
+    }
+    if (best === 1 || best === 2) MM.ticks.push({ y: yDoc, h: lh, lv: best });
+    drawn++;
+    return true;
+  });
   return drawn;
+}
+/* 缩略图最右侧的独立刻度条：只标记错误/警告行，不被普通文本覆盖，密集处自然形成红条 */
+function mmDrawTicks(ctx, W, H, scale){
+  var tw = MM_TICK_W;
+  ctx.fillStyle = "#0a0c10";
+  ctx.fillRect(W - tw, 0, tw, H);
+  ctx.fillStyle = "#232830";
+  ctx.fillRect(W - tw, 0, 0.5, H);
+  for (var i = 0; i < MM.ticks.length; i++){
+    var t = MM.ticks[i], y = t.y * scale;
+    if (y > H || y + t.h * scale < 0) continue;
+    ctx.fillStyle = t.lv === 1 ? "#FF4D4F" : "#FFB020";
+    ctx.fillRect(W - tw + 1.5, y, tw - 3, Math.max(2.5, t.h * scale));
+  }
 }
 function mmBuild(){
   var box = MM.box, mm = MM.mm, cv = MM.cv;
@@ -1069,8 +1175,9 @@ function mmBuild(){
   var boxRect = box.getBoundingClientRect();
   var contentTop = boxRect.top - box.scrollTop;
   var pres = box.querySelectorAll("pre"), drawn = 0, t0 = (window.performance && performance.now) ? performance.now() : 0;
-  MM.stop = false;
+  MM.stop = false; MM.ticks = [];
   for (var i = 0; i < pres.length; i++) drawn = mmDrawPre(ctx, pres[i], contentTop, scale, W, drawn);
+  mmDrawTicks(ctx, W, H, scale);
   if (t0) box.setAttribute("data-mm-ms", Math.round(performance.now() - t0));
   box.setAttribute("data-mm-lines", drawn);
   mmSync();
@@ -1135,18 +1242,209 @@ function mmInit(){
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ MM.sig = ""; mmSchedule(); });
   mmSchedule();
 }
+/* ==================== 日志排查辅助：行级别分析 / 高亮 / 统计导航 / 过滤搜索 ==================== */
+var LG = { files: [], marks: [], cur: -1, only: false, kw: "" };
+function lgPadTop(pre){ return parseFloat(window.getComputedStyle(pre).paddingTop) || 0; }
+/* 扫描所有 <pre>，收集错误/警告行的位置与原文（顺序即文档顺序） */
+function lgAnalyze(){
+  var box = MM.box;
+  if (!box) return;
+  var pres = box.querySelectorAll("pre"), ctx = mmCtx();
+  LG.marks = [];
+  for (var i = 0; i < pres.length; i++){
+    var pre = pres[i];
+    if (!pre.offsetParent) continue;                       // 折叠中的日志不参与
+    // 过滤/搜索视图：pre 内是 .lrow span，直接读取 data-level
+    var lrows = pre.querySelectorAll(".lrow");
+    if (lrows.length){
+      for (var j = 0; j < lrows.length; j++){
+        var r = lrows[j];
+        var lv = parseInt(r.getAttribute("data-level") || "0", 10);
+        if (lv === 1 || lv === 2){
+          var noEl = r.querySelector(".lno");
+          LG.marks.push({ pre: pre, y: r.offsetTop, h: r.offsetHeight, lv: lv, no: noEl ? parseInt(noEl.textContent, 10) : 0, text: r.textContent.slice(0, 200) });
+        }
+      }
+      continue;
+    }
+    (function(el){
+      var startY = 0, lv = 0, no = 0, open = false;
+      mmEachLine(el, ctx, function(line, s, e, y, lh, lineNo, last){
+        if (s === 0){ startY = y; lv = mmLineLevel(line); no = lineNo; open = (lv === 1 || lv === 2); }
+        if (open && last) LG.marks.push({ pre: el, y: startY + lgPadTop(el), h: (y + lh) - startY, lv: lv, no: no + 1, text: line.slice(0, 200) });
+        return true;
+      });
+    })(pre);
+  }
+  lgRenderMarks();
+  lgStat();
+}
+/* 在 pre 内叠一层绝对定位色条，标出错误/警告行（不改动日志文本本身） */
+function lgRenderMarks(){
+  var box = MM.box;
+  if (!box) return;
+  var pres = box.querySelectorAll("pre"), i, old;
+  for (i = 0; i < pres.length; i++){
+    old = pres[i].querySelector(".lnmarks");
+    if (old) old.parentNode.removeChild(old);
+  }
+  for (i = 0; i < LG.marks.length; i++){
+    var m = LG.marks[i];
+    var layer = m.pre.querySelector(".lnmarks");
+    if (!layer){ layer = document.createElement("div"); layer.className = "lnmarks"; m.pre.appendChild(layer); }
+    var d = document.createElement("div");
+    d.className = "lm " + (m.lv === 1 ? "lm-err" : "lm-warn");
+    d.title = "第 " + m.no + " 行：" + m.text;
+    d.style.top = m.y + "px";
+    d.style.height = m.h + "px";
+    d.setAttribute("data-mi", String(i));
+    layer.appendChild(d);
+  }
+  LG.cur = -1;
+}
+/* 无日志或读取失败时复位工具栏 */
+function lgReset(){
+  LG.files = []; LG.marks = []; LG.cur = -1; LG.only = false; LG.kw = "";
+  var el = document.getElementById("logStat");
+  if (el){ el.textContent = "—"; el.removeAttribute("title"); }
+  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind"], b, i;
+  for (i = 0; i < ids.length; i++){
+    b = document.getElementById(ids[i]);
+    if (b){ b.disabled = true; if (ids[i] === "btnOnlyErr"){ b.className = "chip"; b.textContent = "仅看异常"; } }
+  }
+  var f = document.getElementById("logFind");
+  if (f) f.value = "";
+}
+function lgStat(){
+  var el = document.getElementById("logStat"), i, e = 0, w = 0;
+  for (i = 0; i < LG.marks.length; i++){ if (LG.marks[i].lv === 1) e++; else w++; }
+  if (el) el.innerHTML = LG.marks.length
+    ? ('共 <b>' + LG.marks.length + '</b> 处 · 错误 <b class="s-err">' + e + '</b> · 警告 <b class="s-warn">' + w + '</b>')
+    : '未发现异常';
+  var has = LG.marks.length > 0;
+  var b;
+  b = document.getElementById("btnPrev"); if (b) b.disabled = !has;
+  b = document.getElementById("btnNext"); if (b) b.disabled = !has;
+  b = document.getElementById("btnOnlyErr"); if (b) b.disabled = !has;
+  b = document.getElementById("logFind"); if (b) b.disabled = false;
+}
+/* 跳到第 idx 处异常：滚动居中并高亮该行 */
+function lgGoTo(idx){
+  var box = MM.box;
+  if (!box || !LG.marks.length) return;
+  if (idx < 0) idx = LG.marks.length - 1;
+  if (idx >= LG.marks.length) idx = 0;
+  LG.cur = idx;
+  var m = LG.marks[idx];
+  var boxRect = box.getBoundingClientRect(), preRect = m.pre.getBoundingClientRect();
+  var top = (preRect.top - boxRect.top) + box.scrollTop + lgPadTop(m.pre) + m.y - box.clientHeight / 2;
+  box.scrollTop = Math.max(0, top);
+  var all = box.querySelectorAll(".lnmarks .lm"), i;
+  for (i = 0; i < all.length; i++) all[i].className = all[i].className.replace(" lm-cur", "");
+  var layer = m.pre.querySelector(".lnmarks");
+  if (layer){
+    var d = layer.querySelector('[data-mi="' + idx + '"]');
+    if (d) d.className += " lm-cur";
+  }
+  var stat = document.getElementById("logStat");
+  if (stat) stat.setAttribute("title", "第 " + (idx + 1) + "/" + LG.marks.length + " 处 · 第 " + m.no + " 行");
+}
+/* 关键词在已转义文本中的高亮 */
+function lgHL(s, kw){
+  if (!kw) return s;
+  var k = esc(kw), out = "", p = 0, idx;
+  if (!k) return s;
+  while ((idx = s.indexOf(k, p)) !== -1){
+    out += s.slice(p, idx) + "<mark>" + k + "</mark>";
+    p = idx + k.length;
+  }
+  return out + s.slice(p);
+}
+/* 过滤视图：命中行 + 前后 2 行上下文，带行号 */
+function lgFilterHTML(text, kw, only){
+  var lines = text.split("\\n");
+  var hit = {}, keep = {}, i, j, n = 0;
+  for (i = 0; i < lines.length; i++){
+    var lv = mmLineLevel(lines[i]);
+    var isHit = (only && (lv === 1 || lv === 2)) || (!!kw && lines[i].indexOf(kw) !== -1);
+    if (isHit){
+      hit[i] = (lv === 1 || lv === 2) ? lv : 0;
+      n++;
+      if (n > 3000) break;                                // 命中过多时截断，避免卡死
+    }
+  }
+  if (!n) return '<span class="lrow" style="color:#8b8f98">没有匹配的行</span>';
+  for (var key in hit){
+    var k0 = Number(key);
+    for (j = Math.max(0, k0 - 2); j <= Math.min(lines.length - 1, k0 + 2); j++) keep[j] = 1;
+  }
+  var keys = [], h = "", last = -1;
+  for (var k2 in keep) keys.push(Number(k2));
+  keys.sort(function(a, b){ return a - b; });
+  for (i = 0; i < keys.length; i++){
+    var k = keys[i];
+    if (last >= 0 && k > last + 1) h += '<span class="lrow" style="color:#5a5f6a">    …</span>';
+    var isH = Object.prototype.hasOwnProperty.call(hit, k);
+    var lv = isH ? (hit[k] || 0) : 0;
+    var cls = "lrow" + (isH ? (" " + (hit[k] ? "hit" : "hitkw")) : "");
+    h += '<span class="' + cls + '" data-level="' + lv + '"><span class="lno">' + (k + 1) + '</span>' + lgHL(esc(lines[k]), kw) + '</span>';
+    last = k;
+  }
+  return h;
+}
+/* 应用/取消过滤：重建 pre 内容后重新分析与重绘缩略图 */
+function lgApply(){
+  var box = MM.box;
+  if (!box) return;
+  var pres = box.querySelectorAll("pre");
+  for (var i = 0; i < pres.length; i++){
+    var orig = (LG.files[i] && LG.files[i].content != null) ? LG.files[i].content : pres[i].textContent;
+    if (!LG.only && !LG.kw) pres[i].textContent = orig;
+    else pres[i].innerHTML = lgFilterHTML(orig, LG.kw, LG.only);
+  }
+  LG.cur = -1;
+  mmSchedule(true);
+  lgAnalyze();
+}
+/* 工具栏事件绑定（工具栏为静态 DOM，随 render 重建后重新绑定） */
+function lgInit(){
+  var b, f;
+  b = document.getElementById("btnNext");
+  if (b) b.addEventListener("click", function(){ lgGoTo(LG.cur + 1); });
+  b = document.getElementById("btnPrev");
+  if (b) b.addEventListener("click", function(){ lgGoTo(LG.cur - 1); });
+  b = document.getElementById("btnOnlyErr");
+  if (b) b.addEventListener("click", function(){
+    LG.only = !LG.only;
+    this.className = LG.only ? "chip on" : "chip";
+    this.textContent = LG.only ? "显示全部" : "仅看异常";
+    lgApply();
+  });
+  f = document.getElementById("logFind");
+  if (f){
+    var timer = 0;
+    f.addEventListener("input", function(){
+      var v = this.value;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function(){ LG.kw = v.trim(); lgApply(); }, 300);
+    });
+    f.addEventListener("keydown", function(e){
+      if (e.key === "Enter"){ lgGoTo(LG.cur + (e.shiftKey ? -1 : 1)); e.preventDefault(); }
+    });
+  }
+}
 function loadLogs(){
   var box = document.getElementById("logbox");
   if (!box) return;
   if (!REC.log){
     box.innerHTML = '<div class="tip">未配置该机器人的日志目录，无法确定日志路径。请在 robot_logs.json 中补充该机器人的共享日志目录（参考其他机器人配置）。</div>';
-    mmSchedule(true);
+    mmSchedule(true); lgReset();
     return;
   }
   if (location.protocol === "file:"){
     var cur = location.pathname.split("/").pop();
     box.innerHTML = '<div class="warn">⚠ 当前以 file:// 方式打开，浏览器禁止实时读取日志。请改用本地服务器：运行 start_server.bat，再打开 <a href="http://localhost:8000/'+esc(cur)+'" target="_blank" rel="noopener">http://localhost:8000/'+esc(cur)+'</a></div>';
-    mmSchedule(true);
+    mmSchedule(true); lgReset();
     return;
   }
   var url = "/api/log?dir=" + encodeURIComponent(REC.log);
@@ -1154,12 +1452,12 @@ function loadLogs(){
   fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); }).then(function(d){
     if (!d.ok){
       box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
-      mmSchedule(true);
+      mmSchedule(true); lgReset();
       return;
     }
     if (!d.logs || d.logs.length === 0){
       box.innerHTML = '<div class="tip">目录下没有 .log 文件。</div>';
-      mmSchedule(true);
+      mmSchedule(true); lgReset();
       return;
     }
     var h = "";
@@ -1174,6 +1472,9 @@ function loadLogs(){
         + '</div>';
     }
     box.innerHTML = h;
+    LG.files = [];
+    var ps = box.querySelectorAll("pre");
+    for (var p0 = 0; p0 < ps.length; p0++) LG.files.push({ content: ps[p0].textContent });
     var heads = box.querySelectorAll(".lf-head");
     for (var j=0;j<heads.length;j++){
       (function(el){
@@ -1181,18 +1482,20 @@ function loadLogs(){
           var e = document.getElementById(el.getAttribute("data-tid"));
           if (e.style.display === "none"){ e.style.display = "block"; }
           else { e.style.display = "none"; }
-          mmSchedule(true);
+          mmSchedule(true); lgAnalyze();
         });
       })(heads[j]);
     }
     mmSchedule(true);
+    if (window.requestAnimationFrame) requestAnimationFrame(lgAnalyze); else lgAnalyze();
   }).catch(function(e){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
-    mmSchedule(true);
+    mmSchedule(true); lgReset();
   });
 }
 render();
 mmInit();
+lgInit();
 loadLogs();
 </script>
 </body>
