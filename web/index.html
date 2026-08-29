@@ -11,11 +11,11 @@
 <body>
 <div class="head">
   <div class="titlebar">
-    <nav class="nav" id="nav">
-      <a href="#/timeline" data-view="timeline">运行记录时间轴</a>
-      <a href="#/analysis" data-view="analysis">运行分析仪表盘</a>
-      <a href="#/schedule" data-view="schedule">触发器日程表</a>
-    </nav>
+    <select id="navSel">
+      <option value="#/analysis">运行分析仪表盘</option>
+      <option value="#/timeline">运行记录时间轴</option>
+      <option value="#/schedule">触发器日程表</option>
+    </select>
     <div class="datatime" id="dataTime">数据获取：—</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>
