@@ -31,6 +31,8 @@ UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
 REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
 LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
+LOG_PAGE = 2000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
+MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
 
 def load_log_roots():
@@ -84,20 +86,43 @@ def is_allowed(raw):
     return False
 
 
-def read_text_truncated(path, limit=0):
-    """读取日志文件完整内容（按要求完整显示，不再截断）。"""
+def count_lines(path):
+    """统计文件行数（逐行迭代，不把整文件读入内存，避免大文件占满内存）。"""
+    n = 0
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
+            for _ in f:
+                n += 1
     except Exception:
-        with open(path, "rb") as f:
-            data = f.read()
-        text = data.decode("utf-8", errors="replace")
-    return text, False
+        pass
+    return n
+
+
+def read_log_slice(path, offset, limit):
+    """分段读取日志：从 offset 行起取 limit 行，返回 (行列表, 是否还有更多)。
+    只遍历到所需位置，不一次性读入整个文件。"""
+    collected, more = [], False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            n = 0
+            for line in f:
+                if n < offset:
+                    n += 1
+                    continue
+                if len(collected) < limit:
+                    collected.append(line.rstrip("\n"))
+                    n += 1
+                    continue
+                more = True          # 已取满一页，确认后面还有内容
+                break
+    except Exception:
+        pass
+    return collected, more
 
 
 def read_log_dir(raw):
-    """读取日志目录下的 .log 文件（实时，供 /api/log 使用）。"""
+    """列出日志目录下的 .log 文件（仅元数据：名称/大小/行数，不含内容）。
+    供详情页首次请求；内容由前端按需分段拉取，避免大文件一次性返回导致卡死。"""
     if not raw:
         return {"ok": False, "error": "缺少目录参数", "logs": []}
     if not is_allowed(raw):
@@ -113,13 +138,39 @@ def read_log_dir(raw):
                 continue
             try:
                 size = os.path.getsize(fp)
-                text, truncated = read_text_truncated(fp)
-                logs.append({"name": fn, "size": size, "content": text, "truncated": truncated})
+                lines = count_lines(fp)
+                logs.append({"name": fn, "size": size, "lines": lines})
             except Exception as e:
-                logs.append({"name": fn, "size": 0, "content": "（读取失败：%s）" % e, "truncated": False})
+                logs.append({"name": fn, "size": 0, "lines": 0, "error": str(e)})
     except Exception as e:
         return {"ok": False, "error": "读取目录失败：%s" % e, "logs": []}
     return {"ok": True, "error": "", "logs": logs}
+
+
+def read_log_file_slice(raw, fn, offset, limit):
+    """分段读取单个 .log 文件内容（供详情页"加载更多"逐段拉取）。
+    严格校验文件落在允许目录内，杜绝目录穿越。"""
+    if not raw or not fn:
+        return {"ok": False, "error": "缺少目录或文件参数"}
+    if not is_allowed(raw):
+        return {"ok": False, "error": "目录不在允许的日志根范围内"}
+    p = os.path.normpath(raw)
+    if not os.path.isdir(p):
+        return {"ok": False, "error": "目录不存在或无法访问"}
+    fp = os.path.normpath(os.path.join(p, fn))
+    if fp != p and not fp.startswith(p + os.sep):
+        return {"ok": False, "error": "非法文件名"}
+    if not os.path.isfile(fp) or not fn.lower().endswith(".log"):
+        return {"ok": False, "error": "文件不存在或非日志文件"}
+    try:
+        size = os.path.getsize(fp)
+        collected, has_more = read_log_slice(fp, offset, limit)
+        return {"ok": True, "error": "", "name": fn, "size": size,
+                "offset": offset, "limit": limit,
+                "lines": len(collected), "hasMore": has_more,
+                "content": "\n".join(collected)}
+    except Exception as e:
+        return {"ok": False, "error": "读取失败：%s" % e}
 
 
 
@@ -204,10 +255,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().handle_error(request, client_address)
 
     def handle_log_fetch(self):
-        """详情页实时读取日志：?dir=<编码后的日志目录 UNC 路径>，返回该目录下所有 .log 文件内容（截断）。"""
+        """详情页实时读取日志，支持分段获取：
+        - 列表模式 ?dir=<目录>：返回该目录下所有 .log 文件的元数据（名称/大小/行数），不含内容；
+        - 分段模式 ?dir=<目录>&file=<文件名>&offset=<行号>&limit=<行数>：返回该文件某一页内容。
+        内容改为前端按需分段拉取，避免超长日志一次性返回导致浏览器卡死。"""
         q = parse_qs(urlparse(self.path).query)
         raw = unquote(q.get("dir", [""])[0])
-        payload = read_log_dir(raw)
+        fn = unquote(q.get("file", [""])[0])
+        if fn:
+            try:
+                offset = int(q.get("offset", ["0"])[0])
+            except Exception:
+                offset = 0
+            try:
+                limit = int(q.get("limit", [str(LOG_PAGE)])[0])
+            except Exception:
+                limit = LOG_PAGE
+            if offset < 0:
+                offset = 0
+            if limit <= 0 or limit > MAX_PAGE:
+                limit = LOG_PAGE
+            payload = read_log_file_slice(raw, fn, offset, limit)
+        else:
+            payload = read_log_dir(raw)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
