@@ -226,6 +226,13 @@ GANTT_HTML = """<!DOCTYPE html>
   .hint .legend { display: inline-block; margin-left: 12px; }
   .hint .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
   @media (max-width: 1100px) { body { overflow: auto; } .chart { min-height: 520px; flex: none; } }
+  /* 顶部弹出提示（toast）：运行中记录点击不跳转时提示 */
+  #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%) translateY(-20px);
+           z-index: 10000; background: #2a2f38; color: #e6e6e6; border: 1px solid #333a45;
+           border-radius: 8px; padding: 10px 18px; font-size: 13px; line-height: 1.4;
+           box-shadow: 0 6px 24px rgba(0,0,0,.45); opacity: 0; pointer-events: none;
+           transition: opacity .25s ease, transform .25s ease; max-width: 80vw; text-align: center; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -279,6 +286,7 @@ GANTT_HTML = """<!DOCTYPE html>
   <input type="checkbox" id="chkAuto" checked>
 </div>
 <div id="chart" class="chart"></div>
+<div id="toast"></div>
 <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook；滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
   <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
   <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
@@ -725,9 +733,22 @@ chartEl.addEventListener('dblclick', function(){
   state.span = parseInt(document.getElementById('selSpan').value, 10);
   updateWindow();
 });
-// 点击数据块：跳转运行记录详情页（携带记录 id）
+// 顶部弹出提示（toast）：运行中记录点击不跳转
+var toastEl = document.getElementById('toast');
+var toastTimer = null;
+function showToast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2200);
+}
+// 点击数据块：运行中（Executing）记录不跳转，顶部弹出提示；其余跳转运行记录详情页（携带记录 id）
 chart.on('click', function(params){
   if (params && params.data && params.data.rid) {
+    if (params.data.status === 'Executing') {
+      showToast('任务「' + (params.data.name || '运行中') + '」正在运行中，暂不可查看明细');
+      return;
+    }
     location.href = 'detail_' + encodeURIComponent(params.data.rid) + '.html';
   }
 });
