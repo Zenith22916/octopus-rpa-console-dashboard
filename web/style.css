@@ -47,7 +47,7 @@ input:focus, select:focus { outline: none; border-color: #378ADD; }
 .view { flex: 1 1 auto; min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
 
 /* ==================== 时间轴视图 ==================== */
-.metrics { display: flex; gap: 10px; flex-wrap: wrap; flex: none; }
+.metrics { display: flex; gap: 10px; flex-wrap: wrap; flex: none; margin-bottom: 12px; }
 .metric { flex: 1 1 0; min-width: 84px; background: #181b21; border: 1px solid #262a33;
           border-radius: 8px; padding: 6px 14px; text-align: center; }
 .metric .k { font-size: 11px; color: #8b8f98; }
@@ -55,7 +55,7 @@ input:focus, select:focus { outline: none; border-color: #378ADD; }
 .metric .s { font-size: 10px; color: #6f7480; margin-top: 2px; }
 .chart-head { display: flex; align-items: center; gap: 10px; flex: none; box-sizing: border-box;
               background: #181b21; border: 1px solid #262a33; border-radius: 10px 10px 0 0;
-              padding: 8px 14px; margin-top: 10px; }
+              padding: 8px 14px; }
 .filter-label { font-size: 13px; color: #8b8f98; margin-right: 4px; }
 .way-label { margin-left: 18px; }
 #chart { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; background: #181b21;
