@@ -1,6 +1,7 @@
 /* ==================== 基础 ==================== */
 html, body { height: 100%; }
 body { margin: 0; padding: 10px 14px; box-sizing: border-box;
+       display: flex; flex-direction: column;
        font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
        background: #0f1115; color: #e6e6e6; }
 h1 { font-size: 18px; font-weight: 500; margin: 0; }
@@ -43,7 +44,7 @@ input:focus, select:focus { outline: none; border-color: #378ADD; }
        padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
 .btn:hover { background: #2b3038; }
 
-.view { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+.view { flex: 1 1 auto; min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
 
 /* ==================== 时间轴视图 ==================== */
 .metrics { display: flex; gap: 10px; flex-wrap: wrap; flex: none; }
@@ -76,7 +77,7 @@ input:focus, select:focus { outline: none; border-color: #378ADD; }
 /* ==================== 分析视图 ==================== */
 #view-analysis { overflow-y: auto; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-.panel { background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 10px 14px; }
+.panel { display: flex; flex-direction: column; background: #181b21; border: 1px solid #262a33; border-radius: 10px; padding: 10px 14px; }
 .panel.full { grid-column: 1 / -1; }
 .cbox { width: 100%; height: 280px; }
 .cbox.tall { height: 300px; }
@@ -178,6 +179,7 @@ tbody tr:hover { background: #1f232b; }
 
 /* ==================== 日程视图 ==================== */
 .panels { flex: 1; min-height: 0; display: flex; }
+.panels > .panel { flex: 1; min-height: 0; }
 .panel h2 select + .filter-label { margin-left: 18px; }
 .panel h2 select { margin-left: 8px; width: 118px; box-sizing: border-box; }
 #c1 { flex: 1; min-height: 0; width: 100%; }
