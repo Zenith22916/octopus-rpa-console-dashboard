@@ -1101,7 +1101,7 @@ function loadLogs(){
     mmSchedule(true); lgReset();
     return;
   }
-  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log);
+  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log) + "&full=1";
   box.innerHTML = '<div class="tip">正在读取日志目录…</div>';
   fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/login'; return; } return r.json(); }).then(function(d){
     if (!d.ok){
@@ -1114,40 +1114,27 @@ function loadLogs(){
       mmSchedule(true); lgReset();
       return;
     }
-    LOG_FILES = [];
+    // 全量加载（测试用）：一次拉取目录下所有日志完整内容，不再分段
     var h = "";
+    LG.files = [];
     for (var i=0;i<d.logs.length;i++){
       var lf = d.logs[i];
-      LOG_FILES.push({ name: lf.name, size: lf.size, total: lf.lines || 0, loaded: 0, content: "", open: true });
+      var content = lf.content || "";
+      LG.files.push({ content: content });
       var moreTxt = lf.lines ? (' · 共 '+lf.lines+' 行') : '';
-      h += '<div class="logfile" data-fi="'+i+'">'
-        + '<div class="lf-head" data-fi="'+i+'">'
+      h += '<div class="logfile">'
+        + '<div class="lf-head">'
         + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
         + '<span class="lf-meta">'+fmtSize(lf.size)+moreTxt+'</span>'
         + '</div>'
         + '<div class="lf-body">'
-        + '<pre id="lf'+i+'"></pre>'
-        + '<div class="lf-more" data-fi="'+i+'" style="display:none"><button class="btn-more" type="button">加载更多</button></div>'
+        + '<pre id="lf'+i+'">'+esc(content)+'</pre>'
         + '</div>'
         + '</div>';
     }
     box.innerHTML = h;
-    LG.files = [];
-    for (var k=0;k<LOG_FILES.length;k++) LG.files.push({ content: "" });
-    var mores = box.querySelectorAll(".lf-more");
-    for (var m=0;m<mores.length;m++){
-      (function(el){
-        el.addEventListener("click", function(e){
-          e.stopPropagation();
-          var fi = parseInt(el.getAttribute("data-fi"), 10);
-          loadLogPage(fi, LOG_FILES[fi].loaded);
-        });
-      })(mores[m]);
-    }
     mmSchedule(true);
-    for (var i2=0;i2<LOG_FILES.length;i2++){
-      loadLogPage(i2, 0);
-    }
+    lgApply();
   }).catch(function(e){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
     mmSchedule(true); lgReset();

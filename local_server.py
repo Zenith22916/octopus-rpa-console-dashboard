@@ -111,6 +111,19 @@ def count_lines(path):
     return n
 
 
+def read_log_text(path):
+    """读取日志文件完整文本（utf-8 容错解码）。供 full=1 全量加载使用。"""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception:
+        try:
+            with open(path, "rb") as f:
+                return f.read().decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+
 def read_log_slice(path, offset, limit):
     """分段读取日志：从 offset 行起取 limit 行，返回 (行列表, 是否还有更多)。
     只遍历到所需位置，不一次性读入整个文件。"""
@@ -133,9 +146,9 @@ def read_log_slice(path, offset, limit):
     return collected, more
 
 
-def read_log_dir(raw):
-    """列出日志目录下的 .log 文件（仅元数据：名称/大小/行数，不含内容）。
-    供详情页首次请求；内容由前端按需分段拉取，避免大文件一次性返回导致卡死。"""
+def read_log_dir(raw, full=False):
+    """列出日志目录下的 .log 文件。默认仅元数据（名称/大小/行数）；
+    full=True 时附带完整内容（一次性全量返回，供"不分段加载"测试使用）。"""
     if not raw:
         return {"ok": False, "error": "缺少目录参数", "logs": []}
     if not is_allowed(raw):
@@ -152,7 +165,10 @@ def read_log_dir(raw):
             try:
                 size = os.path.getsize(fp)
                 lines = count_lines(fp)
-                logs.append({"name": fn, "size": size, "lines": lines})
+                item = {"name": fn, "size": size, "lines": lines}
+                if full:
+                    item["content"] = read_log_text(fp)
+                logs.append(item)
             except Exception as e:
                 logs.append({"name": fn, "size": 0, "lines": 0, "error": str(e)})
     except Exception as e:
@@ -301,7 +317,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 limit = LOG_PAGE
             payload = read_log_file_slice(raw, fn, offset, limit)
         else:
-            payload = read_log_dir(raw)
+            full = q.get("full", ["0"])[0] == "1"
+            payload = read_log_dir(raw, full=full)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
