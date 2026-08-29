@@ -791,6 +791,7 @@ DETAIL_HTML = """<!DOCTYPE html>
   .detail-wrap { display: flex; gap: 14px; align-items: flex-start; }
   .info-card { flex: 0 0 400px; max-width: 400px; min-width: 0; }
   .log-card { flex: 1 1 auto; min-width: 0; }
+  #logbox { min-width: 0; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .field { background: #0f1115; border: 1px solid #262a33; border-radius: 8px; padding: 10px 12px;
            min-height: 60px; display: flex; flex-direction: column; justify-content: center; }
@@ -815,9 +816,21 @@ DETAIL_HTML = """<!DOCTYPE html>
                  background: #0b0d11; color: #cdd3da;
                  font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12.5px; line-height: 1.6;
                  white-space: pre-wrap; word-break: break-all; }
+  /* ---- 日志缩略图（仿 VSCode 右侧 minimap） ---- */
+  [hidden] { display: none !important; }
+  .log-body { display: flex; flex: 1 1 auto; min-height: 0; }
+  .minimap { flex: 0 0 96px; position: relative; margin-left: 10px; align-self: stretch;
+             background: #0b0d11; border: 1px solid #262a33; border-radius: 6px;
+             overflow: hidden; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .minimap canvas { display: block; }
+  .minimap .mm-viewport { position: absolute; left: 0; right: 0; top: 0; height: 0;
+                          background: rgba(190, 200, 215, 0.10); pointer-events: none; }
+  .minimap:hover .mm-viewport { background: rgba(190, 200, 215, 0.18); }
+  .minimap.mm-drag .mm-viewport { background: rgba(190, 200, 215, 0.22); }
   @media (max-width: 900px) {
     .detail-wrap { flex-direction: column; }
     .info-card { flex: 1 1 auto; max-width: none; width: 100%; }
+    .minimap { display: none !important; }
   }
   @media (max-width: 480px) {
     .grid { grid-template-columns: 1fr; }
@@ -908,21 +921,232 @@ function render(){
     + (runMs!=null ? fld("运行时长", fmtDur(runMs)) : "")
     + '</div></div>';
 
-  var logCard = '<div class="card log-card"><h3>日志内容</h3><div id="logbox" class="tip">正在读取日志…</div></div>';
+  var logCard = '<div class="card log-card"><h3>日志内容</h3>'
+    + '<div class="log-body">'
+    +   '<div id="logbox" class="tip">正在读取日志…</div>'
+    +   '<div class="minimap" id="minimap" hidden title="拖动可快速定位日志">'
+    +     '<canvas id="mmcanvas"></canvas><div class="mm-viewport" id="mmviewport"></div>'
+    +   '</div>'
+    + '</div></div>';
 
   app.innerHTML = '<div class="detail-wrap">' + info + logCard + '</div>';
 }
 function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
+/* ==================== 日志缩略图（仿 VSCode 右侧 minimap） ====================
+   把 #logbox 内所有 <pre> 的真实排版（含自动换行）按比例绘制到右侧 canvas，
+   叠加可视区域指示块，支持点击跳转与拖拽定位。 */
+var MM = { box:null, mm:null, cv:null, vp:null, drag:false, grab:0, raf:0, vraf:0, sig:"", h:0, stop:false };
+var MM_COLORS = ["#79839a", "#E24B4A", "#EF9F27", "#1D9E75"];   // 普通 / 错误 / 警告 / 成功
+/* 一次扫描判定关键词类别：组1=错误 组2=警告 组3=成功 */
+var MM_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
+var MM_WA = null, MM_WO = null;          // 字符宽度缓存（ASCII 用数组，其余用对象）
+var MM_CAT = null;                       // 行内类别缓冲（复用，避免每行分配）
+function mmCharW(ctx, code){
+  var w;
+  if (code < 128){
+    if (!MM_WA){ MM_WA = new Float32Array(128); }
+    w = MM_WA[code];
+    if (!w){ w = MM_WA[code] = ctx.measureText(String.fromCharCode(code)).width || 6; }
+    return w;
+  }
+  if (!MM_WO) MM_WO = {};
+  w = MM_WO[code];
+  if (w === undefined || !w){ w = MM_WO[code] = ctx.measureText(String.fromCharCode(code)).width || 12; }
+  return w;
+}
+/* 填充行内类别：空白=-1，普通=0，错误/警告/成功=1/2/3 */
+function mmFillCats(line){
+  var n = line.length, i, m, ch;
+  if (!MM_CAT || MM_CAT.length < n) MM_CAT = new Int8Array(Math.max(2048, n + 256));
+  var buf = MM_CAT;
+  for (i = 0; i < n; i++){
+    ch = line.charAt(i);
+    buf[i] = (ch === " " || ch === "\\t" || ch === "\\r") ? -1 : 0;
+  }
+  if (n > 20000) return buf;             // 超长行不做关键词匹配，避免正则开销
+  MM_RE.lastIndex = 0;
+  while ((m = MM_RE.exec(line)) !== null){
+    var c = m[1] ? 1 : (m[2] ? 2 : 3);
+    var e0 = m.index + m[0].length;
+    for (i = m.index; i < e0; i++){ if (buf[i] >= 0) buf[i] = c; }
+  }
+  return buf;
+}
+/* 绘制一个 <pre>：自行模拟换行布局（pre-wrap + break-all），避免逐行 Range 测量带来的卡顿 */
+function mmDrawPre(ctx, pre, contentTop, scale, W, drawn){
+  if (MM.stop || !pre.offsetParent) return drawn;         // 折叠/隐藏的日志不绘制
+  var tn = pre.firstChild;
+  if (!tn || tn.nodeType !== 3) return drawn;
+  var text = tn.nodeValue || "";
+  if (!text) return drawn;
+  var cs = window.getComputedStyle(pre);
+  var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0, padT = parseFloat(cs.paddingTop) || 0;
+  var contentW = pre.clientWidth - padL - padR;
+  if (contentW <= 0) return drawn;
+  var fs = parseFloat(cs.fontSize) || 12.5;
+  var lh = parseFloat(cs.lineHeight);
+  if (!lh || lh < 1) lh = fs * 1.6;
+  ctx.font = (cs.fontStyle || "normal") + " " + (cs.fontWeight || "400") + " " + fs + "px " + (cs.fontFamily || "monospace");
+  var rowH = Math.max(1, lh * scale);
+  var tiny = rowH < 2;                                    // 行太密：每行只画一条色带
+  var kx = W / contentW;                                  // 像素宽 → 缩略图宽
+  var yDoc = (pre.getBoundingClientRect().top + padT) - contentTop;
+  var H = MM.h;
+  var n = text.length, i = 0;
+  while (i < n){
+    var nl = text.indexOf("\\n", i);
+    var end = (nl === -1) ? n : nl;
+    var line = text.slice(i, end);
+    var cats = mmFillCats(line);
+    var j = 0, L = line.length, acc = 0;
+    var runCat = -2, runX0 = 0, best = -1, minX = 1e9, maxX = 0;
+    while (j <= L){
+      if (j === L || (acc > 0 && acc + mmCharW(ctx, line.charCodeAt(j)) > contentW)){
+        /* 输出一个视觉行 */
+        var y = yDoc * scale;
+        if (y > H + rowH){ MM.stop = true; return drawn; }
+        if (y + rowH > 0){
+          if (tiny){
+            if (best >= 0 && maxX > minX){
+              ctx.fillStyle = MM_COLORS[best];
+              ctx.fillRect(minX * kx, y, Math.max((maxX - minX) * kx, 0.8), rowH);
+            }
+          } else {
+            if (runCat >= 0 && acc > runX0){
+              ctx.fillStyle = MM_COLORS[runCat];
+              ctx.fillRect(runX0 * kx, y, Math.max((acc - runX0) * kx, 0.7), rowH);
+            }
+          }
+        }
+        drawn++;
+        yDoc += lh;
+        if (j === L) break;
+        acc = 0; runCat = -2; best = -1; minX = 1e9; maxX = 0;
+      }
+      var c = cats[j], w = mmCharW(ctx, line.charCodeAt(j));
+      if (c >= 0){
+        if (c > best) best = c;
+        if (acc < minX) minX = acc;
+        if (acc + w > maxX) maxX = acc + w;
+      }
+      if (!tiny && c !== runCat){
+        if (runCat >= 0 && acc > runX0){
+          var yy = yDoc * scale;
+          if (yy + rowH > 0 && yy <= H + rowH){
+            ctx.fillStyle = MM_COLORS[runCat];
+            ctx.fillRect(runX0 * kx, yy, Math.max((acc - runX0) * kx, 0.7), rowH);
+          }
+        }
+        runCat = c; runX0 = acc;
+      }
+      acc += w;
+      j++;
+    }
+    i = end + 1;
+    if (nl === -1) break;
+  }
+  return drawn;
+}
+function mmBuild(){
+  var box = MM.box, mm = MM.mm, cv = MM.cv;
+  if (!box || !mm || !cv) return;
+  var sig = box.clientWidth + "x" + box.clientHeight + "x" + box.scrollHeight + "|" + (mm.hidden ? 1 : 0);
+  if (sig === MM.sig) return;
+  MM.sig = sig;
+  var docH = box.scrollHeight, viewH = box.clientHeight;
+  if (!docH || docH <= viewH + 4){ if (!mm.hidden) { mm.hidden = true; MM.sig = ""; } return; }
+  mm.hidden = false;
+  var W = mm.clientWidth, H = mm.clientHeight;
+  if (W <= 0 || H <= 0) return;
+  MM.h = H;
+  var dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  var ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  var scale = H / docH;
+  var boxRect = box.getBoundingClientRect();
+  var contentTop = boxRect.top - box.scrollTop;
+  var pres = box.querySelectorAll("pre"), drawn = 0, t0 = (window.performance && performance.now) ? performance.now() : 0;
+  MM.stop = false;
+  for (var i = 0; i < pres.length; i++) drawn = mmDrawPre(ctx, pres[i], contentTop, scale, W, drawn);
+  if (t0) box.setAttribute("data-mm-ms", Math.round(performance.now() - t0));
+  box.setAttribute("data-mm-lines", drawn);
+  mmSync();
+}
+function mmSync(){
+  var box = MM.box, mm = MM.mm, vp = MM.vp;
+  if (!box || !mm || !vp || mm.hidden) return;
+  var docH = box.scrollHeight, viewH = box.clientHeight, H = mm.clientHeight;
+  if (!docH || !H) return;
+  var scale = H / docH;
+  var h = Math.max(6, Math.min(H, viewH * scale));
+  var top = box.scrollTop * scale;
+  if (top + h > H) top = Math.max(0, H - h);
+  vp.style.top = top + "px";
+  vp.style.height = h + "px";
+}
+function mmSchedule(force){ if (force) MM.sig = ""; if (MM.raf) return; MM.raf = requestAnimationFrame(function(){ MM.raf = 0; mmBuild(); }); }
+function mmGo(clientY){
+  var box = MM.box, mm = MM.mm;
+  if (!box || !mm || mm.hidden) return;
+  var r = mm.getBoundingClientRect(), H = mm.clientHeight || 1;
+  var docH = box.scrollHeight, viewH = box.clientHeight, scale = docH / H;
+  var y = Math.max(0, Math.min(H, clientY - r.top));
+  box.scrollTop = Math.max(0, Math.min(docH - viewH, y * scale - MM.grab));
+}
+function mmDown(e){
+  if (!MM.box || !MM.mm || MM.mm.hidden) return;
+  var r = MM.mm.getBoundingClientRect(), H = MM.mm.clientHeight || 1;
+  var docH = MM.box.scrollHeight, viewH = MM.box.clientHeight, scale = docH / H;
+  var docY = (e.clientY - r.top) * scale;
+  MM.grab = (docY >= MM.box.scrollTop && docY <= MM.box.scrollTop + viewH) ? (docY - MM.box.scrollTop) : viewH / 2;
+  MM.drag = true;
+  MM.mm.classList.add("mm-drag");
+  if (e.pointerId != null && MM.mm.setPointerCapture) { try { MM.mm.setPointerCapture(e.pointerId); } catch(err){} }
+  mmGo(e.clientY);
+  e.preventDefault();
+}
+function mmMove(e){ if (MM.drag) mmGo(e.clientY); }
+function mmUp(){
+  if (!MM.drag) return;
+  MM.drag = false;
+  if (MM.mm) MM.mm.classList.remove("mm-drag");
+}
+function mmInit(){
+  MM.box = document.getElementById("logbox");
+  MM.mm  = document.getElementById("minimap");
+  MM.cv  = document.getElementById("mmcanvas");
+  MM.vp  = document.getElementById("mmviewport");
+  if (!MM.box || !MM.mm) return;
+  MM.box.addEventListener("scroll", function(){
+    if (MM.vraf) return;
+    MM.vraf = requestAnimationFrame(function(){ MM.vraf = 0; mmSync(); });
+  }, { passive: true });
+  MM.mm.addEventListener("pointerdown", mmDown);
+  window.addEventListener("pointermove", mmMove);
+  window.addEventListener("pointerup", mmUp);
+  window.addEventListener("pointercancel", mmUp);
+  window.addEventListener("resize", function(){ MM.sig = ""; mmSchedule(); });
+  if (window.ResizeObserver){
+    new ResizeObserver(function(){ MM.sig = ""; mmSchedule(); }).observe(MM.box);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ MM.sig = ""; mmSchedule(); });
+  mmSchedule();
+}
 function loadLogs(){
   var box = document.getElementById("logbox");
   if (!box) return;
   if (!REC.log){
     box.innerHTML = '<div class="tip">未配置该机器人的日志目录，无法确定日志路径。请在 robot_logs.json 中补充该机器人的共享日志目录（参考其他机器人配置）。</div>';
+    mmSchedule(true);
     return;
   }
   if (location.protocol === "file:"){
     var cur = location.pathname.split("/").pop();
     box.innerHTML = '<div class="warn">⚠ 当前以 file:// 方式打开，浏览器禁止实时读取日志。请改用本地服务器：运行 start_server.bat，再打开 <a href="http://localhost:8000/'+esc(cur)+'" target="_blank" rel="noopener">http://localhost:8000/'+esc(cur)+'</a></div>';
+    mmSchedule(true);
     return;
   }
   var url = "/api/log?dir=" + encodeURIComponent(REC.log);
@@ -930,10 +1154,12 @@ function loadLogs(){
   fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/'; return; } return r.json(); }).then(function(d){
     if (!d.ok){
       box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
+      mmSchedule(true);
       return;
     }
     if (!d.logs || d.logs.length === 0){
       box.innerHTML = '<div class="tip">目录下没有 .log 文件。</div>';
+      mmSchedule(true);
       return;
     }
     var h = "";
@@ -955,14 +1181,18 @@ function loadLogs(){
           var e = document.getElementById(el.getAttribute("data-tid"));
           if (e.style.display === "none"){ e.style.display = "block"; }
           else { e.style.display = "none"; }
+          mmSchedule(true);
         });
       })(heads[j]);
     }
+    mmSchedule(true);
   }).catch(function(e){
     box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
+    mmSchedule(true);
   });
 }
 render();
+mmInit();
 loadLogs();
 </script>
 </body>
