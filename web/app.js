@@ -1123,7 +1123,7 @@ function loadLogs(){
       h += '<div class="logfile" data-fi="'+i+'">'
         + '<div class="lf-head" data-fi="'+i+'">'
         + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
-        + '<span class="lf-meta">'+fmtSize(lf.size)+moreTxt+' · 分段加载</span>'
+        + '<span class="lf-meta">'+fmtSize(lf.size)+moreTxt+'</span>'
         + '</div>'
         + '<div class="lf-body">'
         + '<pre id="lf'+i+'"></pre>'

@@ -112,7 +112,8 @@ tbody tr:hover { background: #1f232b; }
 .badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 13px; font-weight: 500; }
 .tip { color: #8b8f98; font-size: 12px; margin-top: 6px; }
 .empty { color: #8b8f98; padding: 40px; text-align: center; }
-.logfile { margin-top: 12px; border: 1px solid #262a33; border-radius: 8px; overflow: hidden; }
+.logfile { margin-top: 0; border: 1px solid #262a33; border-radius: 8px; overflow: hidden; }
+.logfile + .logfile { margin-top: 12px; }
 .logfile .lf-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
                     padding: 9px 12px; background: #11141a; }
 .logfile .lf-name { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; color: #d6dae0; word-break: break-all; }
