@@ -404,7 +404,16 @@ function tlRender(){
       }
     }]
   }, { lazyUpdate: true });
-  document.getElementById('mTotal').textContent = recCount;
+  // 窗口内可见记录按触发方式计数（同一记录排队+运行两段去重）
+  var wayRecs = { Manual: 0, TimingTrigger: 0, Webhook: 0 };
+  var seenW = {};
+  visible.forEach(function(s){
+    var wk = s.r.id + '_' + s.r.way;
+    if (!seenW[wk] && wayRecs[s.r.way] != null){ seenW[wk] = 1; wayRecs[s.r.way]++; }
+  });
+  document.getElementById('mTotal').textContent = wayRecs.Webhook;
+  document.getElementById('mManual').textContent = wayRecs.Manual;
+  document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
   document.getElementById('mRobots').textContent = robots.length;
 }
 function tlUpdateWindow(){ if (curView === 'timeline') tlRender(); }
