@@ -14,9 +14,11 @@ a { color: #378ADD; }
 ::-webkit-scrollbar-thumb:hover { background: #4a5263; }
 [hidden] { display: none !important; }
 
-.head { display: flex; align-items: center; justify-content: space-between;
-        gap: 12px; margin-bottom: 10px; flex-wrap: wrap; flex: none; }
+.head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; flex: none; }
 .titlebar { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+#headMetrics { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+#headMetrics .metrics { margin-bottom: 0; flex: none; }
+#headMetrics .metric { padding: 4px 12px; }
 .datatime { font-size: 11px; color: #6f7480; margin-left: 8px; }
 .datatime.warn, .warn { color: #E24B4A; }
 #navSel { width: auto; background: transparent; color: #e6e6e6; border: 1px solid transparent;
@@ -24,7 +26,7 @@ a { color: #378ADD; }
           cursor: pointer; font-family: inherit; }
 #navSel:hover { border-color: #333a45; background: #22262e; }
 #navSel:focus { outline: none; border-color: #333a45; }
-.auto-bar { display: flex; align-items: center; gap: 8px; }
+.auto-bar { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .auto-update-label { font-size: 13px; color: #8b8f98; }
 /* 手机风格暗色开关 */
 .switch { position: relative; display: inline-block; width: 42px; height: 24px; vertical-align: middle; }

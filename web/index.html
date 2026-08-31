@@ -19,6 +19,20 @@
     <div class="datatime" id="dataTime">数据获取：—</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>
+  <div id="headMetrics">
+    <div class="metrics" id="tlMetrics" style="display:none;">
+      <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
+      <div class="metric"><div class="k">手动记录</div><div class="v" id="mManual" style="color:#1D9E75">0</div></div>
+      <div class="metric"><div class="k">定时触发记录</div><div class="v" id="mTiming" style="color:#7F77DD">0</div></div>
+      <div class="metric"><div class="k">机器人</div><div class="v" id="mRobots" style="color:#378ADD">0</div></div>
+    </div>
+    <div class="metrics" id="scMetrics" style="display:none;">
+      <div class="metric"><div class="k">触发器总数</div><div class="v" id="sTotal" style="color:#378ADD">0</div></div>
+      <div class="metric"><div class="k">已启用</div><div class="v" id="sEnabled" style="color:#1D9E75">0</div></div>
+      <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
+      <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
+    </div>
+  </div>
   <div class="auto-bar">
     <span class="auto-update-label">自动更新：</span>
     <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
@@ -27,12 +41,6 @@
 
 <!-- ==================== 时间轴视图 ==================== -->
 <div id="view-timeline" class="view" style="display:none;">
-  <div class="metrics">
-    <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
-    <div class="metric"><div class="k">手动记录</div><div class="v" id="mManual" style="color:#1D9E75">0</div></div>
-    <div class="metric"><div class="k">定时触发记录</div><div class="v" id="mTiming" style="color:#7F77DD">0</div></div>
-    <div class="metric"><div class="k">机器人</div><div class="v" id="mRobots" style="color:#378ADD">0</div></div>
-  </div>
   <div class="chart-head">
     <span class="filter-label">时间窗口：</span>
     <select id="selSpan">
@@ -94,12 +102,6 @@
 
 <!-- ==================== 日程视图 ==================== -->
 <div id="view-schedule" class="view" style="display:none;">
-  <div class="metrics">
-    <div class="metric"><div class="k">触发器总数</div><div class="v" id="sTotal" style="color:#378ADD">0</div></div>
-    <div class="metric"><div class="k">已启用</div><div class="v" id="sEnabled" style="color:#1D9E75">0</div></div>
-    <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
-    <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
-  </div>
   <div class="panels">
     <div class="panel">
       <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select></h2>

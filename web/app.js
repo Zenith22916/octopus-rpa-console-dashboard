@@ -87,6 +87,10 @@ function showView(name){
   if (sel && ['timeline', 'analysis', 'schedule'].indexOf(name) >= 0){
     sel.value = '#/' + name;
   }
+  // 标题栏指标卡按视图切换（时间轴 / 日程；分析页在页面内有自己的指标卡）
+  var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
+  if (tlM) tlM.style.display = (name === 'timeline') ? 'flex' : 'none';
+  if (scM) scM.style.display = (name === 'schedule') ? 'flex' : 'none';
 }
 function parseHash(){
   var h = location.hash || '#/analysis';
