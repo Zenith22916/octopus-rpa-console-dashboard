@@ -181,22 +181,25 @@ var _mc = (function(){
   catch(e){ return null; }
 })();
 function measureW(s, fs){ if (!_mc) return s.length * 10; _mc.font = '500 ' + (fs || 20) + 'px ' + FONT_STACK; return _mc.measureText(s).width; }
-function wrapLabel(name, maxW, fs){
+// 大标题字号：与时间轴数据块文字保持一致（读取 .title 的 20px，CSS 改了这里也跟着变）
+var TITLE_FS = (function(){
+  try { var el = document.querySelector('.title'); if (el) return parseFloat(getComputedStyle(el).fontSize) || 20; } catch(e){}
+  return 20;
+})();
+// 单行文字：放得下整串显示；放不下则截断并在末尾加 "..."
+function truncateLabel(name, maxW, fs){
   if (!name) return '';
-  if (maxW < 8) return '';
-  var full = measureW(name, fs);
-  if (full <= maxW) return name;
-  var lines = [], cur = '', curW = 0;
+  if (maxW < 6) return '';                 // 太窄，连省略号都放不下
+  if (measureW(name, fs) <= maxW) return name;
+  var ell = '...', ellW = measureW(ell, fs), budget = maxW - ellW;
+  if (budget <= 0) return '';
+  var cur = '', curW = 0;
   for (var i = 0; i < name.length; i++){
-    var ch = name[i];
-    var cw = measureW(ch, fs);
-    if (curW + cw > maxW){
-      if (lines.length >= 1) return '';
-      lines.push(cur); cur = ch; curW = cw;
-    } else { cur += ch; curW += cw; }
+    var cw = measureW(name[i], fs);
+    if (curW + cw > budget) break;
+    cur += name[i]; curW += cw;
   }
-  if (cur) lines.push(cur);
-  return lines.join('\n');
+  return cur + ell;
 }
 function effEnd(s){ return s.end == null ? state.end : s.end; }
 function layout(segs){
@@ -387,16 +390,13 @@ function tlRender(){
         var cx = api.coord([vc, row])[0];
         var y = api.coord([vc, row])[1];
         var wTotal = Math.abs(api.coord([vEnd, row])[0] - api.coord([vStart, row])[0]);
-        // 字号随数据块高度动态：一行高 = 块高/2（最多两行），字号约为行高的 0.85
-        var band = api.size([0, 1])[1];
-        var bh = Math.max(10, band - 4);
-        var lh = Math.round(bh / 2);
-        var fs = Math.max(8, Math.round(lh * 0.85));
-        var label = wrapLabel(api.value(2), Math.max(2, wTotal - 4), fs);
-        if (!label) return null;
+        // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
+        var fs = TITLE_FS;
+        var label = truncateLabel(api.value(2), Math.max(2, wTotal - 4), fs);
+        if (!label || label.length < 8) return null;
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
                  textVerticalAlign: 'middle', fill: '#10141a', fontSize: fs,
-                 lineHeight: lh, fontWeight: 500, fontFamily: FONT_STACK } };
+                 fontWeight: 500, fontFamily: FONT_STACK } };
       }
     }, {
       type: 'custom', data: sepData, zlevel: 1, silent: true,
