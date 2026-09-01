@@ -1439,7 +1439,10 @@ document.getElementById('btnRerun').addEventListener('click', function(){
   .then(function(r){ return r.json(); })
   .then(function(j){
     if (j.ok) {
-      alert('已触发重新运行，批次号：' + (j.flowProcessNo || '—'));
+      var msg = '已触发重新运行，批次号：' + (j.flowProcessNo || '—');
+      if (j.botId) msg += '\n执行机器人：' + j.botId.replace(/^.*_/, '');
+      msg += '\n任务已进入队列，可返回时间轴查看实时状态。';
+      alert(msg);
       if (typeof refreshData === 'function') refreshData();
     } else {
       alert('重新运行失败：' + (j.message || j.error || '未知错误'));

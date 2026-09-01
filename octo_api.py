@@ -181,12 +181,42 @@ def _authed_post(cfg, path, body):
     return code, resp
 
 
-def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent"):
+def _resolve_bot_for_flow(cfg, token, ent, flow_id):
+    """从运行记录里找该流程最近一次成功运行的机器人 botId。
+
+    平台按登录账号自动分配机器人可能没有该流程的权限（会报「没有操作权限」），
+    所以优先复用该流程历史成功运行用的机器人。找不到返回 None（交给平台分配）。
+    """
+    try:
+        req = urllib.request.Request(BASE + "/desktop/bots/runningRecords?pageSize=50&pageNo=1",
+                                     headers={"Authorization": f"Bearer {token}",
+                                              "EnterpriseId": ent,
+                                              "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    for it in (data.get("items") or []):
+        if it.get("flowId") == flow_id and it.get("status") in ("Finished", "Executing"):
+            bid = it.get("botId")
+            if bid:
+                return bid
+    return None
+
+
+def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent",
+               resolve_bot=True):
     """手动触发应用运行。返回批次号 flowProcessNo。
 
     flow_id: 应用/流程 ID（仪表盘详情页 rec.fid）。
-    bot_id:  可选，指定机器人；不填则由平台分配空闲机器人。
+    bot_id:  可选，显式指定机器人（建议传流程实际归属的机器人）。
+    resolve_bot: 未传 bot_id 时，自动从该流程历史成功运行记录里找机器人，
+                 避免平台按登录账号分配到无权限的机器人导致「没有操作权限」。
     """
+    token = ensure_token(cfg)
+    ent = resolve_enterprise(cfg, token)
+    if not bot_id and resolve_bot:
+        bot_id = _resolve_bot_for_flow(cfg, token, ent, flow_id)
     body = {"flowId": flow_id, "flowContentRetrievalMode": mode}
     if bot_id:
         body["specifiedBot"] = bot_id
@@ -194,8 +224,28 @@ def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent"):
         body["params"] = params
     code, resp = _authed_post(cfg, "/desktop/bots/scheduling/start", body)
     if code in (200, 201):
-        return resp.get("flowProcessNo") or resp.get("processNo") or resp
+        pno = resp.get("flowProcessNo") or resp.get("processNo") or resp
+        if isinstance(pno, dict):
+            pno = json.dumps(pno, ensure_ascii=False)
+        return {"processNo": pno, "botId": bot_id}
     raise RuntimeError(f"启动失败({code}): {resp}")
+
+
+def query_run_state(cfg, process_no, flow_id=None):
+    """查询批次状态（调试/前端轮询用）。返回记录 dict 或 None。"""
+    token = ensure_token(cfg)
+    ent = resolve_enterprise(cfg, token)
+    req = urllib.request.Request(BASE + "/desktop/bots/runningRecords?pageSize=100&pageNo=1",
+                                 headers={"Authorization": f"Bearer {token}",
+                                          "EnterpriseId": ent,
+                                          "User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    for it in (data.get("items") or []):
+        if it.get("flowProcessNo") == str(process_no):
+            if flow_id is None or it.get("flowId") == flow_id:
+                return it
+    return None
 
 
 def list_underway(cfg):

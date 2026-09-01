@@ -314,9 +314,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             cfg_path = os.path.join(BASE, "config.json")
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            pno = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
+            result = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
+            pno = result.get("processNo", "") if isinstance(result, dict) else result
+            bot = result.get("botId") if isinstance(result, dict) else None
             return self._send_json({"ok": True, "flowId": flow_id,
-                                    "flowProcessNo": pno if isinstance(pno, str) else ""})
+                                    "flowProcessNo": str(pno),
+                                    "botId": bot})
         except Exception as e:
             return self._send_json({"ok": False, "message": str(e)}, 502)
 
