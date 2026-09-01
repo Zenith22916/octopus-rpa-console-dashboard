@@ -257,13 +257,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def handle_refresh(self):
         """网页每分钟请求一次：若 60 秒内已爬取过则跳过，直接返回最新数据。
+        带 ?force=1（标题栏"立刻更新"按钮）时忽略 60 秒节流，立即爬取。
         run_refresh 失败（如登录态过期且无法重新登录）时如实返回 ok=False，
         客户端据此提示刷新失败，而不是误以为成功、一直显示陈旧数据。"""
+        q = parse_qs(urlparse(self.path).query)
+        force = q.get("force", ["0"])[0].lower() in ("1", "true", "yes")
         now = time.time()
         skipped = False
         ok = True
         error = ""
-        if now - LAST_REFRESH[0] < REFRESH_INTERVAL:
+        if not force and now - LAST_REFRESH[0] < REFRESH_INTERVAL:
             skipped = True
         else:
             ok = run_refresh()

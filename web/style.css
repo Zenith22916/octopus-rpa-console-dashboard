@@ -27,6 +27,9 @@ a { color: #378ADD; }
 #navSel:hover { border-color: #333a45; background: #22262e; }
 #navSel:focus { outline: none; border-color: #333a45; }
 .auto-bar { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.refresh-now { background: #1d2a3a; border-color: #2f4d73; color: #7fb2e5; }
+.refresh-now:hover:not(:disabled) { background: #243650; border-color: #378ADD; color: #b7d4f2; }
+.refresh-now:disabled { opacity: .7; cursor: default; }
 .auto-update-label { font-size: 13px; color: #8b8f98; }
 /* 手机风格暗色开关 */
 .switch { position: relative; display: inline-block; width: 42px; height: 24px; vertical-align: middle; }

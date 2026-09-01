@@ -1399,13 +1399,15 @@ function scInit(){
 setInterval(scUpdateLines, 10000);
 
 /* ==================== 自动更新 ==================== */
-function refreshData(){
-  fetch('/api/refresh', { method: 'POST', credentials: 'same-origin' }).then(function(r){
+function refreshData(force, done){
+  fetch((force ? '/api/refresh?force=1' : '/api/refresh'), { method: 'POST', credentials: 'same-origin' }).then(function(r){
     if (r.status === 401){ location.href = '/login'; return; }
     return r.json();
   }).then(function(d){
     var warnEl = document.getElementById('refreshWarn');
+    var okFlag = false;
     if (d && d.ok && Array.isArray(d.records)) {
+      okFlag = true;
       if (warnEl) warnEl.style.display = 'none';
       RECORDS = d.records;
       if (curView === 'timeline'){ records = RECORDS.slice(); recomputeBounds(); tlRender(); }
@@ -1415,8 +1417,19 @@ function refreshData(){
       warnEl.style.display = 'block';
       if (d && d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time + '（刷新失败）';
     }
-  }).catch(function(){});
+    if (done) done(okFlag);
+  }).catch(function(){ if (done) done(false); });
 }
+document.getElementById('btnRefreshNow').addEventListener('click', function(){
+  var btn = this;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '更新中…';
+  refreshData(true, function(ok){
+    btn.textContent = ok ? '✓ 已更新' : '✗ 失败';
+    setTimeout(function(){ btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
+  });
+});
 document.getElementById('chkAuto').addEventListener('change', function(){
   if (this.checked) {
     refreshData();
