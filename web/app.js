@@ -1426,6 +1426,27 @@ document.getElementById('chkAuto').addEventListener('change', function(){
   }
 });
 document.getElementById('btnBack').addEventListener('click', function(){ location.hash = '#/timeline'; });
+document.getElementById('btnRerun').addEventListener('click', function(){
+  var rec = DETAIL_REC;
+  if (!rec || !rec.fid) { alert('该记录缺少流程 ID，无法重新运行'); return; }
+  var name = rec.name || rec.fid;
+  if (!confirm('确认重新运行应用「' + name + '」？\n将立即触发一次执行。')) return;
+  fetch('/api/rerun', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow_id: rec.fid })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(j){
+    if (j.ok) {
+      alert('已触发重新运行，批次号：' + (j.flowProcessNo || '—'));
+      if (typeof refreshData === 'function') refreshData();
+    } else {
+      alert('重新运行失败：' + (j.message || j.error || '未知错误'));
+    }
+  })
+  .catch(function(e){ alert('请求失败：' + e); });
+});
 document.getElementById('navSel').addEventListener('change', function(){ location.hash = this.value; });
 if (document.getElementById('chkAuto').checked) {
   refreshData();

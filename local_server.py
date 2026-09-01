@@ -25,6 +25,7 @@ import time
 from urllib.parse import urlparse, parse_qs, unquote
 
 import dashboard  # 数据聚合层（load_records / build_schedule_payload）
+import octo_api    # 八爪鱼调度 API（详情页"重新运行"）
 
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -248,6 +249,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
             self.handle_refresh()
             return
+        if path0 == "/api/rerun":
+            if not self._authorized():
+                return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
+            return self.handle_rerun()
         self.send_error(404, "Not Found")
 
     def handle_refresh(self):
@@ -281,6 +286,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_json(self, obj, code=200):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_rerun(self):
+        """POST /api/rerun：手动触发应用重新运行。
+
+        请求体: {"flow_id": "...", "bot_id": "可选"}
+        成功返回 {"ok": true, "flowProcessNo": "批次号"}。
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except Exception:
+            body = {}
+        flow_id = str(body.get("flow_id") or "").strip()
+        if not flow_id:
+            return self._send_json({"ok": False, "message": "缺少 flow_id"}, 400)
+        try:
+            cfg_path = os.path.join(BASE, "config.json")
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            pno = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
+            return self._send_json({"ok": True, "flowId": flow_id,
+                                    "flowProcessNo": pno if isinstance(pno, str) else ""})
+        except Exception as e:
+            return self._send_json({"ok": False, "message": str(e)}, 502)
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
