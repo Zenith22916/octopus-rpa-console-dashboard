@@ -144,6 +144,7 @@ var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0 };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
+var tlScrollTrackEl = null, tlScrollThumbEl = null;
 function recomputeBounds(){
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -424,6 +425,20 @@ function tlRender(){
   document.getElementById('mManual').textContent = wayRecs.Manual;
   document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
   document.getElementById('mRobots').textContent = robots.length;
+  tlScrollSync();
+}
+function tlScrollSync(){
+  if (!tlScrollTrackEl || !tlScrollThumbEl) return;
+  var total = state.end - DATA_MIN;
+  if (!(total > 0)) { tlScrollThumbEl.style.display = 'none'; return; }
+  tlScrollThumbEl.style.display = 'block';
+  var tW = tlScrollTrackEl.clientWidth || 1;
+  var nowW = Math.min(state.end + state.offset, state.end);
+  var w = Math.max(36, Math.min(tW, state.span / total * tW));
+  var frac = (nowW - DATA_MIN) / total;
+  var left = Math.max(0, Math.min(tW - w, frac * tW - w));
+  tlScrollThumbEl.style.width = w + 'px';
+  tlScrollThumbEl.style.left = left + 'px';
 }
 function tlUpdateWindow(){ if (curView === 'timeline') tlRender(); }
 function tlResize(){ if (tlChart) tlChart.resize(); }
@@ -458,6 +473,46 @@ function tlInit(){
     state.span = parseInt(document.getElementById('selSpan').value, 10);
     tlUpdateWindow();
   });
+  // 横向滚动条：拖动（触屏/鼠标）浏览时间轴，映射到 state.offset，与滚轮/双击一致
+  tlScrollTrackEl = document.getElementById('tlScrollTrack');
+  tlScrollThumbEl = document.getElementById('tlScrollThumb');
+  if (tlScrollTrackEl && tlScrollThumbEl) {
+    var dragging = false, startX = 0, startOffset = 0;
+    function pxPerMs(){
+      var total = (state.end - DATA_MIN) || 1;
+      var tW = tlScrollTrackEl.clientWidth || 1;
+      return tW / total;
+    }
+    function clampOffset(o){
+      var nowT = Date.now();
+      return Math.max(DATA_MIN - nowT, Math.min(0, o));
+    }
+    tlScrollThumbEl.addEventListener('pointerdown', function(e){
+      dragging = true;
+      startX = e.clientX;
+      startOffset = state.offset;
+      try { tlScrollThumbEl.setPointerCapture(e.pointerId); } catch(err){}
+      e.preventDefault();
+    });
+    tlScrollThumbEl.addEventListener('pointermove', function(e){
+      if (!dragging) return;
+      var dMs = (e.clientX - startX) / pxPerMs();
+      state.offset = clampOffset(startOffset + dMs);
+      tlUpdateWindow();
+    });
+    function stopDrag(){ dragging = false; }
+    tlScrollThumbEl.addEventListener('pointerup', stopDrag);
+    tlScrollThumbEl.addEventListener('pointercancel', stopDrag);
+    tlScrollTrackEl.addEventListener('click', function(e){
+      if (e.target === tlScrollThumbEl) return;
+      var rect = tlScrollTrackEl.getBoundingClientRect();
+      var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+      var nowT = Date.now();
+      var targetEnd = DATA_MIN + frac * (state.end - DATA_MIN);
+      state.offset = clampOffset(targetEnd - nowT);
+      tlUpdateWindow();
+    });
+  }
   var toastEl = document.getElementById('toast');
   var toastTimer = null;
   function showToast(msg){

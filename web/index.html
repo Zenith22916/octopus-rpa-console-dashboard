@@ -62,8 +62,12 @@
       <option value="Webhook">Webhook</option>
     </select>
   </div>
+  <div class="tl-scroll" id="tlScroll">
+    <div class="tl-scroll-track" id="tlScrollTrack"></div>
+    <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
+  </div>
   <div id="chart" class="chart"></div>
-  <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook；滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
+  <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook；拖动上方滚动条或滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
     <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
     <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
     <span class="legend"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>

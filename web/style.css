@@ -61,6 +61,17 @@ input:focus, select:focus { outline: none; border-color: #378ADD; }
 .chart-head { display: flex; align-items: center; gap: 10px; flex: none; box-sizing: border-box;
               background: #181b21; border: 1px solid #262a33; border-radius: 10px 10px 0 0;
               padding: 8px 14px; }
+/* 时间轴横向滚动条（移动端触屏可拖拽） */
+.tl-scroll { position: relative; flex: none; height: 18px; margin: 2px 14px 4px;
+             cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none; user-select: none; }
+.tl-scroll-track { position: absolute; left: 0; right: 0; top: 50%; height: 6px;
+                   transform: translateY(-50%); background: #1a1e26;
+                   border: 1px solid #2a2f38; border-radius: 6px; }
+.tl-scroll-thumb { position: absolute; top: 50%; height: 14px; min-width: 36px;
+                   transform: translateY(-50%); background: #3a4150; border: 1px solid #4a5263;
+                   border-radius: 8px; cursor: grab; touch-action: none; box-sizing: border-box; }
+.tl-scroll-thumb:hover { background: #4a5263; }
+.tl-scroll-thumb:active { background: #378ADD; border-color: #5a9fe0; cursor: grabbing; }
 .filter-label { font-size: 13px; color: #8b8f98; margin-right: 4px; }
 .way-label { margin-left: 18px; }
 #chart { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; background: #181b21;
