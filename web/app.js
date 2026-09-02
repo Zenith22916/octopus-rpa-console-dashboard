@@ -1544,6 +1544,8 @@ function pjFmtTime(s){
   return isNaN(ms) ? s : fmtFull(ms);
 }
 function pjLoad(force){
+  var el = document.getElementById('pjList');
+  if (el) el.innerHTML = '<div class="pj-loading"><span class="pj-spinner"></span>正在加载项目列表…</div>';
   return api('/api/projects').then(function(d){
     if (d && Array.isArray(d.items)){
       var keep = pjCurrent ? pjCurrent.flow_id : null;
@@ -1551,9 +1553,13 @@ function pjLoad(force){
       if (keep) pjItems.forEach(function(it){ if (it.flow_id === keep) pjCurrent = it; });
       pjRenderList();
       if (pjCurrent) document.getElementById('pjGroup').value = pjCurrent.group || '';
+    } else if (el){
+      el.innerHTML = '<div class="pj-loading">加载失败：' + esc((d && d.error) || '未知错误') + '</div>';
     }
     return pjItems;
-  }).catch(function(){});
+  }).catch(function(e){
+    if (el) el.innerHTML = '<div class="pj-loading">加载失败：' + esc(e) + '</div>';
+  });
 }
 function pjSortFn(){
   var v = document.getElementById('pjSort').value;
@@ -1562,9 +1568,13 @@ function pjSortFn(){
     return (b.update_time || '').localeCompare(a.update_time || '');
   };
 }
-var PJ_COLORS = ['#378ADD', '#1D9E75', '#D85A30', '#7F77DD', '#EF9F27', '#E24B4A', '#2BA6A0', '#8b8f98'];
+var PJ_NAME_COLORS = { '宝': '#378ADD', '硕': '#1D9E75', '国': '#D85A30',
+                       '泇': '#7F77DD', '财': '#EF9F27', 'X': '#8b8f98', 'x': '#8b8f98' };
+var PJ_COLORS = ['#378ADD', '#1D9E75', '#D85A30', '#7F77DD', '#EF9F27', '#E24B4A', '#2BA6A0'];  // 非灰
 function pjColor(name){
   if (!name) return PJ_COLORS[0];
+  var c = name.charAt(0);
+  if (PJ_NAME_COLORS[c]) return PJ_NAME_COLORS[c];
   return PJ_COLORS[name.charCodeAt(0) % PJ_COLORS.length];
 }
 function pjRenderList(){
@@ -1619,6 +1629,7 @@ function pjRunsLoad(){
   var p = pjCurrent;
   var el = document.getElementById('pjRunsList');
   if (!p || !el) return;
+  el.innerHTML = '<div class="pj-loading"><span class="pj-spinner"></span>正在加载运行记录…</div>';
   (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(function(){
     var mine = RECORDS.filter(function(r){ return r.fid === p.flow_id; })
       .sort(function(a, b){ return (b.start || 0) - (a.start || 0); });
@@ -1665,6 +1676,7 @@ function pjCfgRender(){
 function pjCfgLoad(){
   var g = document.getElementById('pjGroup').value.trim();
   if (!g){ alert('请先填写配置组名'); return; }
+  document.getElementById('pjCfgHint').textContent = '正在加载配置组「' + g + '」…';
   return api('/api/projects/config?group=' + encodeURIComponent(g)).then(function(d){
     if (!d || !d.ok){ alert((d && d.error) || '加载配置失败'); return; }
     pjCfgItems = d.items || [];

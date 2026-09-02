@@ -264,6 +264,11 @@ tbody tr:hover { background: #1f232b; }
 .pj-runs-tbl tbody tr { cursor: pointer; }
 .pj-runs-tbl tbody tr:hover { background: #1d2129; }
 .pj-empty-sm { padding: 24px; text-align: center; color: #6f7480; font-size: 12px; }
+.pj-loading { padding: 32px; text-align: center; color: #6f7480; font-size: 12px; }
+.pj-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #333a45;
+              border-top-color: #378ADD; border-radius: 50%; vertical-align: -2px;
+              margin-right: 8px; animation: pj-spin .8s linear infinite; }
+@keyframes pj-spin { to { transform: rotate(360deg); } }
 .pj-cfg-tbl { width: 100%; border-collapse: collapse; }
 .pj-cfg-tbl th, .pj-cfg-tbl td { border: 1px solid #262a33; padding: 5px 8px; font-size: 12px;
                                  text-align: left; vertical-align: middle; }
