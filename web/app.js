@@ -1671,7 +1671,8 @@ function pjCfgRender(){
     + '<td><input class="pj-cfg-desc" placeholder="说明"></td>'
     + '<td><button class="btn pj-cfg-add">新增</button></td>'
     + '</tr>';
-  tbl.innerHTML = rows;
+  tbl.innerHTML = '<thead><tr><th>key</th><th>value</th><th>type</th><th>desc</th><th></th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>';
 }
 function pjCfgLoad(){
   var g = document.getElementById('pjGroup').value.trim();

@@ -272,6 +272,7 @@ tbody tr:hover { background: #1f232b; }
 .pj-cfg-tbl { width: 100%; border-collapse: collapse; }
 .pj-cfg-tbl th, .pj-cfg-tbl td { border: 1px solid #262a33; padding: 5px 8px; font-size: 12px;
                                  text-align: left; vertical-align: middle; }
+.pj-cfg-tbl th { color: #8b8f98; font-weight: 400; background: rgba(255,255,255,0.03); }
 .pj-cfg-tbl td input, .pj-cfg-tbl td select { width: 100%; box-sizing: border-box; }
 .pj-cfg-tbl td:first-child { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #c9cdd4; }
 .pj-cfg-tbl td:last-child { width: 64px; text-align: center; }
