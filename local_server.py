@@ -37,11 +37,35 @@ ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
 REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
 LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
+LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）；节流跳过不更新
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
 LOG_PAGE = 2000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
 RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
+
+
+def now_text():
+    """当前时间的展示格式。"""
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def stamp_data_time():
+    """数据源成功爬取完成时调用：记录此刻为“数据获取”时间。"""
+    LAST_UPDATE_TIME[0] = now_text()
+
+
+def _init_data_time_from_file():
+    """启动时以 runs_normalized.csv 的修改时间作为“数据源爬取完成时刻”（服务器刚起、尚未爬取过）。"""
+    try:
+        p = os.path.join(DIR, "runs_normalized.csv")
+        if os.path.exists(p):
+            LAST_UPDATE_TIME[0] = datetime.datetime.fromtimestamp(
+                os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M:%S")
+            return
+    except Exception:
+        pass
+    LAST_UPDATE_TIME[0] = now_text()
 
 
 def load_feishu_cfg():
@@ -310,7 +334,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "ok": ok,
             "skipped": skipped,
             "count": len(records),
-            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": LAST_UPDATE_TIME[0] or now_text(),
             "error": error,
             "records": records,
         }
@@ -529,7 +553,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def handle_api_runs(self):
         """GET /api/runs：返回运行记录（时间轴/分析视图共用），数据来自内存缓存。"""
         payload = {"ok": True, "records": RECORDS, "count": len(RECORDS),
-                   "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                   "time": LAST_UPDATE_TIME[0] or now_text()}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -725,6 +749,7 @@ def run_update():
                     f.write("!! 执行异常: %s\n" % e)
             f.write("[%s] ===== 每日自动更新结束 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         reload_records()   # 完整更新后刷新内存缓存
+        stamp_data_time()  # 每日完整更新成功：刷新“数据获取”时间
 
 
 def run_refresh():
@@ -752,6 +777,7 @@ def run_refresh():
                             " ".join(cmd), (out + (r.stderr or ""))[-600:]))
                     return False
             print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
+            stamp_data_time()   # 爬取成功：记录“数据获取”时间
             return True
         except Exception as e:
             with open(log, "a", encoding="utf-8") as f:
@@ -781,6 +807,7 @@ def main():
         pass
     os.chdir(DIR)
     reload_records()   # 启动时把运行记录读入内存缓存（/api/runs、/api/run 数据源）
+    _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
     print("[启动] 运行记录 %d 条已载入内存" % len(RECORDS))
     threading.Thread(target=scheduler, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
