@@ -1497,7 +1497,7 @@ document.getElementById('chkAuto').addEventListener('change', function(){
   }
 });
 document.getElementById('btnBack').addEventListener('click', function(){
-  // 返回上一页（时间轴/项目全览等任意入口）；无历史时兜底回时间轴
+  // 返回上一页（时间轴/项目控制台等任意入口）；无历史时兜底回时间轴
   var cur = location.hash;
   history.back();
   setTimeout(function(){ if (location.hash === cur) location.hash = '#/timeline'; }, 300);
@@ -1532,7 +1532,7 @@ if (document.getElementById('chkAuto').checked) {
   if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
 }
 
-/* ==================== 项目全览视图 ==================== */
+/* ==================== 项目控制台视图 ==================== */
 var pjItems = [];          // 项目列表缓存
 var pjCurrent = null;      // 当前选中项目
 var pjCfgItems = [];       // 当前配置项

@@ -208,7 +208,7 @@ tbody tr:hover { background: #1f232b; }
   #view-schedule .panel { flex: none; min-height: 720px; }
 }
 
-/* ==================== 项目全览视图 ==================== */
+/* ==================== 项目控制台视图 ==================== */
 #view-projects { overflow: hidden; }
 .pj-layout { flex: 1; min-height: 0; display: flex; gap: 14px; }
 .pj-side { flex: none; width: 320px; min-height: 0; display: flex; flex-direction: column;
