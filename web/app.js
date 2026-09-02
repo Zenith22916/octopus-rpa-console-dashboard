@@ -155,6 +155,9 @@ window.addEventListener('resize', function(){
 
 /* ==================== 时间轴视图 ==================== */
 var DEF_SPAN = 2 * 3600 * 1000;
+if (window.innerWidth < window.innerHeight){
+  DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，配合底部滚动条浏览
+}
 var records = [];           // 时间轴工作副本（来自 RECORDS）
 var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0 };
