@@ -142,6 +142,7 @@ function route(){
       scResize();
     }
   } else if (name === 'projects'){
+    pjPendingFid = getParam('fid');   // 带 ?fid= 进入时选中对应项目（无则 null）
     if (!pjReady){ pjInit(); pjReady = true; }
     else { pjLoad(); }
   }
@@ -1542,6 +1543,12 @@ document.getElementById('btnRerun').addEventListener('click', function(){
   })
   .catch(function(e){ alert('请求失败：' + e); });
 });
+document.getElementById('btnToProjects').addEventListener('click', function(){
+  var rec = DETAIL_REC;
+  if (!rec || !rec.fid) { alert('该记录缺少流程 ID，无法跳转项目配置'); return; }
+  pjPendingFid = rec.fid;
+  location.hash = '#/projects?fid=' + encodeURIComponent(rec.fid);
+});
 document.getElementById('navMenuList').addEventListener('click', function(e){
   var li = e.target.closest('li[data-hash]');
   if (li){ location.hash = li.getAttribute('data-hash'); document.getElementById('navMenu').classList.remove('open'); }
@@ -1560,9 +1567,20 @@ if (document.getElementById('chkAuto').checked) {
 }
 
 /* ==================== 项目控制台视图 ==================== */
+function glShow(msg){
+  var m = document.getElementById('glMsg');
+  if (m) m.textContent = msg || '加载中…';
+  var o = document.getElementById('globalLoading');
+  if (o) o.style.display = 'flex';
+}
+function glHide(){
+  var o = document.getElementById('globalLoading');
+  if (o) o.style.display = 'none';
+}
 var pjItems = [];          // 项目列表缓存
 var pjCurrent = null;      // 当前选中项目
 var pjCfgItems = [];       // 当前配置项
+var pjPendingFid = null;   // 待跳转选中的 flow_id（从详情页「项目配置」带 ?fid= 进入）
 var pjReady = false;
 
 function pjFmtTime(s){
@@ -1572,13 +1590,19 @@ function pjFmtTime(s){
 }
 function pjLoad(force){
   var el = document.getElementById('pjList');
-  if (el) el.innerHTML = '<div class="pj-loading"><span class="pj-spinner"></span>正在加载项目列表…</div>';
+  glShow('正在加载项目列表…');
   return api('/api/projects').then(function(d){
     if (d && Array.isArray(d.items)){
       var keep = pjCurrent ? pjCurrent.flow_id : null;
       pjItems = d.items;
       if (keep) pjItems.forEach(function(it){ if (it.flow_id === keep) pjCurrent = it; });
       pjRenderList();
+      if (pjPendingFid){
+        var hasTarget = false;
+        for (var i = 0; i < pjItems.length; i++){ if (pjItems[i].flow_id === pjPendingFid) hasTarget = true; }
+        if (hasTarget){ pjSelect(pjPendingFid); }
+        pjPendingFid = null;
+      }
       if (pjCurrent) document.getElementById('pjGroup').value = pjCurrent.group || '';
     } else if (el){
       el.innerHTML = '<div class="pj-loading">加载失败：' + esc((d && d.error) || '未知错误') + '</div>';
@@ -1586,7 +1610,7 @@ function pjLoad(force){
     return pjItems;
   }).catch(function(e){
     if (el) el.innerHTML = '<div class="pj-loading">加载失败：' + esc(e) + '</div>';
-  });
+  }).then(function(v){ glHide(); return v; });
 }
 function pjSortFn(){
   var v = document.getElementById('pjSort').value;
@@ -1656,74 +1680,152 @@ function pjRunsLoad(){
   var p = pjCurrent;
   var el = document.getElementById('pjRunsList');
   if (!p || !el) return;
-  el.innerHTML = '<div class="pj-loading"><span class="pj-spinner"></span>正在加载运行记录…</div>';
+  glShow('正在加载运行记录…');
   (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(function(){
     var mine = RECORDS.filter(function(r){ return r.fid === p.flow_id; })
       .sort(function(a, b){ return (b.start || 0) - (a.start || 0); });
     document.getElementById('pjRunsInfo').textContent = mine.length
       ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条；点击某条查看日志详情。'
       : '暂无运行记录（可点击标题右侧「运行该应用」触发一次）。';
-    if (!mine.length){ el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>'; return; }
-    el.innerHTML = '<table class="pj-runs-tbl"><thead><tr>'
-      + '<th>状态</th><th>机器人</th><th>触发方式</th><th>开始时间</th><th>结束时间</th><th>时长</th>'
-      + '</tr></thead><tbody>'
-      + mine.slice(0, 20).map(function(r){
-        return '<tr data-rid="' + esc(r.id) + '" title="点击查看日志详情">'
-          + '<td>' + statusBadge(r.status || '') + '</td>'
-          + '<td>' + esc(r.robot || '—') + '</td>'
-          + '<td>' + esc(wayCN(r.way)) + '</td>'
-          + '<td>' + fmtTime(r.start) + '</td>'
-          + '<td>' + (r.end == null ? '（进行中）' : fmtTime(r.end)) + '</td>'
-          + '<td>' + fmtDurM((r.end || Date.now()) - (r.execStart || r.start)) + '</td>'
-          + '</tr>';
-      }).join('') + '</tbody></table>';
+    if (!mine.length){
+      el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>';
+    } else {
+      el.innerHTML = '<table class="pj-runs-tbl"><thead><tr>'
+        + '<th>状态</th><th>机器人</th><th>触发方式</th><th>开始时间</th><th>结束时间</th><th>时长</th>'
+        + '</tr></thead><tbody>'
+        + mine.slice(0, 20).map(function(r){
+          return '<tr data-rid="' + esc(r.id) + '" title="点击查看日志详情">'
+            + '<td>' + statusBadge(r.status || '') + '</td>'
+            + '<td>' + esc(r.robot || '—') + '</td>'
+            + '<td>' + esc(wayCN(r.way)) + '</td>'
+            + '<td>' + fmtTime(r.start) + '</td>'
+            + '<td>' + (r.end == null ? '（进行中）' : fmtTime(r.end)) + '</td>'
+            + '<td>' + fmtDurM((r.end || Date.now()) - (r.execStart || r.start)) + '</td>'
+            + '</tr>';
+        }).join('') + '</tbody></table>';
+    }
+    glHide();
   });
+}
+function pjCfgDisplayVal(it){
+  /* 展示用文本：json 自动解析排版换行 */
+  if (it.type === 'json'){
+    try { return JSON.stringify(JSON.parse(it.value), null, 2); }
+    catch (e) { return it.value; }
+  }
+  return it.value;
 }
 function pjCfgRender(){
   var tbl = document.getElementById('pjCfgTbl');
   var rows = pjCfgItems.map(function(it){
     return '<tr>'
-      + '<td>' + esc(it.key) + '</td>'
-      + '<td><input class="pj-cfg-val" data-key="' + esc(it.key) + '" value="' + esc(it.value) + '"></td>'
-      + '<td>' + esc(it.type) + '</td>'
-      + '<td>' + esc(it.desc) + '</td>'
-      + '<td><button class="btn pj-cfg-save" data-key="' + esc(it.key) + '" data-type="' + esc(it.type)
-      + '" data-desc="' + esc(it.desc) + '">保存</button></td>'
+      + '<td class="k">' + esc(it.key) + '</td>'
+      + '<td class="v" title="' + esc(it.value) + '">' + esc(pjCfgDisplayVal(it)) + '</td>'
+      + '<td class="t">' + esc(it.type) + '</td>'
+      + '<td class="d">' + esc(it.desc) + '</td>'
+      + '<td><button class="btn pj-cfg-edit" data-key="' + esc(it.key) + '">编辑</button></td>'
       + '</tr>';
   }).join('');
-  rows += '<tr class="pj-cfg-new">'
-    + '<td><input class="pj-cfg-key" placeholder="新 key"></td>'
-    + '<td><input class="pj-cfg-val" placeholder="值"></td>'
-    + '<td><select class="pj-cfg-type"><option>string</option><option>number</option><option>bool</option><option>json</option></select></td>'
-    + '<td><input class="pj-cfg-desc" placeholder="说明"></td>'
-    + '<td><button class="btn pj-cfg-add">新增</button></td>'
-    + '</tr>';
+  if (!pjCfgItems.length){
+    rows = '<tr><td colspan="5" class="pj-empty-sm" style="border:none;">该配置组暂无配置项，点右上「＋ 新增配置」添加。</td></tr>';
+  }
   tbl.innerHTML = '<thead><tr><th>key</th><th>value</th><th>type</th><th>desc</th><th></th></tr></thead>'
     + '<tbody>' + rows + '</tbody>';
 }
 function pjCfgLoad(){
   var g = document.getElementById('pjGroup').value.trim();
   if (!g){ alert('请先填写配置组名'); return; }
-  document.getElementById('pjCfgHint').textContent = '正在加载配置组「' + g + '」…';
+  var tbl = document.getElementById('pjCfgTbl');
+  glShow('正在加载配置…');
   return api('/api/projects/config?group=' + encodeURIComponent(g)).then(function(d){
-    if (!d || !d.ok){ alert((d && d.error) || '加载配置失败'); return; }
-    pjCfgItems = d.items || [];
-    document.getElementById('pjCfgHint').textContent = '配置组「' + g + '」共 ' + pjCfgItems.length + ' 个配置项；修改 value 后点保存，底部可新增。';
-    pjCfgRender();
+    if (!d || !d.ok){
+      tbl.innerHTML = '';
+      alert((d && d.error) || '加载配置失败');
+    } else {
+      pjCfgItems = d.items || [];
+      document.getElementById('pjCfgHint').textContent = '配置组「' + g + '」共 ' + pjCfgItems.length + ' 个配置项；点「编辑」修改，或「＋ 新增配置」添加。';
+      pjCfgRender();
+    }
+    glHide();
   });
 }
-function pjCfgPost(body, okMsg){
+function pjCfgPost(body, onOk){
   return fetch('/api/projects/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body) })
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if (j.ok){
-        document.getElementById('pjCfgHint').textContent = okMsg + (j.msg ? '（' + j.msg + '）' : '');
-      } else {
-        alert('保存失败：' + (j.error || j.msg || '未知错误'));
-      }
+      if (j.ok){ if (onOk) onOk(j); }
+      else alert('保存失败：' + (j.error || j.msg || '未知错误'));
       return j;
-    }).catch(function(e){ alert('请求失败：' + e); });
+    }).catch(function(e){ alert('请求失败：' + e); return { ok: false, error: String(e) }; });
+}
+
+/* ---- 配置编辑弹窗 ---- */
+var pjModalMode = 'edit';     // edit | new
+var pjEditKey = null;         // 编辑模式原 key（不可改）
+function pjModalValueHtml(type, raw){
+  /* value 控件：json -> textarea(格式化排版) / bool -> 开关 / 其它 -> 输入框 */
+  if (type === 'bool'){
+    var on = (String(raw).trim().toLowerCase() === 'true' || String(raw) === '1');
+    return '<label class="switch"><input type="checkbox" id="mBool"' + (on ? ' checked' : '') + '><span class="slider"></span></label>'
+      + '<span class="m-bool-tip">' + (on ? 'true' : 'false') + '</span>';
+  }
+  if (type === 'json'){
+    var pretty;
+    try { pretty = JSON.stringify(JSON.parse(raw || '{}'), null, 2); }
+    catch (e) { pretty = raw; }
+    return '<textarea id="mValJson" rows="7" spellcheck="false" placeholder="JSON 对象/数组">' + esc(pretty) + '</textarea>';
+  }
+  return '<input type="text" id="mValText" value="' + esc(raw) + '">';
+}
+function pjModalSyncBoolTip(){
+  var el = document.getElementById('mBool');
+  var tip = document.querySelector('.m-bool-tip');
+  if (el && tip) tip.textContent = el.checked ? 'true' : 'false';
+}
+function pjModalOpen(item, isNew){
+  pjModalMode = isNew ? 'new' : 'edit';
+  pjEditKey = item ? item.key : null;
+  document.getElementById('pjModalTitle').textContent = isNew ? '新增配置' : '编辑配置';
+  document.getElementById('mKey').value = item ? item.key : '';
+  document.getElementById('mKey').disabled = !isNew;
+  document.getElementById('mKeyLock').style.display = isNew ? 'none' : 'inline';
+  document.getElementById('mType').value = item ? item.type : 'string';
+  document.getElementById('mValWrap').innerHTML = pjModalValueHtml(document.getElementById('mType').value,
+                                                                    item ? item.value : '');
+  document.getElementById('mDesc').value = item ? (item.desc || '') : '';
+  document.getElementById('mErr').textContent = '';
+  document.getElementById('pjModal').style.display = 'flex';
+  pjModalSyncBoolTip();
+}
+function pjModalClose(){
+  document.getElementById('pjModal').style.display = 'none';
+}
+function pjModalSave(){
+  var g = document.getElementById('pjGroup').value.trim();
+  var key = document.getElementById('mKey').value.trim();
+  var type = document.getElementById('mType').value;
+  if (!g){ document.getElementById('mErr').textContent = '缺少配置组（请先在上方填写并保存映射）'; return; }
+  if (!key){ document.getElementById('mErr').textContent = '请填写 key'; return; }
+  var value;
+  if (type === 'bool'){
+    var b = document.getElementById('mBool');
+    value = (b && b.checked) ? 'true' : 'false';
+  } else if (type === 'json'){
+    var tv = document.getElementById('mValJson').value;
+    try { JSON.parse(tv); }
+    catch (e){ document.getElementById('mErr').textContent = 'JSON 格式错误：' + e.message; return; }
+    value = tv;
+  } else {
+    var tx = document.getElementById('mValText');
+    value = tx ? tx.value : '';
+  }
+  var desc = document.getElementById('mDesc').value;
+  glShow('保存中…');
+  pjCfgPost({ group: g, key: key, value: value, type: type, desc: desc }, function(){
+    pjModalClose();        // 成功：关弹窗，由 pjCfgLoad 接管「加载配置」遮罩
+    pjCfgLoad();
+  }).then(function(j){ if (!j || !j.ok) glHide(); });   // 失败：收起遮罩
 }
 function pjInit(){
   var listEl = document.getElementById('pjList');
@@ -1756,9 +1858,10 @@ function pjInit(){
     var p = pjCurrent;
     if (!p) return;
     var g = document.getElementById('pjGroup').value.trim();
-    pjCfgPost({ group: 'project', key: 'p.' + p.flow_id, value: g, type: 'string' },
-      '映射已保存：项目 ↔ 配置组「' + (g || '（未关联）') + '」').then(function(j){
-      if (j && j.ok){ p.group = g; pjRenderList(); }
+    pjCfgPost({ group: 'project', key: 'p.' + p.flow_id, value: g, type: 'string' }, function(){
+      p.group = g;
+      pjRenderList();
+      document.getElementById('pjCfgHint').textContent = '映射已保存：项目 ↔ 配置组「' + (g || '（未关联）') + '」。';
     });
   });
   document.getElementById('pjCfgLoad').addEventListener('click', pjCfgLoad);
@@ -1776,30 +1879,42 @@ function pjInit(){
     if (row) location.hash = '#/detail?id=' + encodeURIComponent(row.getAttribute('data-rid'));
   });
   document.getElementById('pjCfgTbl').addEventListener('click', function(e){
-    var saveBtn = e.target.closest('.pj-cfg-save');
-    if (saveBtn){
-      var key = saveBtn.getAttribute('data-key');
-      var val = document.querySelector('.pj-cfg-val[data-key="' + key + '"]');
-      pjCfgPost({ group: document.getElementById('pjGroup').value.trim(), key: key,
-                  value: val ? val.value : '', type: saveBtn.getAttribute('data-type'),
-                  desc: saveBtn.getAttribute('data-desc') }, '「' + key + '」已保存');
-      return;
-    }
-    var addBtn = e.target.closest('.pj-cfg-add');
-    if (addBtn){
-      var row = addBtn.closest('.pj-cfg-new');
-      var key = row.querySelector('.pj-cfg-key').value.trim();
-      var val = row.querySelector('.pj-cfg-val').value;
-      var typ = row.querySelector('.pj-cfg-type').value;
-      var desc = row.querySelector('.pj-cfg-desc').value;
-      if (!key){ alert('请填写 key'); return; }
-      pjCfgPost({ group: document.getElementById('pjGroup').value.trim(), key: key,
-                  value: val, type: typ, desc: desc }, '「' + key + '」已新增').then(function(j){
-        if (j && j.ok) pjCfgLoad();
-      });
+    var btn = e.target.closest('.pj-cfg-edit');
+    if (!btn) return;
+    var key = btn.getAttribute('data-key');
+    for (var i = 0; i < pjCfgItems.length; i++){
+      if (pjCfgItems[i].key === key){ pjModalOpen(pjCfgItems[i], false); break; }
     }
   });
+  document.getElementById('pjCfgAdd').addEventListener('click', function(){ pjModalOpen(null, true); });
+  document.getElementById('mCancel').addEventListener('click', pjModalClose);
+  document.getElementById('mSave').addEventListener('click', pjModalSave);
+  document.getElementById('pjModal').addEventListener('click', function(e){
+    if (e.target === this) pjModalClose();
+  });
+  document.getElementById('mValWrap').addEventListener('change', function(e){
+    if (e.target && e.target.id === 'mBool') pjModalSyncBoolTip();
+  });
+  document.getElementById('mType').addEventListener('change', function(){
+    var raw = pjModalReadValue();   // change 触发时旧控件仍在，读到的还是旧类型的值
+    var type = this.value;          // 新类型
+    if (type === 'json'){
+      try { raw = JSON.stringify(JSON.parse(raw || '{}'), null, 2); } catch (e) { /* 保留原文 */ }
+    }
+    document.getElementById('mValWrap').innerHTML = pjModalValueHtml(type, raw);
+    pjModalSyncBoolTip();
+  });
   pjLoad();
+}
+/* ---- 弹窗辅助 ---- */
+function pjModalReadValue(){
+  /* 按「当前存在哪个 value 控件」读取（不依赖 type 判断） */
+  var b = document.getElementById('mBool');
+  if (b) return b.checked ? 'true' : 'false';
+  var tv = document.getElementById('mValJson');
+  if (tv) return tv.value;
+  var tx = document.getElementById('mValText');
+  return tx ? tx.value : '';
 }
 
 /* ==================== 启动 ==================== */

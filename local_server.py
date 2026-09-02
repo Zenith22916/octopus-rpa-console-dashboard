@@ -15,6 +15,7 @@ import csv
 import datetime
 import http.server
 import json
+import re
 import os
 import socket
 import socketserver
@@ -410,11 +411,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         key = str(body.get("key") or "").strip()
         if not group or not key:
             return self._send_json({"ok": False, "error": "缺少 group/key"})
+        # ---- 格式校验与规范化 ----
+        type_ = str(body.get("type") or "string").strip()
+        if type_ not in ("string", "number", "bool", "json"):
+            return self._send_json({"ok": False, "error": "type 必须是 string/number/bool/json 之一"})
+        if not re.match(r"^[A-Za-z0-9._-]+$", key):
+            return self._send_json({"ok": False, "error": "key 只能含字母/数字/._-，且不能为空"})
+        if not re.match(r"^[A-Za-z0-9._-]+$", group):
+            return self._send_json({"ok": False, "error": "group 只能含字母/数字/._-，且不能为空"})
+        raw_value = str(body.get("value") or "").strip()
         try:
-            r = feishu_cfg.upsert_item(FEISHU_CFG, group, key,
-                                       str(body.get("value") or ""),
-                                       str(body.get("type") or "string"),
-                                       str(body.get("desc") or "") or None)
+            if type_ == "json":
+                obj = json.loads(raw_value)
+                # 规范化：紧凑单行存储（前端展示时再格式化）
+                raw_value = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+            elif type_ == "number":
+                float(raw_value)   # 仅校验可转数字，原样存
+            elif type_ == "bool":
+                if raw_value.lower() not in ("true", "false", "1", "0"):
+                    return self._send_json({"ok": False, "error": "bool 值必须是 true/false"})
+                raw_value = raw_value.lower() in ("true", "1") and "true" or "false"
+        except ValueError:
+            return self._send_json({"ok": False, "error": "value 不符合 %s 类型格式" % type_})
+        # desc 回写去掉换行（转单行），避免表格内嵌换行符
+        desc = str(body.get("desc") or "").replace("\r", " ").replace("\n", " ")
+        desc = re.sub(r"[ \t]+", " ", desc).strip() or None
+        try:
+            r = feishu_cfg.upsert_item(FEISHU_CFG, group, key, raw_value, type_, desc)
             return self._send_json(r)
         except Exception as e:
             return self._send_json({"ok": False, "error": str(e)})
