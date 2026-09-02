@@ -236,7 +236,7 @@ def list_flows(cfg):
             "flow_id": it.get("id") or "",
             "name": it.get("name") or "",
             "update_time": it.get("updateTime") or "",
-            "owner": (it.get("owner") or {}).get("name") if isinstance(it.get("owner"), dict) else it.get("owner") or "",
+            "owner": it.get("ownerName") or "",   # 负责人姓名（owner 字段是项目组 ID，不对外展示）
         })
     return out
 
