@@ -22,6 +22,8 @@ a { color: #378ADD; }
 .datatime { font-size: 11px; color: #6f7480; margin-left: 8px; }
 .datatime.warn, .warn { color: #E24B4A; }
 .navmenu { position: relative; display: inline-block; }
+.navmenu::before { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 8px; }
+/* 透明桥接层：填住按钮与展开列表之间的空隙，保证悬停路径连续、列表不闪收 */
 .navmenu-btn { width: auto; background: transparent; color: #e6e6e6; border: 1px solid transparent;
           border-radius: 6px; padding: 2px 8px; font-size: 22px; font-weight: 600;
           cursor: pointer; font-family: inherit; }
