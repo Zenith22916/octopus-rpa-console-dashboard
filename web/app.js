@@ -1562,6 +1562,11 @@ function pjSortFn(){
     return (b.update_time || '').localeCompare(a.update_time || '');
   };
 }
+var PJ_COLORS = ['#378ADD', '#1D9E75', '#D85A30', '#7F77DD', '#EF9F27', '#E24B4A', '#2BA6A0', '#8b8f98'];
+function pjColor(name){
+  if (!name) return PJ_COLORS[0];
+  return PJ_COLORS[name.charCodeAt(0) % PJ_COLORS.length];
+}
 function pjRenderList(){
   var el = document.getElementById('pjList');
   if (!el) return;
@@ -1571,7 +1576,9 @@ function pjRenderList(){
   el.innerHTML = arr.map(function(it){
     var sel = pjCurrent && pjCurrent.flow_id === it.flow_id;
     return '<div class="pj-item' + (sel ? ' sel' : '') + '" data-fid="' + esc(it.flow_id) + '">'
-      + '<div class="pj-item-name">' + esc(it.name)
+      + '<div class="pj-item-top">'
+      + '<span class="pj-avatar" style="background:' + pjColor(it.name) + '">' + esc(it.name ? it.name.charAt(0) : '?') + '</span>'
+      + '<span class="pj-item-name">' + esc(it.name) + '</span>'
       + (it.group ? '<span class="pj-group-tag">' + esc(it.group) + '</span>' : '')
       + '</div>'
       + '<div class="pj-item-meta">' + esc(it.update_time ? it.update_time.slice(0, 16).replace('T', ' ') : '—')

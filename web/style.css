@@ -236,8 +236,12 @@ tbody tr:hover { background: #1f232b; }
 .pj-detail-head { flex: none; }
 .pj-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .pj-title-row h2 { font-size: 17px; font-weight: 600; margin: 0; color: #e6e6e6; }
+.pj-title-row .btn.rerun { margin-left: auto; }
 .pj-cards { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.pj-tabs { display: flex; gap: 6px; margin-left: auto; }
+.pj-tabs { display: flex; gap: 6px; }
+.pj-avatar { flex: none; width: 18px; height: 18px; border-radius: 4px; color: #fff;
+             font-size: 11px; line-height: 18px; text-align: center; font-weight: 500; }
+.pj-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pj-tab { background: transparent; color: #8b8f98; border: 1px solid #333a45; border-radius: 6px;
           padding: 4px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
 .pj-tab:hover { color: #e6e6e6; background: #22262e; }
