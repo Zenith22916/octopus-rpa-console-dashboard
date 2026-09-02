@@ -1496,7 +1496,12 @@ document.getElementById('chkAuto').addEventListener('change', function(){
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
 });
-document.getElementById('btnBack').addEventListener('click', function(){ location.hash = '#/timeline'; });
+document.getElementById('btnBack').addEventListener('click', function(){
+  // 返回上一页（时间轴/项目全览等任意入口）；无历史时兜底回时间轴
+  var cur = location.hash;
+  history.back();
+  setTimeout(function(){ if (location.hash === cur) location.hash = '#/timeline'; }, 300);
+});
 document.getElementById('btnRerun').addEventListener('click', function(){
   var rec = DETAIL_REC;
   if (!rec || !rec.fid) { alert('该记录缺少流程 ID，无法重新运行'); return; }
@@ -1614,21 +1619,19 @@ function pjRunsLoad(){
       ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条；点击某条查看日志详情。'
       : '暂无运行记录（可点击标题右侧「运行该应用」触发一次）。';
     if (!mine.length){ el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>'; return; }
-    el.innerHTML = mine.slice(0, 20).map(function(r){
-      var dur = (r.end || Date.now()) - (r.execStart || r.start);
-      return '<div class="pj-run-row" data-rid="' + esc(r.id) + '" title="点击查看日志详情">'
-        + '<div class="pj-run-line1">'
-        + statusBadge(r.status || '')
-        + '<span class="pj-run-name">' + esc(r.name || r.fid) + '</span>'
-        + '<span class="pj-run-dur">' + fmtDurM(dur) + '</span>'
-        + '</div>'
-        + '<div class="pj-run-line2">'
-        + '<span>机器人：' + esc(r.robot || '—') + '</span>'
-        + '<span>方式：' + esc(wayCN(r.way)) + '</span>'
-        + '<span>' + fmtTime(r.start) + ' ~ ' + (r.end == null ? '（进行中）' : fmtTime(r.end)) + '</span>'
-        + '</div>'
-        + '</div>';
-    }).join('');
+    el.innerHTML = '<table class="pj-runs-tbl"><thead><tr>'
+      + '<th>状态</th><th>机器人</th><th>触发方式</th><th>开始时间</th><th>结束时间</th><th>时长</th>'
+      + '</tr></thead><tbody>'
+      + mine.slice(0, 20).map(function(r){
+        return '<tr data-rid="' + esc(r.id) + '" title="点击查看日志详情">'
+          + '<td>' + statusBadge(r.status || '') + '</td>'
+          + '<td>' + esc(r.robot || '—') + '</td>'
+          + '<td>' + esc(wayCN(r.way)) + '</td>'
+          + '<td>' + fmtTime(r.start) + '</td>'
+          + '<td>' + (r.end == null ? '（进行中）' : fmtTime(r.end)) + '</td>'
+          + '<td>' + fmtDurM((r.end || Date.now()) - (r.execStart || r.start)) + '</td>'
+          + '</tr>';
+      }).join('') + '</tbody></table>';
   });
 }
 function pjCfgRender(){
