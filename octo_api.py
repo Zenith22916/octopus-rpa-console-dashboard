@@ -204,6 +204,43 @@ def _resolve_bot_for_flow(cfg, token, ent, flow_id):
     return None
 
 
+def list_flows(cfg):
+    """拉取全部可执行流程（项目）列表。
+
+    返回 [{flow_id, name, update_time, owner}]，按云端更新时间倒序。
+    对应网页版「应用/流程」列表接口 /desktop/v2/flows/flows。
+    """
+    token = ensure_token(cfg)
+    ent = resolve_enterprise(cfg, token)
+    items, start, take = [], 0, 100
+    while True:
+        qs = urllib.parse.urlencode({
+            "search": "", "isInRecycleBin": "False", "start": start, "take": take,
+            "ownedByCurrentUser": "False", "collaboratedByCurrentUser": "False",
+            "groupId": "", "status": "", "sourceType": "",
+            "outputType": "Executable", "sortField": "UpdateTime",
+            "sortAscending": "False", "isSearchWholeEnterprise": "False",
+        })
+        code, resp = _req("GET", "/desktop/v2/flows/flows?" + qs, cfg,
+                          token=token, enterprise_id=ent)
+        if code not in (200, 201):
+            raise RuntimeError("拉取项目列表失败(%s): %s" % (code, resp))
+        batch = resp.get("items") or []
+        items.extend(batch)
+        if not batch or start + take >= (resp.get("total") or 0):
+            break
+        start += take
+    out = []
+    for it in items:
+        out.append({
+            "flow_id": it.get("id") or "",
+            "name": it.get("name") or "",
+            "update_time": it.get("updateTime") or "",
+            "owner": (it.get("owner") or {}).get("name") if isinstance(it.get("owner"), dict) else it.get("owner") or "",
+        })
+    return out
+
+
 def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent",
                resolve_bot=True):
     """手动触发应用运行。返回批次号 flowProcessNo。

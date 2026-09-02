@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import dashboard  # 数据聚合层（load_records / build_schedule_payload）
 import octo_api    # 八爪鱼调度 API（详情页"重新运行"）
+import feishu_cfg  # 飞书多维表格配置中心读写（项目全览页）
 
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +41,21 @@ LOG_PAGE = 2000                      # 日志分段获取：每页行数（前�
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
 RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
+
+
+def load_feishu_cfg():
+    """从 config.json 读取 feishu 段（app_id/app_secret/app_token/table_id）。"""
+    p = os.path.join(BASE, "config.json")
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f).get("feishu", {})
+        except Exception:
+            pass
+    return {}
+
+
+FEISHU_CFG = load_feishu_cfg()       # 飞书多维表格配置中心凭据（项目全览页用）
 
 
 def reload_records():
@@ -238,6 +254,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path0 == "/api/schedule":
             self.handle_api_schedule()
             return
+        if path0 == "/api/projects":
+            self.handle_api_projects()
+            return
+        if path0 == "/api/projects/config":
+            self.handle_projects_config_get()
+            return
         return super().do_GET()
 
     def do_POST(self):
@@ -253,6 +275,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not self._authorized():
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
             return self.handle_rerun()
+        if path0 == "/api/projects/config":
+            if not self._authorized():
+                return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
+            return self.handle_projects_config_post()
+        if path0 == "/api/projects/run":
+            if not self._authorized():
+                return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
+            return self.handle_projects_run()
         self.send_error(404, "Not Found")
 
     def handle_refresh(self):
@@ -323,6 +353,93 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json({"ok": True, "flowId": flow_id,
                                     "flowProcessNo": str(pno),
                                     "botId": bot})
+        except Exception as e:
+            return self._send_json({"ok": False, "message": str(e)}, 502)
+
+    # ---- 项目全览：列表 / 配置读写 / 运行 ----
+    def handle_api_projects(self):
+        """GET /api/projects：全项目（流程）列表 + 每个项目的配置组映射。
+
+        项目列表来自八爪鱼 flows 接口；配置组映射存配置中心
+        （group=project 组，key=p.<flowId>，value=配置组名）。
+        """
+        try:
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            flows = octo_api.list_flows(cfg)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "拉取项目列表失败：%s" % e})
+        proj_map = {}
+        if FEISHU_CFG.get("app_token"):
+            try:
+                for it in feishu_cfg.get_group_items(FEISHU_CFG, "project"):
+                    if it["key"].startswith("p."):
+                        proj_map[it["key"][2:]] = it["value"]
+            except Exception:
+                pass
+        for f in flows:
+            f["group"] = proj_map.get(f["flow_id"], "")
+        return self._send_json({"ok": True, "items": flows})
+
+    def handle_projects_config_get(self):
+        """GET /api/projects/config?group=xxx：读取某配置组的全部配置项。"""
+        q = parse_qs(urlparse(self.path).query)
+        group = unquote(q.get("group", [""])[0]).strip()
+        if not FEISHU_CFG.get("app_token"):
+            return self._send_json({"ok": False, "error": "config.json 未配置 feishu 段"})
+        if not group:
+            return self._send_json({"ok": False, "error": "缺少 group 参数"})
+        try:
+            items = feishu_cfg.get_group_items(FEISHU_CFG, group)
+            return self._send_json({"ok": True, "group": group, "items": items})
+        except Exception as e:
+            return self._send_json({"ok": False, "error": str(e)})
+
+    def handle_projects_config_post(self):
+        """POST /api/projects/config：新增/更新配置项。
+
+        请求体 {"group","key","value","type","desc"}；按 group+key 定位，存在则更新、否则新增。
+        另支持 {"group":"project","key":"p.<flowId>","value":"<配置组>"} 修改项目↔配置组映射。
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except Exception:
+            body = {}
+        group = str(body.get("group") or "").strip()
+        key = str(body.get("key") or "").strip()
+        if not group or not key:
+            return self._send_json({"ok": False, "error": "缺少 group/key"})
+        try:
+            r = feishu_cfg.upsert_item(FEISHU_CFG, group, key,
+                                       str(body.get("value") or ""),
+                                       str(body.get("type") or "string"),
+                                       str(body.get("desc") or "") or None)
+            return self._send_json(r)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": str(e)})
+
+    def handle_projects_run(self):
+        """POST /api/projects/run：操作机器人运行该应用。
+
+        请求体 {"flow_id", "bot_id"?}；机器人未指定时自动复用该流程历史成功运行的机器人。
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except Exception:
+            body = {}
+        flow_id = str(body.get("flow_id") or "").strip()
+        if not flow_id:
+            return self._send_json({"ok": False, "message": "缺少 flow_id"}, 400)
+        try:
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            result = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
+            pno = result.get("processNo", "") if isinstance(result, dict) else result
+            return self._send_json({"ok": True, "flowId": flow_id,
+                                    "flowProcessNo": str(pno),
+                                    "botId": result.get("botId") if isinstance(result, dict) else None})
         except Exception as e:
             return self._send_json({"ok": False, "message": str(e)}, 502)
 

@@ -99,6 +99,14 @@ web/（纯前端，hash 路由四视图）：
 - 按应用配色（12 色），同色 = 同一应用
 - 红色虚线 = 当前时刻与今天（10 秒刷新）
 
+### 项目全览（`#/projects`）
+
+- 左侧全项目列表（八爪鱼云端 flows，38 个），可按「修改时间 / 名称」排序、手动刷新
+- 右侧选中项目详情：flowId / 更新时间 / 负责人
+- **运行控制**：一键触发该应用运行（自动复用该项目历史成功运行的机器人）
+- **飞书配置**：项目 ↔ 配置组映射（存配置中心 `group=project` 组，key=`p.<flowId>`）；
+  按配置组加载飞书多维表格配置，表格内直接修改 value 保存、底部可新增配置项
+
 ## 数据更新机制
 
 | 调度 | 频率 | 内容 |
@@ -130,6 +138,8 @@ python local_server.py                                                        # 
 | `enterprise_id` | 可选：指定企业 ID；留空则默认选账号下第一个非个人企业 |
 | `include_robots` | 只保留名称以这些前缀开头的机器人（如 `["A", "B"]` 或 `["A🍩硕晞-", "B💎宝实-"]`） |
 | `exclude_robots` | 排除名称含这些关键词的机器人（如 `["测试"]`） |
+| `feishu.app_id / app_secret` | 飞书自建应用凭据（项目全览页读/写配置中心用） |
+| `feishu.app_token / table_id` | 飞书多维表格「rpa_config」配置中心表的 app_token / table_id |
 | `access_password` | 可选：仪表盘访问密码（`local_server.py` 启用 Cookie 鉴权，空则不启用） |
 
 > **登录态过期自动恢复**：会话缓存到 `output/session.json`，过期后 `crawler.py` 会先验证缓存会话是否有效，失效则自动删除并改用 `account` 的账号密码重新登录（因此请务必在 `config.json` 中填好账号密码，而不仅依赖 cookie）。`local_server.py` 的 `/api/refresh` 在刷新失败时会如实返回 `ok=false`，网页顶部会提示"刷新失败，登录态可能已过期"。

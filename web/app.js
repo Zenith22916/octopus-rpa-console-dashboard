@@ -78,7 +78,7 @@ function loadSchedule(){
 /* ==================== 视图切换与路由 ==================== */
 function showView(name){
   curView = name;
-  var views = ['timeline', 'analysis', 'detail', 'schedule'];
+  var views = ['timeline', 'analysis', 'detail', 'schedule', 'projects'];
   for (var i = 0; i < views.length; i++){
     var el = document.getElementById('view-' + views[i]);
     if (el) el.style.display = (views[i] === name) ? 'flex' : 'none';
@@ -96,7 +96,7 @@ function parseHash(){
   var h = location.hash || '#/analysis';
   var m = h.match(/^#\/([a-z]+)(?:\?(.*))?$/i);
   var name = m ? m[1].toLowerCase() : 'analysis';
-  if (['timeline', 'analysis', 'detail', 'schedule'].indexOf(name) < 0) name = 'analysis';
+  if (['timeline', 'analysis', 'detail', 'schedule', 'projects'].indexOf(name) < 0) name = 'analysis';
   return name;
 }
 var tlReady = false, anReady = false, scReady = false;
@@ -128,6 +128,9 @@ function route(){
     } else {
       scResize();
     }
+  } else if (name === 'projects'){
+    if (!pjReady){ pjInit(); pjReady = true; }
+    else { pjLoad(); }
   }
 }
 window.addEventListener('hashchange', route);
@@ -1522,6 +1525,178 @@ document.getElementById('navSel').addEventListener('change', function(){ locatio
 if (document.getElementById('chkAuto').checked) {
   refreshData();
   if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
+}
+
+/* ==================== 项目全览视图 ==================== */
+var pjItems = [];          // 项目列表缓存
+var pjCurrent = null;      // 当前选中项目
+var pjCfgItems = [];       // 当前配置项
+var pjReady = false;
+
+function pjFmtTime(s){
+  if (!s) return "—";
+  var ms = Date.parse(s);
+  return isNaN(ms) ? s : fmtFull(ms);
+}
+function pjLoad(force){
+  return api('/api/projects').then(function(d){
+    if (d && Array.isArray(d.items)){
+      var keep = pjCurrent ? pjCurrent.flow_id : null;
+      pjItems = d.items;
+      if (keep) pjItems.forEach(function(it){ if (it.flow_id === keep) pjCurrent = it; });
+      pjRenderList();
+      if (pjCurrent) document.getElementById('pjGroup').value = pjCurrent.group || '';
+    }
+    return pjItems;
+  }).catch(function(){});
+}
+function pjSortFn(){
+  var v = document.getElementById('pjSort').value;
+  return function(a, b){
+    if (v === 'name') return (a.name || '').localeCompare(b.name || '', 'zh');
+    return (b.update_time || '').localeCompare(a.update_time || '');
+  };
+}
+function pjRenderList(){
+  var el = document.getElementById('pjList');
+  if (!el) return;
+  var arr = pjItems.slice().sort(pjSortFn());
+  var foot = document.getElementById('pjFoot');
+  if (foot) foot.textContent = '共 ' + pjItems.length + ' 个项目';
+  el.innerHTML = arr.map(function(it){
+    var sel = pjCurrent && pjCurrent.flow_id === it.flow_id;
+    return '<div class="pj-item' + (sel ? ' sel' : '') + '" data-fid="' + esc(it.flow_id) + '">'
+      + '<div class="pj-item-name">' + esc(it.name)
+      + (it.group ? '<span class="pj-group-tag">' + esc(it.group) + '</span>' : '')
+      + '</div>'
+      + '<div class="pj-item-meta">' + esc(it.update_time ? it.update_time.slice(0, 16).replace('T', ' ') : '—')
+      + (it.owner ? ' · ' + esc(it.owner) : '') + '</div>'
+      + '</div>';
+  }).join('');
+}
+function pjSelect(fid){
+  pjCurrent = null;
+  pjItems.forEach(function(it){ if (it.flow_id === fid) pjCurrent = it; });
+  if (!pjCurrent) return;
+  pjRenderList();
+  document.getElementById('pjEmpty').style.display = 'none';
+  var d = document.getElementById('pjDetail');
+  d.style.display = 'block';
+  document.getElementById('pjName').textContent = pjCurrent.name;
+  document.getElementById('pjMeta').textContent = 'flowId: ' + pjCurrent.flow_id
+    + ' · 更新: ' + pjFmtTime(pjCurrent.update_time)
+    + (pjCurrent.owner ? ' · 负责人: ' + pjCurrent.owner : '');
+  document.getElementById('pjGroup').value = pjCurrent.group || '';
+  document.getElementById('pjRunInfo').textContent = '点击「运行该应用」将立即触发一次执行（自动复用该项目历史成功运行的机器人）。';
+  document.getElementById('pjCfgHint').textContent = '配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置。';
+  document.getElementById('pjCfgTbl').innerHTML = '';
+  pjCfgItems = [];
+}
+function pjCfgRender(){
+  var tbl = document.getElementById('pjCfgTbl');
+  var rows = pjCfgItems.map(function(it){
+    return '<tr>'
+      + '<td>' + esc(it.key) + '</td>'
+      + '<td><input class="pj-cfg-val" data-key="' + esc(it.key) + '" value="' + esc(it.value) + '"></td>'
+      + '<td>' + esc(it.type) + '</td>'
+      + '<td>' + esc(it.desc) + '</td>'
+      + '<td><button class="btn pj-cfg-save" data-key="' + esc(it.key) + '" data-type="' + esc(it.type)
+      + '" data-desc="' + esc(it.desc) + '">保存</button></td>'
+      + '</tr>';
+  }).join('');
+  rows += '<tr class="pj-cfg-new">'
+    + '<td><input class="pj-cfg-key" placeholder="新 key"></td>'
+    + '<td><input class="pj-cfg-val" placeholder="值"></td>'
+    + '<td><select class="pj-cfg-type"><option>string</option><option>number</option><option>bool</option><option>json</option></select></td>'
+    + '<td><input class="pj-cfg-desc" placeholder="说明"></td>'
+    + '<td><button class="btn pj-cfg-add">新增</button></td>'
+    + '</tr>';
+  tbl.innerHTML = rows;
+}
+function pjCfgLoad(){
+  var g = document.getElementById('pjGroup').value.trim();
+  if (!g){ alert('请先填写配置组名'); return; }
+  return api('/api/projects/config?group=' + encodeURIComponent(g)).then(function(d){
+    if (!d || !d.ok){ alert((d && d.error) || '加载配置失败'); return; }
+    pjCfgItems = d.items || [];
+    document.getElementById('pjCfgHint').textContent = '配置组「' + g + '」共 ' + pjCfgItems.length + ' 个配置项；修改 value 后点保存，底部可新增。';
+    pjCfgRender();
+  });
+}
+function pjCfgPost(body, okMsg){
+  return fetch('/api/projects/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.ok){
+        document.getElementById('pjCfgHint').textContent = okMsg + (j.msg ? '（' + j.msg + '）' : '');
+      } else {
+        alert('保存失败：' + (j.error || j.msg || '未知错误'));
+      }
+      return j;
+    }).catch(function(e){ alert('请求失败：' + e); });
+}
+function pjInit(){
+  var listEl = document.getElementById('pjList');
+  if (!listEl) return;
+  document.getElementById('pjSort').addEventListener('change', pjRenderList);
+  document.getElementById('pjReload').addEventListener('click', function(){ pjLoad(true); });
+  listEl.addEventListener('click', function(e){
+    var item = e.target.closest('.pj-item');
+    if (item) pjSelect(item.getAttribute('data-fid'));
+  });
+  document.getElementById('pjRun').addEventListener('click', function(){
+    var p = pjCurrent;
+    if (!p) return;
+    if (!confirm('确认运行应用「' + p.name + '」？\n将立即触发一次执行。')) return;
+    fetch('/api/projects/run', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow_id: p.flow_id }) })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j.ok){
+          document.getElementById('pjRunInfo').textContent = '已触发运行，批次号：' + (j.flowProcessNo || '—')
+            + (j.botId ? '（机器人：' + j.botId.replace(/^.*_/, '') + '）' : '')
+            + '。任务已进入队列，可在时间轴查看实时状态。';
+        } else {
+          alert('运行失败：' + (j.message || j.error || '未知错误'));
+        }
+      }).catch(function(e){ alert('请求失败：' + e); });
+  });
+  document.getElementById('pjGroupSave').addEventListener('click', function(){
+    var p = pjCurrent;
+    if (!p) return;
+    var g = document.getElementById('pjGroup').value.trim();
+    pjCfgPost({ group: 'project', key: 'p.' + p.flow_id, value: g, type: 'string' },
+      '映射已保存：项目 ↔ 配置组「' + (g || '（未关联）') + '」').then(function(j){
+      if (j && j.ok){ p.group = g; pjRenderList(); }
+    });
+  });
+  document.getElementById('pjCfgLoad').addEventListener('click', pjCfgLoad);
+  document.getElementById('pjCfgTbl').addEventListener('click', function(e){
+    var saveBtn = e.target.closest('.pj-cfg-save');
+    if (saveBtn){
+      var key = saveBtn.getAttribute('data-key');
+      var val = document.querySelector('.pj-cfg-val[data-key="' + key + '"]');
+      pjCfgPost({ group: document.getElementById('pjGroup').value.trim(), key: key,
+                  value: val ? val.value : '', type: saveBtn.getAttribute('data-type'),
+                  desc: saveBtn.getAttribute('data-desc') }, '「' + key + '」已保存');
+      return;
+    }
+    var addBtn = e.target.closest('.pj-cfg-add');
+    if (addBtn){
+      var row = addBtn.closest('.pj-cfg-new');
+      var key = row.querySelector('.pj-cfg-key').value.trim();
+      var val = row.querySelector('.pj-cfg-val').value;
+      var typ = row.querySelector('.pj-cfg-type').value;
+      var desc = row.querySelector('.pj-cfg-desc').value;
+      if (!key){ alert('请填写 key'); return; }
+      pjCfgPost({ group: document.getElementById('pjGroup').value.trim(), key: key,
+                  value: val, type: typ, desc: desc }, '「' + key + '」已新增').then(function(j){
+        if (j && j.ok) pjCfgLoad();
+      });
+    }
+  });
+  pjLoad();
 }
 
 /* ==================== 启动 ==================== */
