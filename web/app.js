@@ -1590,7 +1590,18 @@ function pjSelect(fid){
   document.getElementById('pjCfgHint').textContent = '配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置。';
   document.getElementById('pjCfgTbl').innerHTML = '';
   pjCfgItems = [];
-  pjRunsLoad();
+  pjSwitchTab('cfg');
+  if (pjCurrent.group){ pjCfgLoad(); }
+}
+function pjSwitchTab(name){
+  var tabs = document.querySelectorAll('.pj-tab');
+  for (var i = 0; i < tabs.length; i++){
+    var on = tabs[i].getAttribute('data-tab') === name;
+    if (on) tabs[i].classList.add('active'); else tabs[i].classList.remove('active');
+  }
+  document.getElementById('pjPanelCfg').style.display = (name === 'cfg') ? 'flex' : 'none';
+  document.getElementById('pjPanelRuns').style.display = (name === 'runs') ? 'flex' : 'none';
+  if (name === 'runs') pjRunsLoad();
 }
 function pjRunsLoad(){
   var p = pjCurrent;
@@ -1600,15 +1611,22 @@ function pjRunsLoad(){
     var mine = RECORDS.filter(function(r){ return r.fid === p.flow_id; })
       .sort(function(a, b){ return (b.start || 0) - (a.start || 0); });
     document.getElementById('pjRunsInfo').textContent = mine.length
-      ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条。'
+      ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条；点击某条查看日志详情。'
       : '暂无运行记录（可点击标题右侧「运行该应用」触发一次）。';
     if (!mine.length){ el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>'; return; }
     el.innerHTML = mine.slice(0, 20).map(function(r){
-      var st = r.status || '';
-      return '<div class="pj-run-row">'
-        + statusBadge(st)
-        + '<span class="pj-run-time">' + fmtTime(r.start) + '</span>'
-        + '<span class="pj-run-dur">' + fmtDurM((r.end || Date.now()) - (r.execStart || r.start)) + '</span>'
+      var dur = (r.end || Date.now()) - (r.execStart || r.start);
+      return '<div class="pj-run-row" data-rid="' + esc(r.id) + '" title="点击查看日志详情">'
+        + '<div class="pj-run-line1">'
+        + statusBadge(r.status || '')
+        + '<span class="pj-run-name">' + esc(r.name || r.fid) + '</span>'
+        + '<span class="pj-run-dur">' + fmtDurM(dur) + '</span>'
+        + '</div>'
+        + '<div class="pj-run-line2">'
+        + '<span>机器人：' + esc(r.robot || '—') + '</span>'
+        + '<span>方式：' + esc(wayCN(r.way)) + '</span>'
+        + '<span>' + fmtTime(r.start) + ' ~ ' + (r.end == null ? '（进行中）' : fmtTime(r.end)) + '</span>'
+        + '</div>'
         + '</div>';
     }).join('');
   });
@@ -1696,6 +1714,16 @@ function pjInit(){
   document.getElementById('pjCfgLoad').addEventListener('click', pjCfgLoad);
   document.getElementById('pjRunsReload').addEventListener('click', function(){
     loadRuns().then(pjRunsLoad);
+  });
+  var tabs = document.querySelectorAll('.pj-tab');
+  for (var i = 0; i < tabs.length; i++){
+    (function(btn){
+      btn.addEventListener('click', function(){ pjSwitchTab(btn.getAttribute('data-tab')); });
+    })(tabs[i]);
+  }
+  document.getElementById('pjRunsList').addEventListener('click', function(e){
+    var row = e.target.closest('.pj-run-row');
+    if (row) location.hash = '#/detail?id=' + encodeURIComponent(row.getAttribute('data-rid'));
   });
   document.getElementById('pjCfgTbl').addEventListener('click', function(e){
     var saveBtn = e.target.closest('.pj-cfg-save');
