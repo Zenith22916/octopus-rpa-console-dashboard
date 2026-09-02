@@ -11,12 +11,15 @@
 <body>
 <div class="head">
   <div class="titlebar">
-    <select id="navSel">
-      <option value="#/analysis">运行分析仪表盘</option>
-      <option value="#/timeline">运行记录时间轴</option>
-      <option value="#/schedule">触发器日程表</option>
-      <option value="#/projects">项目控制台</option>
-    </select>
+    <div class="navmenu" id="navMenu">
+      <button class="navmenu-btn" id="navMenuBtn" type="button" title="切换视图（悬停展开）">运行数据分析</button>
+      <ul class="navmenu-list" id="navMenuList">
+        <li data-hash="#/analysis">运行数据分析</li>
+        <li data-hash="#/timeline">任务时间轴</li>
+        <li data-hash="#/schedule">触发器排期</li>
+        <li data-hash="#/projects">项目控制台</li>
+      </ul>
+    </div>
     <div class="datatime" id="dataTime">数据获取：—</div>
     <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
   </div>

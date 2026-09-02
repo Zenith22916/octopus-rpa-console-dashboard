@@ -83,14 +83,27 @@ function showView(name){
     var el = document.getElementById('view-' + views[i]);
     if (el) el.style.display = (views[i] === name) ? 'flex' : 'none';
   }
-  var sel = document.getElementById('navSel');
-  if (sel && ['timeline', 'analysis', 'schedule'].indexOf(name) >= 0){
-    sel.value = '#/' + name;
-  }
+  if (['timeline', 'analysis', 'schedule', 'projects'].indexOf(name) >= 0) navSet(name);
   // 标题栏指标卡按视图切换（时间轴 / 日程；分析页在页面内有自己的指标卡）
   var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
   if (tlM) tlM.style.display = (name === 'timeline') ? 'flex' : 'none';
   if (scM) scM.style.display = (name === 'schedule') ? 'flex' : 'none';
+}
+function navSet(name){
+  /* 同步悬停菜单：标题按钮文本 + 当前项高亮 */
+  var hash = '#/' + name;
+  var btn = document.getElementById('navMenuBtn');
+  var items = document.querySelectorAll('.navmenu-list li');
+  var label = null;
+  for (var i = 0; i < items.length; i++){
+    if (items[i].getAttribute('data-hash') === hash){
+      label = items[i].textContent;
+      items[i].classList.add('cur');
+    } else {
+      items[i].classList.remove('cur');
+    }
+  }
+  if (btn && label) btn.textContent = label;
 }
 function parseHash(){
   var h = location.hash || '#/analysis';
@@ -1526,7 +1539,18 @@ document.getElementById('btnRerun').addEventListener('click', function(){
   })
   .catch(function(e){ alert('请求失败：' + e); });
 });
-document.getElementById('navSel').addEventListener('change', function(){ location.hash = this.value; });
+document.getElementById('navMenuList').addEventListener('click', function(e){
+  var li = e.target.closest('li[data-hash]');
+  if (li){ location.hash = li.getAttribute('data-hash'); document.getElementById('navMenu').classList.remove('open'); }
+});
+// 触屏设备没有 hover：点标题切换展开，点别处收起
+document.getElementById('navMenuBtn').addEventListener('click', function(e){
+  document.getElementById('navMenu').classList.toggle('open');
+  e.stopPropagation();
+});
+document.addEventListener('click', function(){
+  document.getElementById('navMenu').classList.remove('open');
+});
 if (document.getElementById('chkAuto').checked) {
   refreshData();
   if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
