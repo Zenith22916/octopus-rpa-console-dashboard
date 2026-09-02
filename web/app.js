@@ -1586,7 +1586,7 @@ function pjSelect(fid){
   pjRenderList();
   document.getElementById('pjEmpty').style.display = 'none';
   var d = document.getElementById('pjDetail');
-  d.style.display = 'block';
+  d.style.display = 'flex';   // 保持 CSS 的 flex 纵向布局（不能用 block，否则卡片高度塌缩）
   document.getElementById('pjName').textContent = pjCurrent.name;
   document.getElementById('pjMeta').textContent = 'flowId: ' + pjCurrent.flow_id
     + ' · 更新: ' + pjFmtTime(pjCurrent.update_time)
@@ -1725,7 +1725,7 @@ function pjInit(){
     })(tabs[i]);
   }
   document.getElementById('pjRunsList').addEventListener('click', function(e){
-    var row = e.target.closest('.pj-run-row');
+    var row = e.target.closest('tr[data-rid]');
     if (row) location.hash = '#/detail?id=' + encodeURIComponent(row.getAttribute('data-rid'));
   });
   document.getElementById('pjCfgTbl').addEventListener('click', function(e){
