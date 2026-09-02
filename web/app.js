@@ -1587,10 +1587,31 @@ function pjSelect(fid){
     + ' · 更新: ' + pjFmtTime(pjCurrent.update_time)
     + (pjCurrent.owner ? ' · 负责人: ' + pjCurrent.owner : '');
   document.getElementById('pjGroup').value = pjCurrent.group || '';
-  document.getElementById('pjRunInfo').textContent = '点击「运行该应用」将立即触发一次执行（自动复用该项目历史成功运行的机器人）。';
   document.getElementById('pjCfgHint').textContent = '配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置。';
   document.getElementById('pjCfgTbl').innerHTML = '';
   pjCfgItems = [];
+  pjRunsLoad();
+}
+function pjRunsLoad(){
+  var p = pjCurrent;
+  var el = document.getElementById('pjRunsList');
+  if (!p || !el) return;
+  (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(function(){
+    var mine = RECORDS.filter(function(r){ return r.fid === p.flow_id; })
+      .sort(function(a, b){ return (b.start || 0) - (a.start || 0); });
+    document.getElementById('pjRunsInfo').textContent = mine.length
+      ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条。'
+      : '暂无运行记录（可点击标题右侧「运行该应用」触发一次）。';
+    if (!mine.length){ el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>'; return; }
+    el.innerHTML = mine.slice(0, 20).map(function(r){
+      var st = r.status || '';
+      return '<div class="pj-run-row">'
+        + statusBadge(st)
+        + '<span class="pj-run-time">' + fmtTime(r.start) + '</span>'
+        + '<span class="pj-run-dur">' + fmtDurM((r.end || Date.now()) - (r.execStart || r.start)) + '</span>'
+        + '</div>';
+    }).join('');
+  });
 }
 function pjCfgRender(){
   var tbl = document.getElementById('pjCfgTbl');
@@ -1654,9 +1675,10 @@ function pjInit(){
       .then(function(r){ return r.json(); })
       .then(function(j){
         if (j.ok){
-          document.getElementById('pjRunInfo').textContent = '已触发运行，批次号：' + (j.flowProcessNo || '—')
-            + (j.botId ? '（机器人：' + j.botId.replace(/^.*_/, '') + '）' : '')
-            + '。任务已进入队列，可在时间轴查看实时状态。';
+          alert('已触发运行，批次号：' + (j.flowProcessNo || '—')
+            + (j.botId ? '\n执行机器人：' + j.botId.replace(/^.*_/, '') : '')
+            + '\n任务已进入队列，运行记录卡片将自动刷新。');
+          setTimeout(pjRunsLoad, 3000);
         } else {
           alert('运行失败：' + (j.message || j.error || '未知错误'));
         }
@@ -1672,6 +1694,9 @@ function pjInit(){
     });
   });
   document.getElementById('pjCfgLoad').addEventListener('click', pjCfgLoad);
+  document.getElementById('pjRunsReload').addEventListener('click', function(){
+    loadRuns().then(pjRunsLoad);
+  });
   document.getElementById('pjCfgTbl').addEventListener('click', function(e){
     var saveBtn = e.target.closest('.pj-cfg-save');
     if (saveBtn){

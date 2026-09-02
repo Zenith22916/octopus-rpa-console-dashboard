@@ -137,26 +137,32 @@
       <div class="pj-empty" id="pjEmpty">← 从左侧选择一个项目</div>
       <div class="pj-detail" id="pjDetail" style="display:none;">
         <div class="pj-detail-head">
-          <h2 id="pjName"></h2>
+          <div class="pj-title-row">
+            <h2 id="pjName"></h2>
+            <button class="btn rerun" id="pjRun" title="立即触发一次执行（自动复用该项目历史成功运行的机器人）">▶ 运行该应用</button>
+          </div>
           <span class="datatime" id="pjMeta"></span>
         </div>
-        <div class="panel">
-          <div class="toolbar">
-            <h2 style="margin:0;">运行控制</h2>
-            <button class="btn rerun" id="pjRun">▶ 运行该应用</button>
+        <div class="pj-cards">
+          <div class="panel pj-card">
+            <div class="toolbar">
+              <h2 style="margin:0;">飞书配置</h2>
+              <span class="filter-label">配置组：</span>
+              <input type="text" id="pjGroup" placeholder="如 qcc" style="width:120px;">
+              <button class="btn" id="pjGroupSave">保存映射</button>
+              <button class="btn" id="pjCfgLoad">加载配置</button>
+            </div>
+            <div class="scroll"><table id="pjCfgTbl" class="pj-cfg-tbl"></table></div>
+            <div class="hint" id="pjCfgHint">配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置；表内可直接修改 value 并保存，底部可新增配置项。</div>
           </div>
-          <div class="hint" id="pjRunInfo">点击「运行该应用」将立即触发一次执行（自动复用该项目历史成功运行的机器人）。</div>
-        </div>
-        <div class="panel">
-          <div class="toolbar">
-            <h2 style="margin:0;">飞书配置</h2>
-            <span class="filter-label">配置组：</span>
-            <input type="text" id="pjGroup" placeholder="如 qcc" style="width:120px;">
-            <button class="btn" id="pjGroupSave">保存映射</button>
-            <button class="btn" id="pjCfgLoad">加载配置</button>
+          <div class="panel pj-card">
+            <div class="toolbar">
+              <h2 style="margin:0;">运行记录</h2>
+              <button class="btn" id="pjRunsReload">刷新</button>
+            </div>
+            <div class="scroll" id="pjRunsList"></div>
+            <div class="hint" id="pjRunsInfo">该应用最近 7 天的运行记录。</div>
           </div>
-          <div class="scroll"><table id="pjCfgTbl" class="pj-cfg-tbl"></table></div>
-          <div class="hint" id="pjCfgHint">配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置；表内可直接修改 value 并保存，底部可新增配置项。</div>
         </div>
       </div>
     </div>

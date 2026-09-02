@@ -232,9 +232,19 @@ tbody tr:hover { background: #1f232b; }
            border-top: 1px solid #262a33; text-align: right; }
 .pj-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pj-empty { margin: auto; color: #6f7480; font-size: 14px; }
-.pj-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+.pj-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: hidden; }
 .pj-detail-head { flex: none; }
-.pj-detail-head h2 { font-size: 17px; font-weight: 600; margin: 0 0 4px; color: #e6e6e6; }
+.pj-title-row { display: flex; align-items: center; gap: 12px; }
+.pj-title-row h2 { font-size: 17px; font-weight: 600; margin: 0; color: #e6e6e6; }
+.pj-cards { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.pj-card { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; }
+.pj-card .scroll { flex: 1; min-height: 0; }
+.pj-run-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+               border-bottom: 1px solid #20242c; font-size: 12px; }
+.pj-run-row:last-child { border-bottom: none; }
+.pj-run-time { color: #8b8f98; }
+.pj-run-dur { color: #6f7480; margin-left: auto; font-family: ui-monospace, Consolas, monospace; }
+.pj-empty-sm { padding: 24px; text-align: center; color: #6f7480; font-size: 12px; }
 .pj-cfg-tbl { width: 100%; border-collapse: collapse; }
 .pj-cfg-tbl th, .pj-cfg-tbl td { border: 1px solid #262a33; padding: 5px 8px; font-size: 12px;
                                  text-align: left; vertical-align: middle; }
