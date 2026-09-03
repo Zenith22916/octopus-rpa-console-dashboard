@@ -7,6 +7,8 @@
 <title>RPA 运行仪表盘</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/echarts.min.js"></script>
+<!-- Monaco 的 AMD loader 必须在 echarts 之后加载：否则 echarts 的 UMD 包装检测到 define.amd 会注册成 AMD 模块，不再暴露 window.echarts 全局 -->
+<script src="/monaco/vs/loader.js"></script>
 </head>
 <body>
 <div class="head">

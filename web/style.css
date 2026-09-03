@@ -717,81 +717,83 @@ tbody tr:hover {
   text-align: center;
 }
 
-.logfile {
-  margin-top: 0;
-  border: 1px solid #262a33;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.logfile+.logfile {
-  margin-top: 12px;
-}
-
-.logfile .lf-head {
+.log-tabs {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 9px 12px;
-  background: #11141a;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0 8px;
 }
 
-.logfile .lf-name {
+.logtabs-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.logtab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #181b21;
+  border: 1px solid #262a33;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  max-width: 360px;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.logtab:hover {
+  background: #1e222a;
+}
+
+.logtab.on {
+  border-color: #378ADD;
+  background: #16202c;
+}
+
+.logtab .lt-name {
   font-family: Consolas, "Microsoft YaHei", monospace;
-  font-size: 13px;
+  font-size: 12px;
   color: #d6dae0;
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.logfile .lf-meta {
+.logtab .lt-meta {
   font-size: 11px;
   color: #8b8f98;
   white-space: nowrap;
 }
 
-.logfile pre {
-  margin: 0;
-  max-height: 72vh;
-  overflow: auto;
-  padding: 12px 14px;
-  position: relative;
-  background: #0b0d11;
-  color: #cdd3da;
-  font-family: Consolas, "Microsoft YaHei", monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.logfile .lf-body {
-  display: block;
-}
-
-.logfile .lf-more {
-  padding: 8px 12px;
-  text-align: center;
-  background: #0b0d11;
-  border-top: 1px solid #1c2027;
-}
-
-.logfile .btn-more {
+.btn-more {
   background: #22262e;
   color: #cdd3da;
   border: 1px solid #333a45;
   border-radius: 6px;
-  padding: 6px 16px;
+  padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
 }
 
-.logfile .btn-more:hover {
+.btn-more:hover {
   background: #2a2f38;
 }
 
-.logfile .btn-more:disabled {
+.btn-more:disabled {
   opacity: .6;
+  cursor: default;
+}
+
+.btn-more.is-done {
+  opacity: .55;
   cursor: default;
 }
 
@@ -863,60 +865,41 @@ tbody tr:hover {
   width: 150px;
 }
 
-.lnmarks {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  pointer-events: none;
+/* Monaco 装饰：异常行高亮 / 行首色标 / 关键词匹配 */
+.lg-line-err {
+  background: rgba(226, 75, 74, 0.13);
 }
 
-.lnmarks .lm {
-  position: absolute;
-  left: 0;
-  right: 0;
+.lg-line-warn {
+  background: rgba(239, 159, 39, 0.10);
 }
 
-.lnmarks .lm-err {
-  background: rgba(226, 75, 74, 0.20);
-  box-shadow: inset 3px 0 0 #FF4D4F;
+#logbox.lg-only .lg-line-err {
+  background: rgba(226, 75, 74, 0.30);
 }
 
-.lnmarks .lm-warn {
-  background: rgba(239, 159, 39, 0.16);
-  box-shadow: inset 3px 0 0 #FFB020;
+#logbox.lg-only .lg-line-warn {
+  background: rgba(239, 159, 39, 0.24);
 }
 
-.lnmarks .lm-cur {
-  background: rgba(255, 77, 79, 0.42);
-  box-shadow: inset 3px 0 0 #FF4D4F;
-}
-
-.lrow {
-  display: block;
-}
-
-.lrow .lno {
-  color: #6f7480;
-  margin-right: 8px;
-  user-select: none;
-}
-
-.lrow.hit {
-  background: rgba(226, 75, 74, 0.16);
-  box-shadow: inset 3px 0 0 #FF4D4F;
-}
-
-.lrow.hitkw {
-  background: rgba(55, 138, 221, 0.16);
-  box-shadow: inset 3px 0 0 #378ADD;
-}
-
-.lrow mark {
-  background: rgba(239, 159, 39, 0.35);
-  color: #ffd79a;
-  padding: 0 1px;
+.lg-glyph-err,
+.lg-glyph-warn {
+  width: 3px !important;
+  margin-left: 3px;
   border-radius: 2px;
+}
+
+.lg-glyph-err {
+  background: #FF6B6D;
+}
+
+.lg-glyph-warn {
+  background: #FFB020;
+}
+
+.lg-hit {
+  background: rgba(74, 144, 217, 0.40);
+  outline: 1px solid rgba(74, 144, 217, 0.9);
 }
 
 .log-body {
@@ -925,40 +908,12 @@ tbody tr:hover {
   min-height: 0;
 }
 
-.minimap {
-  flex: 0 0 96px;
-  position: relative;
-  margin-left: 10px;
-  align-self: stretch;
+#logbox {
+  min-width: 0;
   background: #0b0d11;
   border: 1px solid #262a33;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.minimap canvas {
-  display: block;
-}
-
-.minimap .mm-viewport {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 0;
-  background: rgba(190, 200, 215, 0.10);
-  pointer-events: none;
-}
-
-.minimap:hover .mm-viewport {
-  background: rgba(190, 200, 215, 0.18);
-}
-
-.minimap.mm-drag .mm-viewport {
-  background: rgba(190, 200, 215, 0.22);
 }
 
 @media (max-width: 900px) {
@@ -972,8 +927,8 @@ tbody tr:hover {
     width: 100%;
   }
 
-  .minimap {
-    display: none !important;
+  #logbox {
+    height: 72vh;
   }
 }
 
@@ -1019,11 +974,6 @@ tbody tr:hover {
   #logbox {
     flex: 1 1 auto;
     min-height: 0;
-    overflow-y: auto;
-  }
-
-  .logfile pre {
-    max-height: none;
   }
 }
 

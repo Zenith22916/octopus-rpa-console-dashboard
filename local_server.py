@@ -34,12 +34,13 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DIR = os.path.join(BASE, "output")
 WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html/app.js/style.css）
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
+MONACO_ROOT = os.path.join(BASE, "assets", "monaco")         # Monaco Editor（日志高亮，离线自托管；URL /monaco/vs/... → assets/monaco/vs/...）
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
 REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
 LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
 LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）；节流跳过不更新
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
-LOG_PAGE = 2000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
+LOG_PAGE = 5000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
 RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
@@ -267,6 +268,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return super().do_GET()
         if path0 == "/echarts.min.js":
             return self._serve_echarts()
+        if path0.startswith("/monaco/"):
+            return self._serve_monaco()
         if path0 == "/api/log":
             self.handle_log_fetch()
             return
@@ -534,6 +537,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_monaco(self):
+        """提供本地 Monaco Editor 静态资源（assets/monaco/vs/，日志只读高亮用）。
+        库文件内容固定，允许浏览器长缓存；路径严格限制在 monaco 根内防穿越。"""
+        rel = unquote(self.path[len("/monaco/"):].split("?")[0])
+        fp = os.path.normpath(os.path.join(MONACO_ROOT, rel))
+        if not fp.startswith(MONACO_ROOT + os.sep) and fp != MONACO_ROOT:
+            return self.send_error(403, "Forbidden")
+        if not os.path.isfile(fp):
+            return self.send_error(404, "Not Found")
+        ctype = {".js": "application/javascript; charset=utf-8",
+                 ".css": "text/css; charset=utf-8",
+                 ".ttf": "font/ttf", ".woff": "font/woff", ".woff2": "font/woff2",
+                 ".json": "application/json; charset=utf-8"}.get(
+            os.path.splitext(fp)[1].lower(), "application/octet-stream")
+        try:
+            with open(fp, "rb") as f:
+                data = f.read()
+        except Exception:
+            return self.send_error(500, "Read Error")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=604800")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _serve_echarts(self):
         """提供本地 echarts.min.js（assets/ 下，前端离线可用，不依赖 CDN）。"""

@@ -83,6 +83,8 @@ function showView(name){
     var el = document.getElementById('view-' + views[i]);
     if (el) el.style.display = (views[i] === name) ? 'flex' : 'none';
   }
+  // 离开详情页时释放 Monaco 日志编辑器（模型与实例随详情重建，避免常驻占内存）
+  if (name !== 'detail' && typeof lgReset === 'function') lgReset();
   if (['timeline', 'analysis', 'schedule', 'projects'].indexOf(name) >= 0) navSet(name);
   // 标题栏指标卡按视图切换（时间轴 / 日程；分析页在页面内有自己的指标卡）
   var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
@@ -533,20 +535,8 @@ function tlInit(){
       tlUpdateWindow();
     });
   }
-  var toastEl = document.getElementById('toast');
-  var toastTimer = null;
-  function showToast(msg){
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2200);
-  }
   tlChart.on('click', function(params){
     if (params && params.data && params.data.rid) {
-      if (params.data.status === 'Executing') {
-        showToast('任务「' + (params.data.name || '运行中') + '」正在运行中，暂不可查看明细');
-        return;
-      }
       location.hash = '#/detail?id=' + encodeURIComponent(params.data.rid);
     }
   });
@@ -702,6 +692,7 @@ function anExport(){
 function fld(k, v){ return '<div class="field"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>'; }
 function renderDetail(){
   var app = document.getElementById("app");
+  if (typeof lgReset === "function") lgReset();   // 释放上一个详情的 Monaco 编辑器与模型
   var rec = DETAIL_REC;
   if (!rec){
     app.innerHTML = '<div class="empty">未找到该运行记录。</div>';
@@ -734,442 +725,421 @@ function renderDetail(){
     +     '<button class="chip" id="btnOnlyErr" disabled>仅看异常</button>'
     +   '</div>'
     + '</div>'
+    + '<div class="log-tabs" id="logTabs"></div>'
     + '<div class="log-body">'
     +   '<div id="logbox" class="tip">正在读取日志…</div>'
-    +   '<div class="minimap" id="minimap" hidden title="拖动可快速定位日志">'
-    +     '<canvas id="mmcanvas"></canvas><div class="mm-viewport" id="mmviewport"></div>'
-    +   '</div>'
     + '</div></div>';
   app.innerHTML = '<div class="detail-wrap">' + info + logCard + '</div>';
-  mmInit();
   lgInit();
   loadLogs();
 }
-/* 日志缩略图（仿 VSCode minimap） */
-var MM = { box:null, mm:null, cv:null, vp:null, drag:false, grab:0, raf:0, vraf:0, sig:"", h:0, stop:false, ticks:[], mctx:null };
-var MM_COLORS = ["#4d5666", "#FF4D4F", "#FFB020", "#2A7F62"];
-var MM_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
-var MM_EXC = /(已启用异常监控|触发错误处理的|忽略异常并执行)/;
-var MM_TICK_W = 11;
-var MM_WA = null, MM_WO = null;
-var MM_CAT = null;
-function mmCharW(ctx, code){
-  var w;
-  if (code < 128){
-    if (!MM_WA){ MM_WA = new Float32Array(128); }
-    w = MM_WA[code];
-    if (!w){ w = MM_WA[code] = ctx.measureText(String.fromCharCode(code)).width || 6; }
-    return w;
-  }
-  if (!MM_WO) MM_WO = {};
-  w = MM_WO[code];
-  if (w === undefined || !w){ w = MM_WO[code] = ctx.measureText(String.fromCharCode(code)).width || 12; }
-  return w;
+/* ==================== 日志查看（Monaco 只读编辑器，VSCode 同款高亮） ==================== */
+var LOG_PAGE = 5000;
+var LOG_FILES = [];   // [{name,size,total,loaded,content,hasMore,pending}]
+var LOGM = {
+  ready: null,          // Monaco 加载 Promise（脚本只加载一次，跨详情复用）
+  langOK: false,        // 自定义 log 语言/主题已注册
+  editor: null,         // Monaco 编辑器实例（每次详情重建）
+  models: [],           // 每个 .log 文件一个 model
+  decos: [],            // 每个 model 的装饰句柄 {marks:[],hits:[]}
+  fileMarks: [],        // 每个 model 的异常行 [{line,lv}]
+  matches: [],          // 当前文件的关键词匹配结果
+  cur: -1, kw: "", only: false, active: 0
+};
+
+function ensureMonaco(){
+  if (LOGM.ready) return LOGM.ready;
+  LOGM.ready = new Promise(function(resolve, reject){
+    if (!window.require){ reject(new Error("loader 未加载")); return; }
+    require.config({ paths: { vs: "/monaco/vs" } });
+    require(["vs/editor/editor.main"], function(){
+      resolve(window.monaco);
+    }, function(err){ reject(err); });
+  });
+  return LOGM.ready;
 }
-function mmFillCats(line){
-  var n = line.length, i, m, ch;
-  if (!MM_CAT || MM_CAT.length < n) MM_CAT = new Int8Array(Math.max(2048, n + 256));
-  var buf = MM_CAT;
-  for (i = 0; i < n; i++){
-    ch = line.charAt(i);
-    buf[i] = (ch === " " || ch === "\t" || ch === "\r") ? -1 : 0;
-  }
-  if (n > 20000) return buf;
-  if (MM_EXC.test(line)) return buf;
-  MM_RE.lastIndex = 0;
-  while ((m = MM_RE.exec(line)) !== null){
-    var c = m[1] ? 1 : (m[2] ? 2 : 3);
-    var e0 = m.index + m[0].length;
-    for (i = m.index; i < e0; i++){ if (buf[i] >= 0) buf[i] = c; }
-  }
-  return buf;
+
+function logSetupLanguage(monaco){
+  if (LOGM.langOK) return;
+  LOGM.langOK = true;
+  monaco.languages.register({ id: "log" });
+  monaco.languages.setMonarchTokensProvider("log", {
+    ignoreCase: true,
+    tokenizer: {
+      root: [
+        // 时间戳：2026-09-03 15:31:11 / 2026-09-03T15:31:11.123 / 15:31:11
+        [/\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?/, "timestamp"],
+        [/\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?/, "timestamp"],
+        // 方括号内的级别词：[ERROR] [WARN] [INFO]...
+        [/\[(?:fatal|exception|critical|error|失败|错误|异常|中止|中断)\]/, "level-error"],
+        [/\[(?:warn(?:ing)?|警告|超时|重试)\]/, "level-warn"],
+        [/\[(?:info|debug|trace|成功|完成)\]/, "level-info"],
+        // 其余方括号标签
+        [/\[[^\[\]\n]{1,48}\]/, "tag"],
+        // 裸级别词
+        [/\b(?:fatal|exception|critical)\b|\berror\b/, "level-error"],
+        [/\bwarn(?:ing)?\b/, "level-warn"],
+        [/\b(?:info|debug|trace)\b/, "level-info"],
+        [/失败|错误|异常|中止|中断/, "level-error"],
+        [/警告|超时|重试/, "level-warn"],
+        [/成功|完成/, "level-info"],
+        [/https?:\/\/[^\s"']+/, "url"],
+        [/\b\d+(?:\.\d+)?\b/, "number"]
+      ]
+    }
+  });
+  monaco.editor.defineTheme("rpa-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "timestamp", foreground: "8A93A6" },
+      { token: "tag", foreground: "6FB3D2" },
+      { token: "level-error", foreground: "FF6B6D", fontStyle: "bold" },
+      { token: "level-warn", foreground: "FFB020" },
+      { token: "level-info", foreground: "4EC98C" },
+      { token: "url", foreground: "4A90D9" },
+      { token: "number", foreground: "C8D3E0" }
+    ],
+    colors: {
+      "editor.background": "#0b0d11",
+      "editor.foreground": "#cdd3da",
+      "editorLineNumber.foreground": "#4a5160",
+      "editorLineNumber.activeForeground": "#8b93a3",
+      "editor.lineHighlightBackground": "#131720",
+      "editor.selectionBackground": "#264f78",
+      "minimap.background": "#0b0d11"
+    }
+  });
 }
-function mmCtx(){
-  if (!MM.mctx){ MM.mctx = document.createElement("canvas").getContext("2d"); }
-  return MM.mctx;
+
+function logEditorCreate(){
+  var host = document.getElementById("logbox");
+  if (!host) return Promise.reject(new Error("logbox 不存在"));
+  return ensureMonaco().then(function(monaco){
+    if (!LOGM.editor){
+      logSetupLanguage(monaco);
+      LOGM.editor = monaco.editor.create(host, {
+        language: "log",
+        theme: "rpa-dark",
+        readOnly: true,
+        automaticLayout: true,
+        fontFamily: "Consolas, 'Microsoft YaHei', monospace",
+        fontSize: 12.5,
+        lineHeight: 20,
+        minimap: { enabled: true, renderCharacters: false, maxColumn: 150 },
+        scrollBeyondLastLine: false,
+        wordWrap: "on",
+        contextmenu: false,
+        folding: false,
+        renderLineHighlight: "line",
+        occurrencesHighlight: false,
+        selectionHighlight: false,
+        lineNumbersMinChars: 4,
+        overviewRulerLanes: 2,
+        stickyScroll: { enabled: false },
+        scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false }
+      });
+    }
+    return monaco;
+  });
 }
-function mmLineLevel(line){
+
+/* ---- 行级别判定（沿用手写规则：0 普通 / 1 错误 / 2 警告 / 3 成功） ---- */
+var LG_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
+var LG_EXC = /(已启用异常监控|触发错误处理的|忽略异常并执行)/;
+function lgLineLevel(line){
   if (!line || line.length > 20000) return 0;
-  if (MM_EXC.test(line)) return 0;
+  if (LG_EXC.test(line)) return 0;
   var lv = 0, m;
-  MM_RE.lastIndex = 0;
-  while ((m = MM_RE.exec(line)) !== null){
+  LG_RE.lastIndex = 0;
+  while ((m = LG_RE.exec(line)) !== null){
     var c = m[1] ? 1 : (m[2] ? 2 : 3);
     if (c === 1) return 1;
     if (lv === 0 || c < lv) lv = c;
   }
   return lv;
 }
-function mmEachLine(pre, ctx, cb){
-  var tn = pre.firstChild;
-  if (!tn || tn.nodeType !== 3) return 0;
-  var text = tn.nodeValue || "";
-  if (!text) return 0;
-  var cs = window.getComputedStyle(pre);
-  var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
-  var contentW = pre.clientWidth - padL - padR;
-  if (contentW <= 0) return 0;
-  var fs = parseFloat(cs.fontSize) || 12.5;
-  var lh = parseFloat(cs.lineHeight);
-  if (!lh || lh < 1) lh = fs * 1.6;
-  ctx.font = (cs.fontStyle || "normal") + " " + (cs.fontWeight || "400") + " " + fs + "px " + (cs.fontFamily || "monospace");
-  var y = 0, n = text.length, i = 0, lineNo = 0;
-  while (i < n){
-    var nl = text.indexOf("\n", i);
-    var end = (nl === -1) ? n : nl;
-    var line = text.slice(i, end);
-    var j = 0, segStart = 0, acc = 0, L = line.length;
-    while (j <= L){
-      if (j === L || (acc > 0 && acc + mmCharW(ctx, line.charCodeAt(j)) > contentW)){
-        if (cb(line, segStart, j, y, lh, lineNo, j === L) === false) return y;
-        y += lh;
-        if (j === L) break;
-        segStart = j; acc = 0;
-      }
-      acc += mmCharW(ctx, line.charCodeAt(j));
-      j++;
-    }
-    i = end + 1; lineNo++;
-    if (nl === -1) break;
+
+/* ---- 模型同步：首页 setValue，后续增量 append（不重置滚动位置） ---- */
+function logSyncModel(fi, offset, delta){
+  var monaco = window.monaco;
+  var f = LOG_FILES[fi];
+  if (!monaco || !f) return;
+  var m = LOGM.models[fi];
+  if (!m){
+    m = LOGM.models[fi] = monaco.editor.createModel(f.content, "log");
+    LOGM.decos[fi] = { marks: [], hits: [] };
+  } else if (offset === 0){
+    m.setValue(f.content);
+  } else if (delta){
+    var last = m.getLineCount();
+    var col = m.getLineMaxColumn(last);
+    m.applyEdits([{
+      range: new monaco.Range(last, col, last, col),
+      text: (last > 1 || col > 1 ? "\n" : "") + delta,
+      forceMoveMarkers: true
+    }]);
   }
-  return y;
+  lgScanMarks(fi);
+  lgApplyMarkDecos(fi);
+  if (LOGM.active === fi && LOGM.editor && LOGM.editor.getModel() !== m){
+    LOGM.editor.setModel(m);
+    logApplyHits();
+  }
 }
-function mmDrawPre(ctx, pre, contentTop, scale, W, drawn){
-  if (MM.stop || !pre.offsetParent) return drawn;
-  var cs = window.getComputedStyle(pre);
-  var padT = parseFloat(cs.paddingTop) || 0;
-  var base = (pre.getBoundingClientRect().top + padT) - contentTop;
-  var H = MM.h, tickW = MM_TICK_W;
-  var lrows = pre.querySelectorAll(".lrow");
-  if (lrows.length){
-    for (var r0 = 0; r0 < lrows.length; r0++){
-      var r = lrows[r0];
-      var h = Math.max(1, r.offsetHeight * scale);
-      var yDoc = base + r.offsetTop;
-      var yy = yDoc * scale;
-      if (yy > H + h){ MM.stop = true; return drawn; }
-      var lv = parseInt(r.getAttribute("data-level") || "0", 10);
-      if (yy + h > 0 && lv > 0 && lv < MM_COLORS.length){
-        ctx.fillStyle = MM_COLORS[lv];
-        ctx.fillRect(0, yy, W - tickW, h);
-      }
-      if (lv === 1 || lv === 2) MM.ticks.push({ y: yDoc, h: r.offsetHeight, lv: lv });
-      drawn++;
-    }
-    return drawn;
+
+function lgScanMarks(fi){
+  var m = LOGM.models[fi];
+  if (!m){ LOGM.fileMarks[fi] = []; return; }
+  var marks = [], lc = m.getLineCount();
+  for (var i = 1; i <= lc; i++){
+    var lv = lgLineLevel(m.getLineContent(i));
+    if (lv === 1 || lv === 2) marks.push({ line: i, lv: lv });
   }
-  mmEachLine(pre, ctx, function(line, s, e, y, lh){
-    var rowH = Math.max(1, lh * scale);
-    var yDoc = base + y;
-    var yy = yDoc * scale;
-    if (yy > H + rowH){ MM.stop = true; return false; }
-    var cats = mmFillCats(line.slice(s, e));
-    var kx = W / (pre.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0));
-    var tiny = rowH < 2;
-    var x = 0, runCat = -2, runX0 = 0, best = -1, minX = 1e9, maxX = 0, k, c, w;
-    for (k = s; k < e; k++){
-      c = (k - s) < cats.length ? cats[k - s] : 0;
-      w = mmCharW(ctx, line.charCodeAt(k));
-      if (c >= 0){
-        if (best < 0 || (c > 0 && c < best)) best = c;
-        if (x < minX) minX = x;
-        if (x + w > maxX) maxX = x + w;
+  LOGM.fileMarks[fi] = marks;
+}
+
+function lgApplyMarkDecos(fi){
+  var monaco = window.monaco;
+  var m = LOGM.models[fi];
+  if (!m || !monaco) return;
+  var d = LOGM.decos[fi] || (LOGM.decos[fi] = { marks: [], hits: [] });
+  var opts = [], marks = LOGM.fileMarks[fi] || [];
+  for (var i = 0; i < marks.length; i++){
+    var mk = marks[i];
+    opts.push({
+      range: new monaco.Range(mk.line, 1, mk.line, 1),
+      options: {
+        isWholeLine: true,
+        className: mk.lv === 1 ? "lg-line-err" : "lg-line-warn",
+        linesDecorationsClassName: mk.lv === 1 ? "lg-glyph-err" : "lg-glyph-warn",
+        overviewRuler: { color: mk.lv === 1 ? "#FF6B6D" : "#FFB020", position: monaco.editor.OverviewRulerLane.Right }
       }
-      if (!tiny && c !== runCat){
-        if (runCat >= 0 && x > runX0){
-          ctx.fillStyle = MM_COLORS[runCat];
-          ctx.fillRect(runX0 * kx, yy, Math.max((x - runX0) * kx, 0.7), rowH);
-        }
-        runCat = c; runX0 = x;
-      }
-      x += w;
+    });
+  }
+  d.marks = m.deltaDecorations(d.marks, opts);
+}
+
+/* ---- 关键词匹配（当前文件）：装饰 + 导航列表 ---- */
+function logApplyHits(){
+  var monaco = window.monaco;
+  var fi = LOGM.active;
+  var m = LOGM.models[fi];
+  LOGM.matches = [];
+  if (!m || !monaco || !LOGM.editor) return;
+  var d = LOGM.decos[fi] || (LOGM.decos[fi] = { marks: [], hits: [] });
+  var opts = [];
+  if (LOGM.kw){
+    var found = m.findMatches(LOGM.kw, false, false, false, null, false, 20000);
+    for (var i = 0; i < found.length; i++){
+      var r = found[i].range;
+      LOGM.matches.push({ line: r.startLineNumber, col: r.startColumn, len: r.endColumn - r.startColumn });
+      opts.push({ range: r, options: { className: "lg-hit", stickiness: 1 } });
     }
-    if (yy + rowH > 0){
-      if (best === 1 || best === 2){
-        ctx.fillStyle = MM_COLORS[best];
-        ctx.fillRect(0, yy, W - tickW, Math.max(rowH, 2));
-      } else if (!tiny && runCat >= 0 && x > runX0){
-        ctx.fillStyle = MM_COLORS[runCat];
-        ctx.fillRect(runX0 * kx, yy, Math.max((x - runX0) * kx, 0.7), rowH);
-      } else if (tiny && best >= 0 && maxX > minX && minX * kx < W - tickW){
-        ctx.fillStyle = MM_COLORS[best];
-        ctx.fillRect(minX * kx, yy, Math.min(Math.max((maxX - minX) * kx, 0.8), W - tickW - minX * kx), rowH);
-      }
-    }
-    if (best === 1 || best === 2) MM.ticks.push({ y: yDoc, h: lh, lv: best });
-    drawn++;
-    return true;
+  }
+  d.hits = m.deltaDecorations(d.hits, opts);
+}
+
+/* ---- 导航：有关键词时跳匹配处，否则跳异常行 ---- */
+function lgNavTargets(){
+  if (LOGM.kw) return LOGM.matches;
+  return (LOGM.fileMarks[LOGM.active] || []).map(function(mk){
+    return { line: mk.line, col: 1, len: 0 };
   });
-  return drawn;
-}
-function mmDrawTicks(ctx, W, H, scale){
-  var tw = MM_TICK_W;
-  ctx.fillStyle = "#0a0c10";
-  ctx.fillRect(W - tw, 0, tw, H);
-  ctx.fillStyle = "#232830";
-  ctx.fillRect(W - tw, 0, 0.5, H);
-  for (var i = 0; i < MM.ticks.length; i++){
-    var t = MM.ticks[i], y = t.y * scale;
-    if (y > H || y + t.h * scale < 0) continue;
-    ctx.fillStyle = t.lv === 1 ? "#FF4D4F" : "#FFB020";
-    ctx.fillRect(W - tw + 1.5, y, tw - 3, Math.max(2.5, t.h * scale));
-  }
-}
-function mmBuild(){
-  var box = MM.box, mm = MM.mm, cv = MM.cv;
-  if (!box || !mm || !cv) return;
-  var sig = box.clientWidth + "x" + box.clientHeight + "x" + box.scrollHeight + "|" + (mm.hidden ? 1 : 0);
-  if (sig === MM.sig) return;
-  MM.sig = sig;
-  var docH = box.scrollHeight, viewH = box.clientHeight;
-  if (!docH || docH <= viewH + 4){ if (!mm.hidden) { mm.hidden = true; MM.sig = ""; } return; }
-  mm.hidden = false;
-  var W = mm.clientWidth, H = mm.clientHeight;
-  if (W <= 0 || H <= 0) return;
-  MM.h = H;
-  var dpr = window.devicePixelRatio || 1;
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-  cv.style.width = W + "px"; cv.style.height = H + "px";
-  var ctx = cv.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  var scale = H / docH;
-  var boxRect = box.getBoundingClientRect();
-  var contentTop = boxRect.top - box.scrollTop;
-  var pres = box.querySelectorAll("pre"), drawn = 0;
-  MM.stop = false; MM.ticks = [];
-  for (var i = 0; i < pres.length; i++) drawn = mmDrawPre(ctx, pres[i], contentTop, scale, W, drawn);
-  mmDrawTicks(ctx, W, H, scale);
-  mmSync();
-}
-function mmSync(){
-  var box = MM.box, mm = MM.mm, vp = MM.vp;
-  if (!box || !mm || !vp || mm.hidden) return;
-  var docH = box.scrollHeight, viewH = box.clientHeight, H = mm.clientHeight;
-  if (!docH || !H) return;
-  var scale = H / docH;
-  var h = Math.max(6, Math.min(H, viewH * scale));
-  var top = box.scrollTop * scale;
-  if (top + h > H) top = Math.max(0, H - h);
-  vp.style.top = top + "px";
-  vp.style.height = h + "px";
-}
-function mmSchedule(force){ if (force) MM.sig = ""; if (MM.raf) return; MM.raf = requestAnimationFrame(function(){ MM.raf = 0; mmBuild(); }); }
-function mmGo(clientY){
-  var box = MM.box, mm = MM.mm;
-  if (!box || !mm || mm.hidden) return;
-  var r = mm.getBoundingClientRect(), H = mm.clientHeight || 1;
-  var docH = box.scrollHeight, viewH = box.clientHeight, scale = docH / H;
-  var y = Math.max(0, Math.min(H, clientY - r.top));
-  box.scrollTop = Math.max(0, Math.min(docH - viewH, y * scale - MM.grab));
-}
-function mmDown(e){
-  if (!MM.box || !MM.mm || MM.mm.hidden) return;
-  var r = MM.mm.getBoundingClientRect(), H = MM.mm.clientHeight || 1;
-  var docH = MM.box.scrollHeight, viewH = MM.box.clientHeight, scale = docH / H;
-  var docY = (e.clientY - r.top) * scale;
-  MM.grab = (docY >= MM.box.scrollTop && docY <= MM.box.scrollTop + viewH) ? (docY - MM.box.scrollTop) : viewH / 2;
-  MM.drag = true;
-  MM.mm.classList.add("mm-drag");
-  if (e.pointerId != null && MM.mm.setPointerCapture) { try { MM.mm.setPointerCapture(e.pointerId); } catch(err){} }
-  mmGo(e.clientY);
-  e.preventDefault();
-}
-function mmMove(e){ if (MM.drag) mmGo(e.clientY); }
-function mmUp(){
-  if (!MM.drag) return;
-  MM.drag = false;
-  if (MM.mm) MM.mm.classList.remove("mm-drag");
-}
-function mmInit(){
-  MM.box = document.getElementById("logbox");
-  MM.mm  = document.getElementById("minimap");
-  MM.cv  = document.getElementById("mmcanvas");
-  MM.vp  = document.getElementById("mmviewport");
-  if (!MM.box || !MM.mm) return;
-  MM.box.addEventListener("scroll", function(){
-    if (MM.vraf) return;
-    MM.vraf = requestAnimationFrame(function(){ MM.vraf = 0; mmSync(); });
-  }, { passive: true });
-  MM.mm.addEventListener("pointerdown", mmDown);
-  window.addEventListener("pointermove", mmMove);
-  window.addEventListener("pointerup", mmUp);
-  window.addEventListener("pointercancel", mmUp);
-  window.addEventListener("resize", function(){ MM.sig = ""; mmSchedule(); });
-  if (window.ResizeObserver){
-    new ResizeObserver(function(){ MM.sig = ""; mmSchedule(); }).observe(MM.box);
-  }
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ MM.sig = ""; mmSchedule(); });
-  mmSchedule();
-}
-/* 日志排查辅助 */
-var LG = { files: [], marks: [], cur: -1, only: false, kw: "" };
-function lgPadTop(pre){ return parseFloat(window.getComputedStyle(pre).paddingTop) || 0; }
-function lgAnalyze(){
-  var box = MM.box;
-  if (!box) return;
-  var pres = box.querySelectorAll("pre"), ctx = mmCtx();
-  LG.marks = [];
-  for (var i = 0; i < pres.length; i++){
-    var pre = pres[i];
-    if (!pre.offsetParent) continue;
-    var lrows = pre.querySelectorAll(".lrow");
-    if (lrows.length){
-      for (var j = 0; j < lrows.length; j++){
-        var r = lrows[j];
-        var lv = parseInt(r.getAttribute("data-level") || "0", 10);
-        if (lv === 1 || lv === 2){
-          var noEl = r.querySelector(".lno");
-          LG.marks.push({ pre: pre, y: r.offsetTop, h: r.offsetHeight, lv: lv, no: noEl ? parseInt(noEl.textContent, 10) : 0, text: r.textContent.slice(0, 200) });
-        }
-      }
-      continue;
-    }
-    (function(el){
-      var startY = 0, lv = 0, no = 0, open = false;
-      mmEachLine(el, ctx, function(line, s, e, y, lh, lineNo, last){
-        if (s === 0){ startY = y; lv = mmLineLevel(line); no = lineNo; open = (lv === 1 || lv === 2); }
-        if (open && last) LG.marks.push({ pre: el, y: startY + lgPadTop(el), h: (y + lh) - startY, lv: lv, no: no + 1, text: line.slice(0, 200) });
-        return true;
-      });
-    })(pre);
-  }
-  lgRenderMarks();
-  lgStat();
-}
-function lgRenderMarks(){
-  var box = MM.box;
-  if (!box) return;
-  var pres = box.querySelectorAll("pre"), i, old;
-  for (i = 0; i < pres.length; i++){
-    old = pres[i].querySelector(".lnmarks");
-    if (old) old.parentNode.removeChild(old);
-  }
-  for (i = 0; i < LG.marks.length; i++){
-    var m = LG.marks[i];
-    var layer = m.pre.querySelector(".lnmarks");
-    if (!layer){ layer = document.createElement("div"); layer.className = "lnmarks"; m.pre.appendChild(layer); }
-    var d = document.createElement("div");
-    d.className = "lm " + (m.lv === 1 ? "lm-err" : "lm-warn");
-    d.title = "第 " + m.no + " 行：" + m.text;
-    d.style.top = m.y + "px";
-    d.style.height = m.h + "px";
-    d.setAttribute("data-mi", String(i));
-    layer.appendChild(d);
-  }
-  LG.cur = -1;
-}
-function lgReset(){
-  LG.files = []; LG.marks = []; LG.cur = -1; LG.only = false; LG.kw = "";
-  var el = document.getElementById("logStat");
-  if (el){ el.textContent = "—"; el.removeAttribute("title"); }
-  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind"], b, i;
-  for (i = 0; i < ids.length; i++){
-    b = document.getElementById(ids[i]);
-    if (b){ b.disabled = true; if (ids[i] === "btnOnlyErr"){ b.className = "chip"; b.textContent = "仅看异常"; } }
-  }
-  var f = document.getElementById("logFind");
-  if (f) f.value = "";
-}
-function lgStat(){
-  var el = document.getElementById("logStat"), i, e = 0, w = 0;
-  for (i = 0; i < LG.marks.length; i++){ if (LG.marks[i].lv === 1) e++; else w++; }
-  if (el) el.innerHTML = LG.marks.length
-    ? ('共 <b>' + LG.marks.length + '</b> 处 · 错误 <b class="s-err">' + e + '</b> · 警告 <b class="s-warn">' + w + '</b>')
-    : '未发现异常';
-  var has = LG.marks.length > 0;
-  var b;
-  b = document.getElementById("btnPrev"); if (b) b.disabled = !has;
-  b = document.getElementById("btnNext"); if (b) b.disabled = !has;
-  b = document.getElementById("btnOnlyErr"); if (b) b.disabled = !has;
-  b = document.getElementById("logFind"); if (b) b.disabled = false;
 }
 function lgGoTo(idx){
-  var box = MM.box;
-  if (!box || !LG.marks.length) return;
-  if (idx < 0) idx = LG.marks.length - 1;
-  if (idx >= LG.marks.length) idx = 0;
-  LG.cur = idx;
-  var m = LG.marks[idx];
-  var boxRect = box.getBoundingClientRect(), preRect = m.pre.getBoundingClientRect();
-  var top = (preRect.top - boxRect.top) + box.scrollTop + lgPadTop(m.pre) + m.y - box.clientHeight / 2;
-  box.scrollTop = Math.max(0, top);
-  var all = box.querySelectorAll(".lnmarks .lm"), i;
-  for (i = 0; i < all.length; i++) all[i].className = all[i].className.replace(" lm-cur", "");
-  var layer = m.pre.querySelector(".lnmarks");
-  if (layer){
-    var d = layer.querySelector('[data-mi="' + idx + '"]');
-    if (d) d.className += " lm-cur";
-  }
+  var list = lgNavTargets();
+  if (!LOGM.editor || !list.length) return;
+  if (idx < 0) idx = list.length - 1;
+  if (idx >= list.length) idx = 0;
+  LOGM.cur = idx;
+  var t = list[idx];
+  var monaco = window.monaco;
+  LOGM.editor.revealLineInCenter(t.line);
+  LOGM.editor.setSelection(new monaco.Range(t.line, t.col, t.line, t.col + (t.len || 0)));
   var stat = document.getElementById("logStat");
-  if (stat) stat.setAttribute("title", "第 " + (idx + 1) + "/" + LG.marks.length + " 处 · 第 " + m.no + " 行");
+  if (stat) stat.setAttribute("title", "第 " + (idx + 1) + "/" + list.length + " 处 · 第 " + t.line + " 行");
 }
-function lgHL(s, kw){
-  if (!kw) return s;
-  var k = esc(kw), out = "", p = 0, idx;
-  if (!k) return s;
-  while ((idx = s.indexOf(k, p)) !== -1){
-    out += s.slice(p, idx) + "<mark>" + k + "</mark>";
-    p = idx + k.length;
+
+/* ---- 统计与按钮状态 ---- */
+function lgMarksTotal(){
+  var e = 0, w = 0;
+  for (var fi = 0; fi < LOGM.fileMarks.length; fi++){
+    var arr = LOGM.fileMarks[fi] || [];
+    for (var i = 0; i < arr.length; i++){ if (arr[i].lv === 1) e++; else w++; }
   }
-  return out + s.slice(p);
+  return { total: e + w, err: e, warn: w };
 }
-function lgFilterHTML(text, kw, only){
-  var lines = text.split("\n");
-  var hit = {}, keep = {}, i, j, n = 0;
-  for (i = 0; i < lines.length; i++){
-    var lv = mmLineLevel(lines[i]);
-    var isHit = (only && (lv === 1 || lv === 2)) || (!!kw && lines[i].indexOf(kw) !== -1);
-    if (isHit){
-      hit[i] = (lv === 1 || lv === 2) ? lv : 0;
-      n++;
-      if (n > 3000) break;
+function lgStatUpdate(){
+  var el = document.getElementById("logStat");
+  var t = lgMarksTotal();
+  if (el) el.innerHTML = t.total
+    ? ('共 <b>' + t.total + '</b> 处 · 错误 <b class="s-err">' + t.err + '</b> · 警告 <b class="s-warn">' + t.warn + '</b>')
+    : '未发现异常';
+  lgStatButtons();
+}
+function lgStatButtons(){
+  var nav = LOGM.kw ? LOGM.matches.length : (LOGM.fileMarks[LOGM.active] || []).length;
+  var b;
+  b = document.getElementById("btnPrev"); if (b) b.disabled = nav === 0;
+  b = document.getElementById("btnNext"); if (b) b.disabled = nav === 0;
+  b = document.getElementById("btnOnlyErr"); if (b) b.disabled = lgMarksTotal().total === 0;
+  b = document.getElementById("logFind"); if (b) b.disabled = false;
+}
+
+/* ---- 文件标签栏 + 加载更多按钮 ---- */
+function logRenderTabs(){
+  var bar = document.getElementById("logTabs");
+  if (!bar) return;
+  var h = '<div class="logtabs-list">';
+  for (var i = 0; i < LOG_FILES.length; i++){
+    var f = LOG_FILES[i];
+    var moreTxt = f.total ? (' · ' + f.total + ' 行') : '';
+    h += '<button type="button" class="logtab' + (i === LOGM.active ? ' on' : '') + '" data-fi="' + i
+      + '" title="' + esc(f.name) + '（' + fmtSize(f.size) + moreTxt + '）">'
+      + '<span class="lt-name">📄 ' + esc(f.name) + '</span>'
+      + '<span class="lt-meta">' + fmtSize(f.size) + moreTxt + '</span></button>';
+  }
+  h += '</div>';
+  var fa = LOG_FILES[LOGM.active];
+  if (fa){
+    if (fa.hasMore){
+      h += '<button type="button" class="btn-more" id="btnMore">加载更多（剩 ' + Math.max(0, fa.total - fa.loaded) + ' 行）</button>';
+    } else if (fa.loaded){
+      h += '<span class="btn-more is-done">已全部加载</span>';
     }
   }
-  if (!n) return '<span class="lrow" style="color:#8b8f98">没有匹配的行</span>';
-  for (var key in hit){
-    var k0 = Number(key);
-    for (j = Math.max(0, k0 - 2); j <= Math.min(lines.length - 1, k0 + 2); j++) keep[j] = 1;
+  bar.innerHTML = h;
+  var tabs = bar.querySelectorAll(".logtab");
+  for (var t = 0; t < tabs.length; t++){
+    (function(el){
+      el.addEventListener("click", function(){
+        logSetActive(parseInt(el.getAttribute("data-fi"), 10));
+      });
+    })(tabs[t]);
   }
-  var keys = [], h = "", last = -1;
-  for (var k2 in keep) keys.push(Number(k2));
-  keys.sort(function(a, b){ return a - b; });
-  for (i = 0; i < keys.length; i++){
-    var k = keys[i];
-    if (last >= 0 && k > last + 1) h += '<span class="lrow" style="color:#5a5f6a">    …</span>';
-    var isH = Object.prototype.hasOwnProperty.call(hit, k);
-    var lv = isH ? (hit[k] || 0) : 0;
-    var cls = "lrow" + (isH ? (" " + (hit[k] ? "hit" : "hitkw")) : "");
-    h += '<span class="' + cls + '" data-level="' + lv + '"><span class="lno">' + (k + 1) + '</span>' + lgHL(esc(lines[k]), kw) + '</span>';
-    last = k;
+  var bm = document.getElementById("btnMore");
+  if (bm){
+    bm.addEventListener("click", function(){
+      loadLogPage(LOGM.active, LOG_FILES[LOGM.active].loaded);
+    });
   }
-  return h;
 }
-function lgApply(){
-  var box = MM.box;
+
+function logSetActive(fi){
+  if (!LOG_FILES[fi]) return;
+  LOGM.active = fi;
+  LOGM.cur = -1;
+  var f = LOG_FILES[fi];
+  if (LOGM.editor){
+    var m = LOGM.models[fi];
+    if (m){
+      LOGM.editor.setModel(m);
+      logApplyHits();
+    } else if (f.loaded === 0 && !f.pending){
+      loadLogPage(fi, 0);   // 首次切到该文件：加载首页，模型在返回后创建
+    }
+  }
+  logRenderTabs();
+  lgStatButtons();
+}
+
+/* ---- 数据加载 ---- */
+function loadLogs(){
+  var box = document.getElementById("logbox");
   if (!box) return;
-  var pres = box.querySelectorAll("pre");
-  for (var i = 0; i < pres.length; i++){
-    var orig = (LG.files[i] && LG.files[i].content != null) ? LG.files[i].content : pres[i].textContent;
-    if (!LG.only && !LG.kw) pres[i].textContent = orig;
-    else pres[i].innerHTML = lgFilterHTML(orig, LG.kw, LG.only);
+  if (!DETAIL_REC.log){
+    box.innerHTML = '<div class="tip">未配置该机器人的日志目录，无法确定日志路径。请在 robot_logs.json 中补充该机器人的共享日志目录（参考其他机器人配置）。</div>';
+    lgStatUpdate();
+    return;
   }
-  LG.cur = -1;
-  mmSchedule(true);
-  lgAnalyze();
+  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log);
+  box.innerHTML = '<div class="tip">正在读取日志目录…</div>';
+  fetch(url, { credentials: 'same-origin' }).then(function(r){
+    if (r.status === 401){ location.href = '/login'; return; }
+    return r.json();
+  }).then(function(d){
+    if (!d || !d.ok){
+      box.innerHTML = '<div class="warn">⚠ 读取日志失败：' + esc((d && d.error) || "未知错误") + '</div>';
+      lgStatUpdate();
+      return;
+    }
+    if (!d.logs || d.logs.length === 0){
+      box.innerHTML = '<div class="tip">目录下没有 .log 文件。</div>';
+      lgStatUpdate();
+      return;
+    }
+    LOG_FILES = [];
+    for (var i = 0; i < d.logs.length; i++){
+      LOG_FILES.push({ name: d.logs[i].name, size: d.logs[i].size,
+                       total: d.logs[i].lines || 0, loaded: 0, content: "",
+                       hasMore: false, pending: false });
+    }
+    box.innerHTML = "";
+    box.classList.remove("tip");
+    logRenderTabs();
+    logEditorCreate().then(function(){
+      logRenderTabs();
+      for (var i2 = 0; i2 < LOG_FILES.length; i2++) loadLogPage(i2, 0);
+    }).catch(function(err){
+      box.innerHTML = '<div class="warn">⚠ 日志高亮组件加载失败（' + esc(String(err && err.message || err)) + '）。请确认 assets/monaco/ 与后端 /monaco/ 路由正常。</div>';
+    });
+  }).catch(function(e){
+    box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（' + esc(e && e.message ? e.message : e) + '）。请确认 start_server.bat 正在运行。</div>';
+    lgStatUpdate();
+  });
 }
+
+function loadLogPage(fi, offset){
+  var f = LOG_FILES[fi];
+  if (!f || f.pending) return;
+  f.pending = true;
+  var btn = document.getElementById("btnMore");
+  if (btn && LOGM.active === fi){ btn.disabled = true; btn.textContent = "加载中…"; }
+  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log)
+          + "&file=" + encodeURIComponent(f.name)
+          + "&offset=" + offset + "&limit=" + LOG_PAGE;
+  fetch(url, { credentials: 'same-origin' }).then(function(r){
+    if (r.status === 401){ location.href = '/login'; return; }
+    return r.json();
+  }).then(function(d){
+    f.pending = false;
+    if (!d || !d.ok){
+      var b0 = document.getElementById("btnMore");
+      if (b0 && b0.tagName === "BUTTON"){ b0.disabled = false; b0.textContent = "加载失败，点击重试"; }
+      return;
+    }
+    if (offset === 0) f.content = "";
+    var delta = d.content || "";
+    if (delta) f.content += (f.content ? "\n" : "") + delta;
+    f.loaded = offset + (d.lines || 0);
+    f.hasMore = !!d.hasMore;
+    if (f.loaded > f.total) f.total = f.loaded;
+    if (LOGM.editor) logSyncModel(fi, offset, delta);
+    lgStatUpdate();
+    logRenderTabs();
+  }).catch(function(){
+    f.pending = false;
+    var b = document.getElementById("btnMore");
+    if (b && b.tagName === "BUTTON"){ b.disabled = false; b.textContent = "加载失败，点击重试"; }
+  });
+}
+
+/* ---- 工具栏事件绑定（每次详情渲染调用） ---- */
 function lgInit(){
   var b, f;
   b = document.getElementById("btnNext");
-  if (b) b.addEventListener("click", function(){ lgGoTo(LG.cur + 1); });
+  if (b) b.addEventListener("click", function(){ lgGoTo(LOGM.cur + 1); });
   b = document.getElementById("btnPrev");
-  if (b) b.addEventListener("click", function(){ lgGoTo(LG.cur - 1); });
+  if (b) b.addEventListener("click", function(){ lgGoTo(LOGM.cur - 1); });
   b = document.getElementById("btnOnlyErr");
   if (b) b.addEventListener("click", function(){
-    LG.only = !LG.only;
-    this.className = LG.only ? "chip on" : "chip";
-    this.textContent = LG.only ? "显示全部" : "仅看异常";
-    lgApply();
+    LOGM.only = !LOGM.only;
+    this.className = LOGM.only ? "chip on" : "chip";
+    this.textContent = LOGM.only ? "聚焦异常" : "仅看异常";
+    var box = document.getElementById("logbox");
+    if (box) box.classList.toggle("lg-only", LOGM.only);
+    if (LOGM.only && !LOGM.kw && (LOGM.fileMarks[LOGM.active] || []).length) lgGoTo(0);
   });
   f = document.getElementById("logFind");
   if (f){
@@ -1177,102 +1147,40 @@ function lgInit(){
     f.addEventListener("input", function(){
       var v = this.value;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(function(){ LG.kw = v.trim(); lgApply(); }, 300);
+      timer = setTimeout(function(){
+        LOGM.kw = v.trim();
+        LOGM.cur = -1;
+        logApplyHits();
+        if (LOGM.kw && LOGM.matches.length) lgGoTo(0);
+        lgStatButtons();
+      }, 300);
     });
     f.addEventListener("keydown", function(e){
-      if (e.key === "Enter"){ lgGoTo(LG.cur + (e.shiftKey ? -1 : 1)); e.preventDefault(); }
+      if (e.key === "Enter"){ lgGoTo(LOGM.cur + (e.shiftKey ? -1 : 1)); e.preventDefault(); }
     });
   }
 }
-var LOG_PAGE = 2000;
-var LOG_FILES = [];
-function loadLogs(){
-  var box = document.getElementById("logbox");
-  if (!box) return;
-  if (!DETAIL_REC.log){
-    box.innerHTML = '<div class="tip">未配置该机器人的日志目录，无法确定日志路径。请在 robot_logs.json 中补充该机器人的共享日志目录（参考其他机器人配置）。</div>';
-    mmSchedule(true); lgReset();
-    return;
+
+/* ---- 释放（详情重建 / 离开详情页时调用） ---- */
+function lgReset(){
+  if (LOGM.editor){ try { LOGM.editor.dispose(); } catch(e){} LOGM.editor = null; }
+  for (var i = 0; i < LOGM.models.length; i++){
+    if (LOGM.models[i]){ try { LOGM.models[i].dispose(); } catch(e){} }
   }
-  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log);
-  box.innerHTML = '<div class="tip">正在读取日志目录…</div>';
-  fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/login'; return; } return r.json(); }).then(function(d){
-    if (!d.ok){
-      box.innerHTML = '<div class="warn">⚠ 读取日志失败：'+esc(d.error || "未知错误")+'</div>';
-      mmSchedule(true); lgReset();
-      return;
-    }
-    if (!d.logs || d.logs.length === 0){
-      box.innerHTML = '<div class="tip">目录下没有 .log 文件。</div>';
-      mmSchedule(true); lgReset();
-      return;
-    }
-    LOG_FILES = [];
-    var h = "";
-    for (var i=0;i<d.logs.length;i++){
-      var lf = d.logs[i];
-      LOG_FILES.push({ name: lf.name, size: lf.size, total: lf.lines || 0, loaded: 0, content: "", open: true });
-      var moreTxt = lf.lines ? (' · 共 '+lf.lines+' 行') : '';
-      h += '<div class="logfile" data-fi="'+i+'">'
-        + '<div class="lf-head">'
-        + '<span class="lf-name">📄 '+esc(lf.name)+'</span>'
-        + '<span class="lf-meta">'+fmtSize(lf.size)+moreTxt+'</span>'
-        + '</div>'
-        + '<div class="lf-body">'
-        + '<pre id="lf'+i+'"></pre>'
-        + '<div class="lf-more" data-fi="'+i+'" style="display:none"><button class="btn-more" type="button">加载更多</button></div>'
-        + '</div>'
-        + '</div>';
-    }
-    box.innerHTML = h;
-    LG.files = [];
-    for (var k=0;k<LOG_FILES.length;k++) LG.files.push({ content: "" });
-    var mores = box.querySelectorAll(".lf-more");
-    for (var m=0;m<mores.length;m++){
-      (function(el){
-        el.addEventListener("click", function(e){
-          e.stopPropagation();
-          var fi = parseInt(el.getAttribute("data-fi"), 10);
-          loadLogPage(fi, LOG_FILES[fi].loaded);
-        });
-      })(mores[m]);
-    }
-    mmSchedule(true);
-    for (var i2=0;i2<LOG_FILES.length;i2++){
-      loadLogPage(i2, 0);
-    }
-  }).catch(function(e){
-    box.innerHTML = '<div class="warn">⚠ 无法连接本地服务器（'+(e && e.message ? e.message : e)+'）。请确认 start_server.bat 正在运行。</div>';
-    mmSchedule(true); lgReset();
-  });
-}
-function loadLogPage(fi, offset){
-  var f = LOG_FILES[fi];
-  if (!f) return;
-  var moreEl = document.querySelector('.logfile[data-fi="'+fi+'"] .lf-more');
-  var btn = moreEl ? moreEl.querySelector(".btn-more") : null;
-  if (btn){ btn.disabled = true; btn.textContent = "加载中…"; }
-  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log)
-          + "&file=" + encodeURIComponent(f.name)
-          + "&offset=" + offset + "&limit=" + LOG_PAGE;
-  fetch(url, { credentials: 'same-origin' }).then(function(r){ if (r.status === 401){ location.href = '/login'; return; } return r.json(); }).then(function(d){
-    if (!d.ok){
-      if (btn){ btn.disabled = false; btn.textContent = "加载失败，点击重试"; }
-      return;
-    }
-    if (offset === 0) f.content = "";
-    if (d.content) f.content += (f.content ? "\n" : "") + d.content;
-    f.loaded = offset + (d.lines || 0);
-    LG.files[fi].content = f.content;
-    if (moreEl) moreEl.style.display = (d.hasMore && f.open) ? "block" : "none";
-    if (btn){
-      btn.disabled = false;
-      btn.textContent = d.hasMore ? ("加载更多（剩 " + Math.max(0, f.total - f.loaded) + " 行）") : "已全部加载";
-    }
-    lgApply();
-  }).catch(function(){
-    if (btn){ btn.disabled = false; btn.textContent = "加载失败，点击重试"; }
-  });
+  LOGM.models = []; LOGM.decos = []; LOGM.fileMarks = []; LOGM.matches = [];
+  LOGM.cur = -1; LOGM.kw = ""; LOGM.only = false; LOGM.active = 0;
+  LOG_FILES = [];
+  var el = document.getElementById("logStat");
+  if (el){ el.textContent = "—"; el.removeAttribute("title"); }
+  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind"], b, j;
+  for (j = 0; j < ids.length; j++){
+    b = document.getElementById(ids[j]);
+    if (b){ b.disabled = true; if (ids[j] === "btnOnlyErr"){ b.className = "chip"; b.textContent = "仅看异常"; } }
+  }
+  var f = document.getElementById("logFind");
+  if (f) f.value = "";
+  var box = document.getElementById("logbox");
+  if (box) box.classList.remove("lg-only");
 }
 
 /* ==================== 日程视图 ==================== */
