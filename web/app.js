@@ -783,6 +783,17 @@ function logSetupLanguage(monaco){
         [/失败|错误|异常|中止|中断/, "level-error"],
         [/警告|超时|重试/, "level-warn"],
         [/成功|完成/, "level-info"],
+        // 字典键名：'key': / "key":（对齐 VSCode JSON 的浅蓝键名）
+        [/'(?:[^'\\\n]|\\.)*'(?=\s*:)/, "dict-key"],
+        [/"(?:[^"\\\n]|\\.)*"(?=\s*:)/, "dict-key"],
+        // 字符串值（含字典值、列表元素）
+        [/'(?:[^'\\\n]|\\.)*'/, "string"],
+        [/"(?:[^"\\\n]|\\.)*"/, "string"],
+        // 布尔/空值关键字（JSON/Python 字典常见）
+        [/\b(?:true|false|null|none)\b/, "keyword"],
+        // 花括号/方括号：短列表、字典边界；超出标签规则长度的长列表也落到这里
+        [/[{}]/, "brace"],
+        [/[\[\]]/, "bracket"],
         [/https?:\/\/[^\s"']+/, "url"],
         [/\b\d+(?:\.\d+)?\b/, "number"]
       ]
@@ -798,6 +809,11 @@ function logSetupLanguage(monaco){
       { token: "level-warn", foreground: "FFB020" },
       { token: "level-info", foreground: "4EC98C" },
       { token: "url", foreground: "4A90D9" },
+      { token: "dict-key", foreground: "9CDCFE" },
+      { token: "string", foreground: "CE9178" },
+      { token: "keyword", foreground: "569CD6" },
+      { token: "brace", foreground: "8A93A6" },
+      { token: "bracket", foreground: "8A93A6" },
       { token: "number", foreground: "C8D3E0" }
     ],
     colors: {
