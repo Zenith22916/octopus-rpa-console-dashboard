@@ -4,8 +4,8 @@
 
 - **运行数据分析**：概览指标 + 触发/状态分布 + 星期×小时热力图 + 各机器人排队与负载 + 失败看板
 - **任务时间轴**：每台机器人的真实运行记录（手动 / 定时 / Webhook），排队与执行两段彩色区分
-- **运行记录详情**：单条记录的完整信息、局域网共享日志目录检索、Monaco 只读查看器（VSCode 同款语法高亮/minimap）、异常高亮与搜索
-- **项目控制台**：全项目列表（排序/搜索色块）+ 项目详情 + 一键运行 + 飞书云端配置查看修改
+- **运行记录详情**：单条记录完整信息、局域网共享日志目录检索、Monaco 只读查看器（VSCode 同款高亮/minimap）、异常高亮与搜索、一键重新运行
+- **项目控制台**：云端项目列表 + 项目详情 + 一键运行 + 飞书配置中心在线编辑
 - **触发器排期**：触发器每周/每月循环任务时刻表
 
 ## 效果图
@@ -26,131 +26,248 @@
 
 ![触发器排期](assets/effect_schedule.png)
 
+## 快速开始
+
+```bash
+# 1. 环境：Python 3.9+
+pip install -r requirements.txt          # requests（抓取）+ openpyxl（整理时刻表）
+
+# 2. 配置：复制模板并填入账号密码
+cp config.example.json config.json
+
+# 3. 启动：双击 start_server.bat（或 python local_server.py 仅起服务）
+```
+
+浏览器打开 `http://localhost:8000`；局域网其他电脑用 `http://<本机IP>:8000`。
+
+> 首次运行若提示缺少 `requests`，`start_server.bat` 会自动 `pip install`（找不到 Python 则报错退出）。
+
 ## 架构
 
-前后端分离（同项目目录），**数据零落盘**——output 不再堆 HTML 文件：
+前后端分离（同项目目录），**数据零落盘**——`output/` 不再堆 HTML 文件：
 
 ```
 crawler.py ──爬取──▶ output/*.csv（数据源）
                         │
-dashboard.py ──▶ 数据聚合模块（load_records / build_schedule_payload，不再生成 HTML）
+dashboard.py ──▶ 数据聚合模块（load_records / build_schedule_payload，不生成 HTML）
+octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行）
+feishu_cfg.py ─▶ 飞书多维表格配置中心读写
                         │
 local_server.py ──▶ 启动时/刷新/每日更新后载入内存
-    GET  /                  → web/index.html（单页骨架）
-    GET  /echarts.min.js    → 本地 ECharts
-    GET  /api/runs           → 时间轴/分析共用数据（JSON）
-    GET  /api/run?id=        → 单条详情
-    GET  /api/schedule       → 触发器日程
-    GET  /api/log            → 日志列表 + 按行分段（白名单内 UNC 共享）
-    POST /api/refresh        → 只跑爬取 + 重载内存
                         │
-web/（纯前端，hash 路由五视图）：
+web/（纯前端，hash 路由五视图）
     index.html + app.js + style.css
     #/analysis（默认主页） #/timeline #/detail?id= #/schedule #/projects
 ```
 
+### 后端接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 单页骨架（`web/index.html`） |
+| GET | `/echarts.min.js` | 本地 ECharts（离线可用） |
+| GET | `/monaco/vs/...` | Monaco Editor 静态资源（日志高亮） |
+| GET / POST | `/login` | 登录页 / 提交访问密码（Cookie 30 天） |
+| GET | `/api/runs` | 运行记录（时间轴、分析视图共用，来自内存缓存） |
+| GET | `/api/run?id=` | 单条记录详情（含日志目录解析） |
+| GET | `/api/schedule` | 触发器日程（周/月视图 + 统计） |
+| GET | `/api/log?dir=&file=&offset=&limit=` | 日志目录文件列表 / 按行分段取内容 |
+| GET | `/api/projects` | 云端项目（flows）列表 + 各项目配置组映射 |
+| GET | `/api/projects/config?group=` | 读取某配置组全部配置项 |
+| POST | `/api/projects/config` | 新增/更新配置项（后端做类型与格式校验） |
+| POST | `/api/projects/run` | 触发某应用运行（自动复用历史成功机器人） |
+| POST | `/api/rerun` | 详情页「重新运行」（按 flow_id 触发） |
+| POST | `/api/refresh[?force=1]` | 爬取 + 重载内存；`force=1` 跳过 60 秒节流 |
+
+> 所有 `/api/*` 与页面在设置了 `access_password` 后均需登录，未授权返回 401 并跳转 `/login`。
+
 ## 一键启动
 
-**双击 `E:\bazhuayu_crawler\start_server.bat`**，完成数据更新并启动局域网服务器（端口 `8000`）：
+**双击 `start_server.bat`**，完成数据更新并启动局域网服务器（端口 `8000`）：
 
 ```
 1. 抓取      crawler.py    触发器 + 运行记录 → output/triggers_normalized.csv / runs_normalized.csv
 2. 整理      organize.py   按机器人整理时刻表 → output/schedule_all.md / .xlsx / .csv
-3. 局域网服务器 local_server.py  启动 → http://localhost:8000/
+3. 启动      local_server.py  → http://localhost:8000/
 ```
 
-服务器启动后**数据进内存**，网页通过 JSON API 动态渲染——`output/` 不再生成任何 HTML，详情页等按需拉取，不会越积越多。
+- 脚本会先检测 8000 端口：已被占用则判定服务已在运行，直接打开浏览器。
+- 服务器启动后**数据进内存**，网页通过 JSON API 动态渲染，详情页按需拉取。
+- 启动横幅会输出本机局域网 IP；关窗即停止。
 
-启动横幅会输出本机局域网 IP，其他电脑用 `http://<本机IP>:8000` 访问；关窗即停止。
-
-## 五个视图
+## 标题栏（全局）
 
 > 顶部大标题即导航：**悬停自动展开**视图菜单（触屏设备点标题展开），当前视图高亮；运行数据分析为默认主页。
 
-### 运行数据分析（`/` 默认主页）
+| 元素 | 说明 |
+|---|---|
+| 导航菜单 | 五个视图切换，按钮与列表之间有透明桥接层，鼠标下移不会闪收 |
+| 数据获取时间 | 数据源**成功爬取完成**的时刻；刷新失败会追加「（刷新失败）」红字提示 |
+| 立刻更新 | 立即爬取最新数据，跳过 60 秒节流；按钮反馈 `更新中… → ✓ 已更新 / ✗ 失败` |
+| 自动更新 | 默认开启，每 60 秒请求一次 `/api/refresh`（服务端 60 秒内去重，直接返回内存数据） |
+| 指标卡 | 按视图切换：时间轴显示 Webhook/手动/定时记录数与机器人数；触发器排期显示触发器总数/已启用/已停用/Webhook |
 
-- 8 个概览指标卡：总运行数、成功率、失败数、运行中、平均排队/运行、最长单次、并发峰值
+## 五个视图
+
+### 运行数据分析（`#/analysis`，默认主页）
+
+- 8 个概览指标卡：总运行数、成功率、失败数、运行中、平均排队、平均运行、最长单次、并发峰值（统计口径为最近 7 天）
 - 触发方式分布、状态分布 两个饼图
 - 星期 × 小时 热力图（找出运行高峰时段）
-- 各机器人平均排队时长条形图 + 机器人负载榜
-- 失败记录看板，支持「导出失败记录 CSV」
-- 「自动更新」开关（勾选后每 60 秒从服务器拉新数据）
+- 各机器人平均排队时长条形图 + 机器人负载榜（记录数/失败/失败率/平均排队/平均运行，失败率 ≥20% 标红）
+- 失败记录看板，支持「导出失败记录 CSV」（带 BOM，Excel 直接打开不乱码）
 
-### 任务时间轴
+### 任务时间轴（`#/timeline`）
 
 - **竖轴 = 机器人**（同一机器人时间重叠的记录自动分多行泳道堆叠），**横轴 = 时间**（右缘=当前时刻，内容随时间缓慢左移）
-- **4 个指标卡**：Webhook 记录 / 手动记录 / 定时触发记录 / 机器人
-- **数据拆分**：每条记录按「排队（蓝）→ 执行（状态色）」两段区分，整条用白色边框框起
-- **时间窗口**：30 分钟 ~ 7 天；**触发方式筛选**：全部 / 手动 / 定时触发器 / Webhook
-- 滚轮：向下 = 向未来（最多到"现在"），向上 = 向过去
-- 双击图表：恢复实时跟随
+- **数据拆分**：每条记录按「排队（蓝）→ 执行（状态色）」两段区分，整条用白色边框框起；块内文字单行居中、过长截断加 `...`，少于 8 字不显示
+- **时间窗口**：30 分钟 ~ 7 天（默认 2 小时；窄高窗口自动改为 6 小时，横向更舒展）
+- **触发方式筛选**：全部 / 手动 / 定时触发器 / Webhook
+- **横向滚动条**：图表上方的拖拽条与滚轮、双击行为一致，触屏可直接拖
+- 滚轮：向下 = 向未来（最多到"现在"），向上 = 向过去；双击图表：恢复实时跟随
 - 所有状态的数据块（含运行中）点击均可跳转详情查看日志
 
-### 运行记录详情
+### 运行记录详情（`#/detail?id=`）
 
-- 左侧基础信息卡：机器人、状态、触发方式、触发器、流程 ID/编号、起止时间、排队/运行时长
+- 左侧基础信息卡：机器人、状态、触发方式、触发器、流程 ID（flow_id）、流程编号（process_no）、起止时间、开始运行、排队/运行时长
+- 顶部按钮：**↻ 重新运行**（调用 `/api/rerun`，弹窗返回批次号与执行机器人）、**⚙ 项目配置**（跳转 `#/projects?fid=` 并选中该项目）、**← 返回上一页**（无历史兜底回时间轴）
 - 右侧日志内容卡：工具栏（异常数、搜索、上一处/下一处/仅看异常）+ 多文件标签栏（大小/行数）
 - 日志来自**局域网共享 UNC 目录**（`robot_logs.json` 白名单）
 - **Monaco 只读日志查看器**（VSCode 编辑器内核，`assets/monaco/` 离线自托管）：
-  - 同款语法高亮：时间戳灰蓝、`[标签]` 蓝、ERROR/失败红、WARN/警告橙、INFO/成功绿
-  - 结构化内容识别：字典键名浅蓝、字符串值橙、数字/布尔浅色、true/false/null 蓝字（对齐 VSCode JSON 配色），花括号与列表方括号灰蓝、元素逐个着色
-  - 方括号标签（如 `[主流程]`）整段蓝色；含引号/逗号的列表（如 `['SKU1', 'SKU2']`、`[1, 2, 3]`）不套标签色，元素按字符串/数字分别着色
+  - **按八爪鱼日志的固定格式逐段着色**（格式：`级别 时间戳 【子流程】第N行【指令】：内容`）：
+    - 行首级别：错误红 / 警告橙 / 消息灰；时间戳灰蓝
+    - `【子流程名】` 蓝、`【指令类型】` 青绿（靠后文「第N行」自动区分）
+    - `生成变量 变量名` 中的变量名浅蓝；文件路径（盘符/UNC）淡蓝
+  - **结构化内容识别**：字典键名浅蓝、字符串值橙、true/false/null 蓝字（对齐 VSCode JSON 配色），花括号与列表方括号灰蓝、元素逐个着色
+  - **避免误标**：`已启用异常监控`、`超时[2228/180000]`（等待静默的进度计数）这类含级别词但非异常的内容不着色
   - 内置 minimap 缩略图 + 概览标尺（错误/警告行红/橙刻度）
   - 多文件以标签页切换，单编辑器多模型，切换零重建
-- **大日志分段加载**：首段自动加载 5000 行，「加载更多」按行增量追加（不重置滚动位置），避免大文件卡死
-- **异常高亮 + 搜索导航**：「仅看异常」整行高亮并聚焦第一处；关键词搜索命中全部高亮，上一处/下一处循环跳转
+- **大日志分段加载**：首段 5000 行，「加载更多」按行增量追加（不重置滚动位置）
 
-### 触发器排期
+### 触发器排期（`#/schedule`）
 
-- 视图切换：每周（横轴周一~周日）/ 每月（横轴当月有任务日期）
-- 筛选：机器人（按名称前缀）、状态（已启用/已停用/全部）
-- 按应用配色（12 色），同色 = 同一应用
+- 视图切换：每周（横轴周一~周日，纵轴为时刻）/ 每月（横轴当月有任务的日期）
+- 筛选：视图、机器人（含「所有硕晞」「所有宝实」快捷分组 + 单机器人）、状态（已启用/已停用/全部，默认已启用）
+- 指标卡：触发器总数 / 已启用 / 已停用 / Webhook
+- 按应用配色（12 色），同色 = 同一应用；同一时刻多个应用分组堆叠，格内为应用短名，悬停看明细
 - 红色虚线 = 当前时刻与今天（10 秒刷新）
 
 ### 项目控制台（`#/projects`）
 
-- 左侧全项目列表（八爪鱼云端 flows，38 个），可按「修改时间 / 名称」排序、手动刷新，项目名前带按首字配色的色块
-- 右侧选中项目详情：flowId / 更新时间 / 负责人；「运行该应用」按钮 + 飞书配置 / 运行记录 tab 切换
-- **运行控制**：一键触发该应用运行（自动复用该项目历史成功运行的机器人）；运行记录表格点击跳详情页看日志
-- **飞书配置**：项目 ↔ 配置组映射（存配置中心 `group=project` 组，key=`p.<flowId>`）；
-  有映射自动加载，表格内直接修改 value 保存、底部可新增配置项
+- 左侧全项目列表（八爪鱼云端 flows），可按「修改时间 / 名称」排序、手动刷新；项目名首字带色块（宝蓝/硕绿/国橙/泇紫/财金等固定映射，其余按首字取色，X 固定灰）
+- 右侧详情：项目名、flowId、更新时间、负责人；标题行右侧 tab（飞书配置 / 运行记录）+「▶ 运行该应用」按钮
+- **运行控制**：一键触发运行，未指定机器人时自动复用该项目历史成功运行的机器人（避免被平台分配到无权限机器人报「没有操作权限」）
+- **运行记录 tab**：该项目最近 7 天的记录，最多展示 20 条（状态/机器人/触发方式/起止/时长），点击跳详情页看日志
+- **飞书配置 tab**：
+  - 项目 ↔ 配置组映射（存配置中心 `group=project` 组，key=`p.<flowId>`），「保存映射」后自动加载
+  - 配置表格含 key / value / type / desc，json 类型展示时自动排版；「编辑」或「＋ 新增配置」在弹窗中修改
+  - 弹窗：编辑时 key 锁定、type 下拉（string/number/bool/json）、bool 开关、json 自动格式化；desc 保存时去除换行
+  - 后端校验：group/key 仅允许 `字母数字._-`，number 需可转数字，bool 仅接受 true/false，json 需可解析（存储时压成紧凑单行）
+  - 列表/配置/运行记录加载时显示全屏半透明遮罩，防止加载中误操作
+
+## 飞书配置中心
+
+项目配置统一存放在飞书多维表格「rpa_config」（`config.json` 的 `feishu.app_token` / `table_id` 指定），表字段：
+
+| 字段 | 说明 |
+|---|---|
+| `key` | 配置项短名，仅允许 `字母数字._-` |
+| `value` | 配置值，一律以字符串存储，按 type 解析 |
+| `type` | `string` / `number` / `bool` / `json` |
+| `group` | 配置分组；`project` 组存项目↔配置组映射（key=`p.<flowId>`，value=配置组名） |
+| `desc` | 说明（保存时自动去换行） |
+
+读写封装在 `feishu_cfg.py`：`get_group_items` / `get_group_config` / `upsert_item` / `delete_item`；服务端接口为 `/api/projects/config`。
 
 ## 数据更新机制
 
 | 调度 | 频率 | 内容 |
 |---|---|---|
-| 网页自动更新 | 每 60 秒（可选） | 勾选后向 `/api/refresh` 请求；服务器 60 秒内去重直接返回最新数据 |
-| 每日完整更新 | 每天 12:00 | 爬取触发器、整理时刻表、刷新内存数据 |
+| 网页自动更新 | 每 60 秒（可选） | 向 `/api/refresh` 请求；服务器 60 秒内去重直接返回内存最新数据 |
+| 立刻更新 | 手动 | `force=1` 跳过节流，立即爬取 |
+| 快速刷新 | 由上面两者触发 | `crawler.py --only-runs --days 7`，只刷最近 7 天运行记录 |
+| 每日完整更新 | 每天 12:00 | 爬取触发器 + 运行记录、整理时刻表、刷新内存，并刷新「数据获取」时间 |
 
-只需打开 `start_server.bat`，让浏览器保持页面打开即可持续自动更新运行记录。
+- 刷新失败（如登录态过期且无法重新登录）会如实返回 `ok=false`，网页顶部红字提示「刷新失败，登录态可能已过期」，不会误报成功。
+- 每次爬取/更新的输出摘要追加到 `output/update_log.txt`，排错先看这里。
+- 完整更新与快速刷新之间用 `UPDATE_LOCK` 互斥，避免并发写 `output/`。
 
 ## 手动执行
 
 ```bash
-python crawler.py --config config.json --out output
-python crawler.py --config config.json --out output --only-runs --days 7     # 仅快速刷新运行记录
-python organize.py --input output\triggers_normalized.csv --out output
-python local_server.py                                                        # 仅启动服务器
+python crawler.py --config config.json --out output                            # 全量抓取（触发器 + 运行记录）
+python crawler.py --config config.json --out output --only-runs --days 7       # 仅快速刷新运行记录
+python organize.py --input output\triggers_normalized.csv --out output         # 整理时刻表
+python local_server.py                                                          # 仅启动服务器
+start_server.bat silent                                                         # 静默更新（日志写入 output\update_log.txt）
 ```
 
-> 旧版 `dashboard.py --only-gantt` 已废弃——前后端分离后不再需要生成静态页面。
+> `dashboard.py` 已重构为数据聚合模块，直接执行只打印提示，不再生成任何 HTML。
 
-## 配置（`config.json`）
+## 配置
 
-> ⚠️ `config.json` 含登录凭据，已在 `.gitignore` 中排除；首次使用请复制 `config.example.json` 为 `config.json` 并填入。
+### `config.json`
+
+> ⚠️ 含登录凭据，已在 `.gitignore` 中排除；首次使用请复制 `config.example.json` 并填入。
 
 | 字段 | 说明 |
 |---|---|
-| `account.username / password` | 八爪鱼 RPA 登录邮箱/手机号 + 密码（自动登录，会话缓存到 `output/session.json`） |
+| `account.username / password` | 八爪鱼 RPA 登录邮箱/手机号 + 密码（自动登录，令牌缓存到 `output/octo_token.json`，会话缓存到 `output/session.json`） |
 | `cookie` | 备用：浏览器登录后 F12 → `document.cookie` 填入 |
 | `enterprise_id` | 可选：指定企业 ID；留空则默认选账号下第一个非个人企业 |
 | `include_robots` | 只保留名称以这些前缀开头的机器人（如 `["A", "B"]` 或 `["A🍩硕晞-", "B💎宝实-"]`） |
 | `exclude_robots` | 排除名称含这些关键词的机器人（如 `["测试"]`） |
-| `feishu.app_id / app_secret` | 飞书自建应用凭据（项目控制台页读/写配置中心用） |
-| `feishu.app_token / table_id` | 飞书多维表格「rpa_config」配置中心表的 app_token / table_id |
-| `access_password` | 可选：仪表盘访问密码（`local_server.py` 启用 Cookie 鉴权，空则不启用） |
+| `feishu.app_id / app_secret` | 飞书自建应用凭据（项目控制台读/写配置中心用） |
+| `feishu.app_token / table_id` | 飞书多维表格「rpa_config」配置中心表 |
+| `access_password` | 可选：仪表盘访问密码（启用 Cookie 鉴权，空则不启用） |
 
-> **登录态过期自动恢复**：会话缓存到 `output/session.json`，过期后 `crawler.py` 会先验证缓存会话是否有效，失效则自动删除并改用 `account` 的账号密码重新登录（因此请务必在 `config.json` 中填好账号密码，而不仅依赖 cookie）。`local_server.py` 的 `/api/refresh` 在刷新失败时会如实返回 `ok=false`，网页顶部会提示"刷新失败，登录态可能已过期"。
+> **登录态过期自动恢复**：令牌缓存到 `output/octo_token.json`，过期后 `octo_api.ensure_token` 会自动重新登录；爬虫侧会话过期会删除缓存并改用 `account` 的账号密码重登（因此请务必在 `config.json` 中填好账号密码，而不仅依赖 cookie）。
+
+### `robot_logs.json`
+
+机器人 → 局域网日志共享目录（UNC）白名单，详情页只在这些根目录内检索，防止任意文件读取：
+
+```json
+{
+  "_说明": "键为机器人名，值为该机器人电脑共享出来的日志根目录 UNC 路径",
+  "A🍩硕晞-01": "\\\\SX-01\\Logs",
+  "B💎宝实-00": "\\\\BS-00\\Logs"
+}
+```
+
+以 `_` 开头的键视为注释，不会加入白名单。
+
+## 附：八爪鱼 RPA MCP 服务器（`octo_mcp/`）
+
+让 AI 客户端直接操作八爪鱼 RPA 的 MCP 服务，与仪表盘共用同一份抓取数据：
+
+| 工具 | 作用 |
+|---|---|
+| `octo_list_projects` | 列出本地流程项目 |
+| `octo_read_subflow` / `octo_write_subflow` | 解密读取 / 加密回写 `.subflow` 流程文件 |
+| `octo_search_flows` | 流程内全文搜索关键词 |
+| `octo_list_backups` / `octo_restore_backup` | 备份列表 / 恢复 |
+| `octo_get_key` | 查询当前 AES 密钥与重取方法 |
+| `octo_list_triggers` / `octo_list_runs` | 触发器清单、运行记录（只读，读 `output/`） |
+
+```bash
+pip install "mcp<2" cryptography
+```
+
+`mcp.json` 配置示例：
+
+```json
+{
+  "mcpServers": {
+    "octopus-rpa": {
+      "command": "<python.exe 路径>",
+      "args": ["E:\\bazhuayu_crawler\\octo_mcp\\server.py"]
+    }
+  }
+}
+```
+
+> 密钥可用环境变量覆盖：`OCTO_SUBFLOW_KEY` / `OCTO_SUBFLOW_IV`（HEX）。
 
 ## 项目结构
 
@@ -159,17 +276,22 @@ bazhuayu_crawler/
 ├── crawler.py              # 抓取触发器 + 运行记录
 ├── dashboard.py            # 数据聚合模块（load_records / build_schedule_payload）
 ├── local_server.py         # 局域网 HTTP 服务器 + JSON API（端口 8000）
-├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv 文档）
+├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv）
+├── octo_api.py             # 八爪鱼云端调度 API（登录/项目列表/触发运行）
+├── feishu_cfg.py           # 飞书多维表格配置中心读写
 ├── start_server.bat        # 一键：更新 + 启动服务器（双击）
+├── requirements.txt        # requests / openpyxl
 ├── config.example.json     # 配置模板
 ├── robot_logs.json         # 日志目录白名单（机器人 → 共享根目录）
+├── octo_mcp/
+│   └── server.py           # MCP 服务器（流程文件读写/搜索/备份）
 ├── assets/
 │   ├── echarts.min.js      # ECharts（本地，离线可用）
 │   ├── monaco/vs/          # Monaco Editor（日志只读高亮，离线自托管）
 │   └── effect_*.png        # 效果图（README 引用）
 ├── web/                    # 纯前端（前后端分离）
 │   ├── index.html          # 单页骨架 + hash 路由五视图
-│   ├── app.js              # 路由 + 时间轴/分析/详情/日程 渲染
+│   ├── app.js              # 路由 + 时间轴/分析/详情/日程/项目控制台 渲染
 │   └── style.css
-└── output/                 # 抓取数据 + 整理文档（git 忽略，HTML 不再生成）
+└── output/                 # 抓取数据 + 整理文档 + 更新日志（git 忽略）
 ```
