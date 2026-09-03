@@ -767,21 +767,32 @@ function logSetupLanguage(monaco){
     ignoreCase: true,
     tokenizer: {
       root: [
-        // 时间戳：2026-09-03 15:31:11 / 2026-09-03T15:31:11.123 / 15:31:11
+        // 行首级别（八爪鱼日志固定格式："级别 时间戳 【子流程】第N行【指令】：内容"）
+        [/^错误(?=\s)/, "level-error"],
+        [/^(?:警告|告警)(?=\s)/, "level-warn"],
+        [/^消息(?=\s)/, "level-muted"],
+        // 时间戳：2026-09-03 15:31:11 / 2026-09-03T15:31:11.123 / 15:31:11 / 2026-08-14 09:29:14,033
         [/\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?/, "timestamp"],
         [/\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?/, "timestamp"],
+        // 子流程名 / 指令类型：八爪鱼用中文方括号，靠后文「第N行」区分（容许「中第6行」这类插入字）
+        [/【[^】\n]{1,40}】(?=[^】\n]{0,2}第\d+行)/, "flow"],
+        [/【[^】\n]{1,40}】/, "step"],
         // 方括号内的级别词：[ERROR] [WARN] [INFO]...
         [/\[(?:fatal|exception|critical|error|失败|错误|异常|中止|中断)\]/, "level-error"],
         [/\[(?:warn(?:ing)?|警告|超时|重试)\]/, "level-warn"],
         [/\[(?:info|debug|trace|成功|完成)\]/, "level-info"],
         // 其余方括号标签（排除含引号/逗号的列表，让列表元素各自着色）
         [/\[[^\[\]\n'",]{1,48}\]/, "tag"],
+        // 无害短语：含级别词但不是异常，先吃掉，避免误标红/黄（与行级别判定的排除表一致）
+        [/已启用异常监控|触发错误处理的|忽略异常并执行|异常监控|异常处理|重试中|已启用异常/, "source"],
         // 裸级别词
         [/\b(?:fatal|exception|critical)\b|\berror\b/, "level-error"],
         [/\bwarn(?:ing)?\b/, "level-warn"],
         [/\b(?:info|debug|trace)\b/, "level-info"],
+        // 超时细分：加载/连接超时算错误，其余算警告
+        [/(?:页面|元素|网页)?加载超时|连接超时|未找到(?:页面)?元素/, "level-error"],
         [/失败|错误|异常|中止|中断/, "level-error"],
-        [/警告|超时|重试/, "level-warn"],
+        [/警告|重试|超时(?![[\[0-9])/, "level-warn"],
         [/成功|完成/, "level-info"],
         // 字典键名：'key': / "key":（对齐 VSCode JSON 的浅蓝键名）
         [/'(?:[^'\\\n]|\\.)*'(?=\s*:)/, "dict-key"],
@@ -789,6 +800,11 @@ function logSetupLanguage(monaco){
         // 字符串值（含字典值、列表元素）
         [/'(?:[^'\\\n]|\\.)*'/, "string"],
         [/"(?:[^"\\\n]|\\.)*"/, "string"],
+        // 变量名：「生成变量 XXX : …」中的 XXX
+        // 注意 Monarch 会把规则编译成 ^(?:…) 在当前位置匹配，后顾断言 (?<=…) 一律失效，只能靠捕获组
+        [/(生成变量)(\s+)([^:：\n]{1,60}?)(?=\s*[:：])/, ["", "", "variable"]],
+        // 文件路径：UNC（\\SX-01\Logs\…）或盘符（E:\硕晞发货计划\…）；惰性匹配到空白/标点前，避免吞掉句尾标点
+        [/\\\\[^\s"'|*<>?]*?(?=[\s,，。;；)）】]|$)|[A-Za-z]:\\[^\s"'|<>?]*?(?=[\s,，。;；)）】]|$)/, "path"],
         // 布尔/空值关键字（JSON/Python 字典常见）
         [/\b(?:true|false|null|none)\b/, "keyword"],
         // 花括号/方括号：短列表、字典边界；超出标签规则长度的长列表也落到这里
@@ -803,12 +819,17 @@ function logSetupLanguage(monaco){
     base: "vs-dark",
     inherit: true,
     rules: [
-      { token: "timestamp", foreground: "8A93A6" },
-      { token: "tag", foreground: "6FB3D2" },
       { token: "level-error", foreground: "FF6B6D", fontStyle: "bold" },
       { token: "level-warn", foreground: "FFB020" },
       { token: "level-info", foreground: "4EC98C" },
+      { token: "level-muted", foreground: "6E7681" },
+      { token: "timestamp", foreground: "8A93A6" },
+      { token: "flow", foreground: "6FB3D2" },
+      { token: "step", foreground: "4EC9B0" },
+      { token: "variable", foreground: "9CDCFE" },
+      { token: "tag", foreground: "6FB3D2" },
       { token: "url", foreground: "4A90D9" },
+      { token: "path", foreground: "7AA6C2" },
       { token: "dict-key", foreground: "9CDCFE" },
       { token: "string", foreground: "CE9178" },
       { token: "keyword", foreground: "569CD6" },
@@ -861,7 +882,7 @@ function logEditorCreate(){
 }
 
 /* ---- 行级别判定（沿用手写规则：0 普通 / 1 错误 / 2 警告 / 3 成功） ---- */
-var LG_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)|(warn(?:ing)?|timeout|retry|警告|超时|重试)|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
+var LG_RE = /(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)|(warn(?:ing)?|timeout|retry|警告|重试|超时(?![[\[0-9]))|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)/gi;
 var LG_EXC = /(已启用异常监控|触发错误处理的|忽略异常并执行)/;
 function lgLineLevel(line){
   if (!line || line.length > 20000) return 0;
