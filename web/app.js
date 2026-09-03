@@ -774,8 +774,8 @@ function logSetupLanguage(monaco){
         [/\[(?:fatal|exception|critical|error|失败|错误|异常|中止|中断)\]/, "level-error"],
         [/\[(?:warn(?:ing)?|警告|超时|重试)\]/, "level-warn"],
         [/\[(?:info|debug|trace|成功|完成)\]/, "level-info"],
-        // 其余方括号标签
-        [/\[[^\[\]\n]{1,48}\]/, "tag"],
+        // 其余方括号标签（排除含引号/逗号的列表，让列表元素各自着色）
+        [/\[[^\[\]\n'",]{1,48}\]/, "tag"],
         // 裸级别词
         [/\b(?:fatal|exception|critical)\b|\berror\b/, "level-error"],
         [/\bwarn(?:ing)?\b/, "level-warn"],
