@@ -40,9 +40,11 @@
     </div>
   </div>
   <div class="auto-bar">
-    <button class="btn refresh-now" id="btnRefreshNow" title="立即爬取最新运行数据（不受 1 分钟节流限制）">立刻更新</button>
-    <span class="auto-update-label">自动更新：</span>
-    <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
+    <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不受 1 分钟节流限制）">立刻更新</button>
+    <span id="autoCtl" style="display:flex;align-items:center;gap:8px;">
+      <span class="auto-update-label">自动更新：</span>
+      <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
+    </span>
   </div>
 </div>
 

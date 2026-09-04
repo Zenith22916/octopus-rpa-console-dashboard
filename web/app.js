@@ -90,6 +90,9 @@ function showView(name){
   var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
   if (tlM) tlM.style.display = (name === 'timeline') ? 'flex' : 'none';
   if (scM) scM.style.display = (name === 'schedule') ? 'flex' : 'none';
+  // 自动更新开关只在时间轴/分析页显示（自动更新仅抓运行记录，排期页走「立刻更新」全量抓）
+  var autoCtl = document.getElementById('autoCtl');
+  if (autoCtl) autoCtl.style.display = (name === 'timeline' || name === 'analysis') ? 'flex' : 'none';
 }
 function navSet(name){
   /* 同步悬停菜单：标题按钮文本 + 当前项高亮 */
@@ -142,6 +145,7 @@ function route(){
       loadSchedule().then(function(){ scInit(); scReady = true; });
     } else {
       scResize();
+      loadSchedule().then(function(){ scReload(); });   // 数据可能在别处被刷新过：进入时同步最新
     }
   } else if (name === 'projects'){
     pjPendingFid = getParam('fid');   // 带 ?fid= 进入时选中对应项目（无则 null）
@@ -1416,6 +1420,15 @@ function scInit(){
     function(v){ scStatus = v; scRender(scView, scFilter, v); });
   scRender('week', '__ALL__', 'enabled');
 }
+/* 排期数据更新后重载：刷新统计卡 + 按当前筛选状态重绘（不重建选择器，保留用户选择） */
+function scReload(){
+  if (!SCHED || !SCHED.ok || !scChart) return;
+  document.getElementById('sTotal').textContent = SCHED.stats.total;
+  document.getElementById('sEnabled').textContent = SCHED.stats.enabled;
+  document.getElementById('sDisabled').textContent = SCHED.stats.disabled;
+  document.getElementById('sWebhook').textContent = SCHED.stats.webhook;
+  scRender(scView, scFilter, scStatus);
+}
 setInterval(scUpdateLines, 10000);
 
 /* ==================== 自动更新 ==================== */
@@ -1432,6 +1445,10 @@ function refreshData(force, done){
       RECORDS = d.records;
       if (curView === 'timeline'){ records = RECORDS.slice(); recomputeBounds(); tlRender(); }
       else if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
+      else if (curView === 'schedule' && force){
+        // 排期页仅在「立刻更新」（全量抓，含触发器）后重载；自动更新只抓运行记录，不影响排期
+        loadSchedule().then(function(){ scReload(); });
+      }
       if (d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time;
     } else if (warnEl) {
       warnEl.style.display = 'block';
@@ -1450,10 +1467,14 @@ document.getElementById('btnRefreshNow').addEventListener('click', function(){
     setTimeout(function(){ btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
+/* 自动更新：每 60s 拉一次运行记录（--only-runs，不含触发器排期），仅在时间轴/分析页生效 */
+function autoTick(){
+  if (curView === 'timeline' || curView === 'analysis') refreshData();
+}
 document.getElementById('chkAuto').addEventListener('change', function(){
   if (this.checked) {
-    refreshData();
-    if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
+    autoTick();
+    if (!autoTimer) autoTimer = setInterval(autoTick, 60000);
   } else {
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
@@ -1507,8 +1528,8 @@ document.addEventListener('click', function(){
   document.getElementById('navMenu').classList.remove('open');
 });
 if (document.getElementById('chkAuto').checked) {
-  refreshData();
-  if (!autoTimer) autoTimer = setInterval(refreshData, 60000);
+  autoTick();
+  if (!autoTimer) autoTimer = setInterval(autoTick, 60000);
 }
 
 /* ==================== 项目控制台视图 ==================== */

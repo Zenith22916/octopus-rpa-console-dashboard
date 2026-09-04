@@ -327,7 +327,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not force and now - LAST_REFRESH[0] < REFRESH_INTERVAL:
             skipped = True
         else:
-            ok = run_refresh()
+            ok = run_refresh(force=force)
             if ok:
                 LAST_REFRESH[0] = time.time()
             else:
@@ -781,31 +781,34 @@ def run_update():
         stamp_data_time()  # 每日完整更新成功：刷新“数据获取”时间
 
 
-def run_refresh():
+def run_refresh(force=False):
     """快速刷新：运行记录（最近 7 天，手动/定时/Webhook 全部触发方式），由网页 /api/refresh 触发。
+    force=True（标题栏"立刻更新"按钮）：不带 --only-runs，跑完整爬取，
+    同时刷新触发器列表并重写 triggers_normalized.csv（触发器排期页的数据源）。
     数据进入内存缓存（reload_records），不再生成任何 HTML。成功仅打印一行时间戳；
     失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
-        cmds = [
-            [py, "crawler.py", "--config", "config.json", "--out", "output",
-             "--only-runs", "--days", "7"],
-        ]
+        cmd = [py, "crawler.py", "--config", "config.json", "--out", "output", "--days", "7"]
+        if not force:
+            cmd.append("--only-runs")
         try:
-            for cmd in cmds:
-                r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
-                                   errors="replace", timeout=180)
-                out = (r.stdout or "")
-                # 登录态失效且重新登录失败：crawler 会打印 [AUTH_FAILED]（此时退出码为 0，不会中断服务器启动），
-                # 这里据此把刷新判为失败，让网页提示「刷新失败」而不是误以为成功。
-                if r.returncode != 0 or "[AUTH_FAILED]" in out:
-                    with open(log, "a", encoding="utf-8") as f:
-                        f.write("[%s] 刷新失败: %s\n%s\n" % (
-                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            " ".join(cmd), (out + (r.stderr or ""))[-600:]))
-                    return False
-            print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
+            r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
+                               errors="replace", timeout=600)
+            out = (r.stdout or "")
+            # 登录态失效且重新登录失败：crawler 会打印 [AUTH_FAILED]（此时退出码为 0，不会中断服务器启动），
+            # 这里据此把刷新判为失败，让网页提示「刷新失败」而不是误以为成功。
+            if r.returncode != 0 or "[AUTH_FAILED]" in out:
+                with open(log, "a", encoding="utf-8") as f:
+                    f.write("[%s] 刷新失败: %s\n%s\n" % (
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        " ".join(cmd), (out + (r.stderr or ""))[-600:]))
+                return False
+            if force:
+                print("[刷新] %s 运行记录 + 触发器排期已更新（最近 7 天，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
+            else:
+                print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
             stamp_data_time()   # 爬取成功：记录“数据获取”时间
             return True
         except Exception as e:
