@@ -12,19 +12,23 @@
 
 ### 运行数据分析（默认主页）
 
-![运行数据分析](assets/effect_analysis.png)
+![运行数据分析](assets/effect_analysis.jpg)
 
 ### 任务时间轴
 
-![任务时间轴](assets/effect_timeline.png)
+![任务时间轴](assets/effect_timeline.jpg)
 
 ### 运行记录详情（含日志缩略图）
 
-![运行记录详情](assets/effect_detail.png)
+![运行记录详情](assets/effect_detail.jpg)
 
 ### 触发器排期
 
-![触发器排期](assets/effect_schedule.png)
+![触发器排期](assets/effect_schedule.jpg)
+
+### 项目控制台
+
+![项目控制台](assets/effect_projects.jpg)
 
 ## 快速开始
 
