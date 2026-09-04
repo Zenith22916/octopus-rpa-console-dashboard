@@ -262,7 +262,7 @@ def build_schedule_payload(rows):
         "monthLabels": month_labels,
         "stats": stats,
         "year": year,
-        "month": month,
+        "monthNum": month,
     }
 
 
