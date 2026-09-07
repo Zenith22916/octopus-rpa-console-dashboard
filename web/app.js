@@ -286,6 +286,11 @@ function tlRender(){
   var segs = buildSegs();
   var waySel = document.getElementById('selWay').value;
   if (waySel !== '__ALL__') segs = segs.filter(function(s){ return s.r.way === waySel; });
+  var qEl = document.getElementById('chkQueue');
+  var showQueue = qEl ? qEl.checked : true;
+  if (!showQueue) segs = segs.filter(function(s){ return s.kind !== 'wait'; });   // 关闭排队：去掉排队段，布局/泳道按运行段计算
+  var lgQueue = document.getElementById('lgQueue');
+  if (lgQueue) lgQueue.style.display = showQueue ? '' : 'none';
   robots = robotList(segs);
   var visible = segs.filter(function(s){ return effEnd(s) >= winStart && s.start <= nowW; });
   var info = layout(visible);
@@ -378,7 +383,7 @@ function tlRender(){
           var bh = Math.max(10, band - 4);
           var exec = api.value(6);
           var hasWait = exec && exec > api.value(0);
-          if (hasWait) {
+          if (hasWait && showQueue) {
             var wxs = Math.max(api.coord([api.value(0), row])[0], gLeft);
             var wxe = Math.min(api.coord([exec, row])[0], gRight);
             var qw = wxe - wxs;
@@ -494,6 +499,8 @@ function tlInit(){
     state.offset = 0;
     tlUpdateWindow();
   };
+  var chkQueue = document.getElementById('chkQueue');
+  if (chkQueue) chkQueue.onchange = function(){ tlUpdateWindow(); };
   chartEl.addEventListener('dblclick', function(){
     state.offset = 0;
     state.span = parseInt(document.getElementById('selSpan').value, 10);
