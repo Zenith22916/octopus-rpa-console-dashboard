@@ -902,6 +902,58 @@ tbody tr:hover {
   outline: 1px solid rgba(74, 144, 217, 0.9);
 }
 
+/* 超长行折叠：行首箭头（▸ 已折叠 / ▾ 展开中）+ 提示条 + 展开行淡背景 */
+.lg-fold-closed,
+.lg-fold-open {
+  position: relative;
+  cursor: pointer;
+}
+
+.lg-fold-closed::after {
+  content: "▸";
+  display: block;
+  line-height: 20px;
+  font-size: 10px;
+  color: #4a90d9;
+  text-align: center;
+}
+
+.lg-fold-open::after {
+  content: "▾";
+  display: block;
+  line-height: 20px;
+  font-size: 10px;
+  color: #4a90d9;
+  text-align: center;
+}
+
+.lg-fold-open-bg {
+  background: rgba(74, 144, 217, 0.05);
+}
+
+.lg-fold-zone {
+  font-size: 11px;
+  line-height: 19px;
+  color: #4a90d9;
+  background: rgba(74, 144, 217, 0.07);
+  border-top: 1px dashed rgba(74, 144, 217, 0.25);
+  border-bottom: 1px dashed rgba(74, 144, 217, 0.25);
+  padding-left: 22px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.lg-fold-zone:hover {
+  background: rgba(74, 144, 217, 0.15);
+}
+
+/* 行号可点击（控制超长行展开/收起） */
+#logbox .line-numbers {
+  cursor: pointer;
+}
+
 .log-body {
   display: flex;
   flex: 1 1 auto;

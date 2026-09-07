@@ -887,6 +887,21 @@ function logEditorCreate(){
         stickyScroll: { enabled: false },
         scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false }
       });
+      // 点击最左行号 / 行首箭头：展开或收起超长行（普通行不响应）
+      LOGM.editor.onMouseDown(function(e){
+        var mc = window.monaco, t = e.target;
+        if (!mc || !t) return;
+        if (t.type !== mc.editor.MouseTargetType.GUTTER_LINE_NUMBERS &&
+            t.type !== mc.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+        var line = (t.position && t.position.lineNumber) || (t.range && t.range.startLineNumber);
+        if (!line) return;
+        lgFoldToggle(LOGM.active, line, LOG_FOLD.pendingTop);
+      });
+      // 捕获阶段记录按下时的 scrollTop：Monaco 对行号点击会选中整行并 reveal 到行尾，
+      // 超长行会瞬间位移上万 px，必须赶在它处理之前把"用户视线位置"记下来
+      host.addEventListener("mousedown", function(){
+        LOG_FOLD.pendingTop = LOGM.editor ? LOGM.editor.getScrollTop() : null;
+      }, true);
     }
     return monaco;
   });
@@ -908,6 +923,175 @@ function lgLineLevel(line){
   return lv;
 }
 
+/* ---- 超长行折叠：wrap 后超过 3 个显示行的行默认收起，点击最左行号展开/收起 ----
+   Monaco 不支持单行折叠，实现方式：截短该行文本（保留约 3 行宽预览）+ 行下插入提示条（view zone），
+   行号不变（单行替换单行），尾部增量追加按行号定位不受影响。 */
+var LOG_FOLD = {
+  keepRows: 2.5,   // 折叠时保留的显示行宽度（预留断词提前量，实际显示约 3 行）
+  minRows: 3,      // 估算超过 3 个显示行才折叠
+  maps: [],        // per-file: { [行号]: {origText, previewText, estLines, folded, zoneId} }
+  pendingTop: null // 最近一次按下鼠标时的 scrollTop（Monaco 行号点击会 reveal 到行尾，需提前记录）
+};
+
+function lgFoldWrapCol(){        // 当前 wrap 生效的每行列数
+  try {
+    var wi = LOGM.editor.getOption(window.monaco.editor.EditorOption.wrappingInfo);
+    if (wi && wi.wrappingColumn > 20) return wi.wrappingColumn;
+  } catch (e) {}
+  var host = document.getElementById("logbox");
+  var w = host ? host.clientWidth : 0;
+  return w > 100 ? Math.floor(w / 7.2) : 160;   // 兜底：12.5px 等宽字符宽约 7.2px
+}
+
+function lgFoldCols(s){          // 估算显示列宽（CJK/全角 ≈ 2 列）
+  var n = 0;
+  for (var i = 0; i < s.length; i++) n += s.charCodeAt(i) > 0x2e80 ? 2 : 1;
+  return n;
+}
+
+function lgFoldScan(fi){         // 扫描未管理的超长行并折叠（增量安全，可重复调用）
+  var monaco = window.monaco;
+  var m = LOGM.models[fi];
+  if (!monaco || !m || !LOGM.editor) return;
+  var wrapCol = lgFoldWrapCol();
+  if (!(wrapCol > 20)) return;
+  var map = LOG_FOLD.maps[fi] || (LOG_FOLD.maps[fi] = {});
+  var minCols = wrapCol * LOG_FOLD.minRows;
+  var keepCols = wrapCol * LOG_FOLD.keepRows;
+  var edits = [], lc = m.getLineCount(), i, text;
+  for (i = 1; i <= lc; i++){
+    if (map[i]) continue;                       // 已管理（折叠中或手动展开过）不再处理
+    text = m.getLineContent(i);
+    if (text.length * 2 <= minCols) continue;   // 快速排除（即使全 CJK 也达不到阈值）
+    if (lgFoldCols(text) <= minCols) continue;
+    var rec = {
+      origText: text,
+      previewText: text.slice(0, lgFoldCutPos(text, keepCols)) + " …",
+      estLines: Math.ceil(lgFoldCols(text) / wrapCol),
+      folded: true, zoneId: null
+    };
+    map[i] = rec;
+    edits.push({ range: new monaco.Range(i, 1, i, text.length + 1), text: rec.previewText, forceMoveMarkers: true });
+  }
+  if (!edits.length) return;
+  m.applyEdits(edits);
+  if (LOGM.active === fi) lgFoldReattach(fi);
+}
+
+function lgFoldCutPos(text, keepCols){   // 截断点：保留约 keepCols 列，回退到最近空格让断点自然些
+  var cols = 0, i = 0, w;
+  for (; i < text.length; i++){
+    w = text.charCodeAt(i) > 0x2e80 ? 2 : 1;
+    if (cols + w > keepCols) break;
+    cols += w;
+  }
+  if (i < text.length){
+    var j = i, back = 0;
+    while (j > 0 && back < 80 && text.charAt(j - 1) !== " "){ j--; back += text.charCodeAt(j) > 0x2e80 ? 2 : 1; }
+    if (j > 0 && text.charAt(j - 1) === " ") i = j;
+  }
+  return Math.max(1, i);
+}
+
+function lgFoldToggle(fi, line, lockTop){
+  var map = LOG_FOLD.maps[fi];
+  if (!map || !map[line]){ LOG_FOLD.pendingTop = null; return; }   // 普通行不响应
+  lgFoldSetFolded(fi, line, !map[line].folded, lockTop);
+  LOG_FOLD.pendingTop = null;
+}
+
+function lgFoldSetFolded(fi, line, folded, lockTop){
+  var monaco = window.monaco;
+  var m = LOGM.models[fi];
+  var rec = LOG_FOLD.maps[fi] && LOG_FOLD.maps[fi][line];
+  if (!monaco || !m || !rec || rec.folded === folded) return;
+  var ed = LOGM.editor;
+  if (!ed) return;
+  // 锚定"点击前"的 scrollTop：折叠行上方内容恒定（点击时行顶/提示条总在视口内），
+  // 锁死 scrollTop 即可让上方行与折叠行视觉第一行都不动。
+  // 注意：Monaco 对行号点击会选中整行并 reveal 到行尾（几百显示行的行会瞬间位移上万 px），
+  // 随后内容高度骤变还可能 clamp/再调整，单次恢复会被覆盖——因此用点击前记录的值，
+  // 在 300ms 内逐帧锁回；用户一旦滚轮立即放行。
+  var st = (typeof lockTop === "number") ? lockTop : ed.getScrollTop();
+  m.applyEdits([{ range: new monaco.Range(line, 1, line, m.getLineMaxColumn(line)),
+                  text: folded ? rec.previewText : rec.origText, forceMoveMarkers: true }]);
+  rec.folded = folded;
+  if (LOGM.active === fi) lgFoldReattach(fi);
+  var until = Date.now() + 300;
+  var dom = ed.getDomNode();
+  var user = false;
+  var onWheel = function(){ user = true; };
+  if (dom) dom.addEventListener("wheel", onWheel, { once: true, passive: true });
+  (function lock(){
+    var cur = LOGM.editor;
+    if (user || Date.now() > until || !cur){
+      if (dom) dom.removeEventListener("wheel", onWheel);
+      return;
+    }
+    try {
+      if (cur.getScrollTop() !== st){
+        cur.setScrollTop(st, monaco.editor.ScrollType.Immediate);
+      }
+    } catch (e2) {          // editor 已销毁等异常：终止锁
+      if (dom) dom.removeEventListener("wheel", onWheel);
+      return;
+    }
+    requestAnimationFrame(lock);
+  })();
+}
+
+function lgFoldReattach(fi){     // 重挂当前文件的折叠提示条 + 行首箭头（切换文件/状态变化时调用）
+  var ed = LOGM.editor, monaco = window.monaco;
+  var m = LOGM.models[fi];
+  if (!ed || !monaco || !m || ed.getModel() !== m) return;
+  var map = LOG_FOLD.maps[fi] || {};
+  ed.changeViewZones(function(acc){
+    for (var k in map){
+      var rec = map[k];
+      if (rec.zoneId){ try { acc.removeZone(rec.zoneId); } catch (e) {} rec.zoneId = null; }
+      if (!rec.folded) continue;
+      (function(line, rec2){
+        var dom = document.createElement("div");
+        dom.className = "lg-fold-zone";
+        dom.textContent = "⋯ 已折叠（约 " + rec2.estLines + " 行）· 点击行号展开";
+        dom.addEventListener("click", function(){
+          lgFoldSetFolded(fi, line, false, LOG_FOLD.pendingTop);
+          LOG_FOLD.pendingTop = null;
+        });
+        rec2.zoneId = acc.addZone({ afterLineNumber: line, heightInLines: 1, domNode: dom, suppressMouseDown: true });
+      })(+k, rec);
+    }
+  });
+  lgFoldApplyDecos(fi);
+}
+
+function lgFoldApplyDecos(fi){   // 行首箭头：▸ 已折叠 / ▾ 展开中，展开行加淡背景
+  var monaco = window.monaco;
+  var m = LOGM.models[fi];
+  if (!monaco || !m || !LOGM.editor || LOGM.editor.getModel() !== m) return;
+  var d = LOGM.decos[fi] || (LOGM.decos[fi] = { marks: [], hits: [] });
+  d.folds = d.folds || [];
+  var opts = [], map = LOG_FOLD.maps[fi] || {};
+  for (var k in map){
+    var line = +k;
+    opts.push({ range: new monaco.Range(line, 1, line, 1), options: map[k].folded
+      ? { glyphMarginClassName: "lg-fold-closed", glyphMarginHoverMessage: { value: "点击最左行号展开完整内容" } }
+      : { glyphMarginClassName: "lg-fold-open", className: "lg-fold-open-bg",
+          glyphMarginHoverMessage: { value: "点击最左行号收起该行" } } });
+  }
+  d.folds = m.deltaDecorations(d.folds, opts);
+}
+
+function lgFoldExpandHits(fi){   // 搜索前：含关键词的折叠行自动展开，避免折叠内容漏搜
+  var map = LOG_FOLD.maps[fi];
+  if (!map || !LOGM.kw) return;
+  var kw = LOGM.kw.toLowerCase();
+  for (var k in map){
+    var rec = map[k];
+    if (rec.folded && rec.origText.toLowerCase().indexOf(kw) >= 0) lgFoldSetFolded(fi, +k, false);
+  }
+}
+
 /* ---- 模型同步：首页 setValue，后续增量 append（不重置滚动位置） ---- */
 function logSyncModel(fi, offset, delta){
   var monaco = window.monaco;
@@ -919,6 +1103,7 @@ function logSyncModel(fi, offset, delta){
     LOGM.decos[fi] = { marks: [], hits: [] };
   } else if (offset === 0){
     m.setValue(f.content);
+    LOG_FOLD.maps[fi] = {};   // 重载首页：折叠状态清空重扫
   } else if (delta){
     var last = m.getLineCount();
     var col = m.getLineMaxColumn(last);
@@ -928,10 +1113,12 @@ function logSyncModel(fi, offset, delta){
       forceMoveMarkers: true
     }]);
   }
+  lgFoldScan(fi);        // 超长行检测折叠（新进内容，已管理行自动跳过）
   lgScanMarks(fi);
   lgApplyMarkDecos(fi);
   if (LOGM.active === fi && LOGM.editor && LOGM.editor.getModel() !== m){
     LOGM.editor.setModel(m);
+    lgFoldReattach(fi);   // 首次 setModel 时 lgFoldScan 已先跑过（当时模型还没挂上编辑器，提示条/箭头被跳过），这里补挂
     logApplyHits();
   }
 }
@@ -939,9 +1126,11 @@ function logSyncModel(fi, offset, delta){
 function lgScanMarks(fi){
   var m = LOGM.models[fi];
   if (!m){ LOGM.fileMarks[fi] = []; return; }
+  var map = LOG_FOLD.maps[fi] || {};
   var marks = [], lc = m.getLineCount();
   for (var i = 1; i <= lc; i++){
-    var lv = lgLineLevel(m.getLineContent(i));
+    // 折叠行的级别判定用原文（预览文本可能截掉了级别词）
+    var lv = lgLineLevel(map[i] ? map[i].origText : m.getLineContent(i));
     if (lv === 1 || lv === 2) marks.push({ line: i, lv: lv });
   }
   LOGM.fileMarks[fi] = marks;
@@ -975,6 +1164,7 @@ function logApplyHits(){
   var m = LOGM.models[fi];
   LOGM.matches = [];
   if (!m || !monaco || !LOGM.editor) return;
+  lgFoldExpandHits(fi);   // 含关键词的折叠行先展开，保证搜索不漏
   var d = LOGM.decos[fi] || (LOGM.decos[fi] = { marks: [], hits: [] });
   var opts = [];
   if (LOGM.kw){
@@ -1083,6 +1273,7 @@ function logSetActive(fi){
     var m = LOGM.models[fi];
     if (m){
       LOGM.editor.setModel(m);
+      lgFoldReattach(fi);   // 折叠提示条/箭头不随模型切换保留，切回时重挂
       logApplyHits();
     } else if (f.loaded === 0 && !f.pending){
       loadLogPage(fi, 0);   // 首次切到该文件：加载首页，模型在返回后创建
@@ -1216,6 +1407,7 @@ function lgReset(){
     if (LOGM.models[i]){ try { LOGM.models[i].dispose(); } catch(e){} }
   }
   LOGM.models = []; LOGM.decos = []; LOGM.fileMarks = []; LOGM.matches = [];
+  LOG_FOLD.maps = [];
   LOGM.cur = -1; LOGM.kw = ""; LOGM.only = false; LOGM.active = 0;
   LOG_FILES = [];
   var el = document.getElementById("logStat");
