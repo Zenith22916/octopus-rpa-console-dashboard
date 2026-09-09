@@ -119,6 +119,7 @@ function parseHash(){
 }
 var tlReady = false, anReady = false, scReady = false;
 function route(){
+  var prevView = curView;   // 记录来源视图（showView 会覆盖 curView）
   var name = parseHash();
   showView(name);
   if (name === 'timeline'){
@@ -126,6 +127,7 @@ function route(){
       loadRuns().then(function(){ tlInit(); tlReady = true; });
     } else {
       tlResize();
+      if (prevView === 'detail') refreshData();   // 从日志详情页返回：自动更新在详情页停更了，补一次非强制刷新（只抓运行记录，不碰视口状态）
     }
   } else if (name === 'analysis'){
     if (!anReady){
