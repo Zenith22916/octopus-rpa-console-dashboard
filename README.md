@@ -1,4 +1,4 @@
-# 八爪鱼 RPA 触发器 & 运行记录仪表盘
+# 八爪鱼 RPA 触发器 & 运行记录仪表盘（octopus-rpa-console-dashboard）
 
 抓取八爪鱼 RPA 企业管理台的机器人触发器和运行记录，**前后端分离**的局域网单页仪表盘：
 
@@ -266,7 +266,7 @@ pip install "mcp<2" cryptography
   "mcpServers": {
     "octopus-rpa": {
       "command": "<python.exe 路径>",
-      "args": ["E:\\bazhuayu_crawler\\octo_mcp\\server.py"]
+      "args": ["E:\\octopus-rpa-console-dashboard\\octo_mcp\\server.py"]
     }
   }
 }
@@ -277,7 +277,7 @@ pip install "mcp<2" cryptography
 ## 项目结构
 
 ```
-bazhuayu_crawler/
+octopus-rpa-console-dashboard/
 ├── crawler.py              # 抓取触发器 + 运行记录
 ├── dashboard.py            # 数据聚合模块（load_records / build_schedule_payload）
 ├── local_server.py         # 局域网 HTTP 服务器 + JSON API（端口 8000）
