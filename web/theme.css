@@ -190,18 +190,29 @@ h2 {
 /* ==================================================== 4. 版面骨架（重排） */
 /* 结构：.app >（.sidebar 固定左栏 + .main 主区） */
 
+html,
+body {
+  /* 禁止原生滚动条：所有内容都由布局自适应到一屏内 */
+  overflow: hidden;
+}
+
 body {
   padding: 0;
   display: block;
   height: 100%;
 }
 
+/* 等比缩放：逻辑尺寸 = 视口 / --s，再 scale(--s) 缩回视口
+   --s 由 theme.js 按窗口高度写入（设计基准高 900），只缩不放 */
 .app {
   display: flex;
   gap: 14px;
-  height: 100%;
+  width: calc(100% / var(--s, 1));
+  height: calc(100% / var(--s, 1));
   padding: 14px;
   box-sizing: border-box;
+  transform: scale(var(--s, 1));
+  transform-origin: top left;
 }
 
 /* ---------------------------------------------- 左栏：品牌 + 导航 + 状态 */
@@ -1222,6 +1233,158 @@ tbody tr:hover {
 
 .cursor-glow.on {
   opacity: 1;
+}
+
+/* ========================================= 16. 全屏自适应（无原生滚动条） */
+/* 配合 theme.js 的 --s 等比缩放 + .app 逻辑尺寸放大，
+   所有视图都被约束在一屏内；需要滚动的只有组件内部（表格 / 日志列表）。 */
+
+.view {
+  overflow: hidden;
+}
+
+/* ------------------ 分析页：压成 4 列栅格，整体缩小填满一屏 ------------------ */
+#view-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: hidden;
+}
+
+#view-analysis .metrics {
+  flex: none;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+#view-analysis .metrics .metric {
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 11px;
+}
+
+#view-analysis .metrics .metric .k { font-size: 10.5px; letter-spacing: .04em; }
+#view-analysis .metrics .metric .v { font-size: 15px; line-height: 1.3; }
+#view-analysis .metrics .metric .s { font-size: 9.5px; margin-top: 0; }
+
+#view-analysis .grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1.08fr);
+  gap: 9px;
+  /* 热力图（跨 4 列）在 DOM 中排在第三位，会让后续两个面板被推成第 3 行；
+     dense 让它们回填到第一行剩下的两列，始终只占 2 行 */
+  grid-auto-flow: dense;
+}
+
+#view-analysis .grid > .panel.full {
+  grid-column: 1 / -1;
+}
+
+#view-analysis .panel {
+  min-height: 0;
+  padding: 8px 11px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+#view-analysis .panel h2 {
+  flex: none;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+  letter-spacing: .05em;
+}
+
+/* 图表容器改为填满面板，不再写死 280/300px */
+#view-analysis .cbox,
+#view-analysis .cbox.tall {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+#view-analysis .panel .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* 失败记录看板：占主区底部约四分之一，表格自身滚动 */
+#view-analysis > .panel.full {
+  flex: 0 0 auto;
+  height: 25%;
+  min-height: 128px;
+  display: flex;
+  flex-direction: column;
+}
+
+#view-analysis > .panel.full .toolbar {
+  flex: none;
+  margin-bottom: 5px;
+}
+
+#view-analysis > .panel.full .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+#view-analysis table { font-size: 11px; }
+#view-analysis th,
+#view-analysis td { padding: 4px 7px; }
+
+/* ------------------------- 窄屏兜底：取消一切「整页滚动」策略 ------------------------- */
+@media (max-width: 1100px) {
+  .view { overflow: hidden; }
+  #chart { min-height: 0; }
+
+  #view-schedule .panels {
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #view-schedule .panel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .detail-wrap {
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .info-card {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    max-height: 44%;
+    overflow-y: auto;
+  }
+
+  .log-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  #logbox {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  /* 缩放机制下逻辑宽度（视口宽 / --s）始终比视口更宽，栅格保持 4 列：
+     一旦掉列会变成纵向堆叠，反而撑出一屏导致滚动，这里锁死列数 */
+  #view-analysis .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 /* ------------------------------------------------------- 15. 无障碍与适配 */
