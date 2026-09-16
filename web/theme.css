@@ -609,14 +609,6 @@ body {
   color: var(--t-dim);
 }
 
-/* 指标卡的副标题并入第一行（原来单独占第三行、字号 10px 又偏暗，基本看不清） */
-.metric .k em {
-  font-style: normal;
-  margin-left: 7px;
-  letter-spacing: .02em;
-  color: rgba(124, 132, 150, .9);
-}
-
 .metric .v {
   font-size: 21px;
   font-weight: 600;
@@ -1373,10 +1365,9 @@ tbody tr:hover {
 #view-analysis .grid > .panel:nth-child(1) { grid-area: 1 / 1 / 2 / 4; }
 #view-analysis .grid > .panel:nth-child(2) { grid-area: 1 / 4 / 2 / 7; }
 #view-analysis .grid > .panel:nth-child(4) { grid-area: 1 / 7 / 2 / 13; }
-/* 第二行：热力图 / 负载榜各 6 列 —— 与第一行的分界（第 7 列）对齐，
-   这样负载榜和上面的平均排队时长左右边界齐平 */
-#view-analysis .grid > .panel:nth-child(3) { grid-area: 2 / 1 / 3 / 7; }
-#view-analysis .grid > .panel:nth-child(5) { grid-area: 2 / 7 / 3 / 13; }
+/* 第二行 */
+#view-analysis .grid > .panel:nth-child(3) { grid-area: 2 / 1 / 3 / 8; }
+#view-analysis .grid > .panel:nth-child(5) { grid-area: 2 / 8 / 3 / 13; }
 
 #view-analysis .panel {
   min-height: 0;
