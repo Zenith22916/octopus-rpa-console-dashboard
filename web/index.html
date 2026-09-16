@@ -80,13 +80,19 @@
         <div class="tl-card">
           <div class="chart-head">
             <span class="filter-label">时间窗口：</span>
-            <select id="selSpan">
+            <select id="selSpan" title="窗口预设；滑块可调任意大小">
+              <option value="600000">10 分钟</option>
+              <option value="900000">15 分钟</option>
               <option value="1800000">30 分钟</option>
+              <option value="2700000">45 分钟</option>
               <option value="3600000">1 小时</option>
+              <option value="5400000">1.5 小时</option>
               <option value="7200000" selected>2 小时</option>
+              <option value="10800000">3 小时</option>
               <option value="21600000">6 小时</option>
               <option value="43200000">12 小时</option>
               <option value="86400000">1 天</option>
+              <option value="172800000">2 天</option>
               <option value="259200000">3 天</option>
               <option value="604800000">7 天</option>
             </select>
@@ -101,17 +107,23 @@
             <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
           </div>
           <div id="chart" class="chart"></div>
+          <!-- 时间窗口滑块：拖两端调窗口大小，拖中间平移偏移 -->
           <div class="tl-scroll" id="tlScroll">
-            <div class="tl-scroll-track" id="tlScrollTrack"></div>
-            <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
+            <div class="tl-scroll-track" id="tlScrollTrack">
+              <div class="tl-scroll-win" id="tlScrollWin" title="拖动中间平移时间轴">
+                <span class="tl-grip tl-grip-l" id="tlGripL" title="拖动调整窗口起点"></span>
+                <span class="tl-grip tl-grip-r" id="tlGripR" title="拖动调整窗口终点"></span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="hint">
-          <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
-          <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
-          <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
-          <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
-          <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+          <div class="hint">
+            <span class="tl-span-info" id="tlSpanInfo">—</span>
+            <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
+            <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
+            <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
+            <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
+            <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+          </div>
         </div>
         <!-- 运行记录列表：点行让甘特图右边缘对齐该条记录的结束时间 -->
         <div class="panel tl-list-panel">

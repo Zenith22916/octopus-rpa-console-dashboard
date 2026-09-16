@@ -8,6 +8,14 @@ function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
 function pad(n){ return String(n).padStart(2, "0"); }
 function fmtTime(ms){ if(ms == null) return "-"; var d = new Date(ms); return (d.getMonth()+1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+/* 时长口语化：用于时间窗口大小提示 */
+function fmtSpanLabel(ms){
+  var m = ms / 60000;
+  if (m < 90) return (m < 10 ? m.toFixed(1) : Math.round(m)) + ' 分钟';
+  var h = ms / 3600000;
+  if (h < 48) return (h < 10 ? h.toFixed(1) : Math.round(h)) + ' 小时';
+  return (ms / 86400000).toFixed(1) + ' 天';
+}
 function fmtFull(ms){ if (ms == null) return "—"; var d = new Date(ms); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+
                       pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); }
 function fmtDur(ms){ if (ms == null || ms < 0) return "—"; var s = Math.round(ms/1000); if (s < 60) return s + " 秒";
@@ -64,19 +72,26 @@ function shadeGrad(color, dir, lift, drop){
               Math.round(c.b * (1 - k2)) + ',' + c.a + ')',
     dir);
 }
-/* 状态色阶：上亮下暗（时间轴块、饼图共用同一套语义色） */
-var STATUS_GRAD = {
-  Failed:    ['#ff9697', '#b83837'],
-  Executing: ['#ffcb7a', '#c6781a'],
-  Waiting:   ['#77b8f5', '#2966a3'],
-  Stopped:   ['#9aa0a8', '#54534f'],
-  Finished:  ['#57dc9f', '#108a59']
+/* 状态色相：沿用原来的状态语义色，只做轻微「上亮下暗」。
+   时间轴数据块走半透明（重叠可辨、长时间看不刺眼），饼图扇区用实色。 */
+var STATUS_HUE = {
+  Failed:    [226, 75, 74],
+  Executing: [239, 159, 39],
+  Waiting:   [55, 138, 221],
+  Stopped:   [120, 122, 128],
+  Finished:  [29, 158, 117]
 };
-function statusFill(r){
-  var g = STATUS_GRAD[r.status] || STATUS_GRAD.Finished;
-  return gradFill(g[0], g[1]);
+function statusRGB(k, alpha){
+  var c = STATUS_HUE[k] || STATUS_HUE.Finished;
+  return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')';
 }
-var WAIT_FILL = gradFill('#8ac2f8', '#2f6eaf');
+function statusFill(r){        // 时间轴数据块
+  return shadeGrad(statusRGB(r.status, .72), 'v', .12, .14);
+}
+function statusPieFill(k){     // 饼图扇区
+  return shadeGrad(statusRGB(k, 1), 'v', .1, .12);
+}
+var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
 function statusBadge(st){
   var map = { Failed:["失败","rgba(226,75,74,0.18)","#E24B4A"],
              Executing:["运行中","rgba(239,159,39,0.18)","#EF9F27"],
@@ -228,7 +243,7 @@ var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
-var tlScrollTrackEl = null, tlScrollThumbEl = null;
+var tlScrollTrackEl = null, tlScrollWinEl = null;
 function recomputeBounds(){
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -465,14 +480,6 @@ function tlRender(){
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh,
                                                  r: Math.min(3, w / 2, bh / 2) },
                           style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' } });
-          /* 从下方列表点进来对齐的那条记录：加一圈金色描边，方便在图上定位 */
-          if (state.focusId && String(params.data.rid) === String(state.focusId)){
-            children.push({ type: 'rect',
-                            shape: { x: x, y: y - bh / 2 - 2, width: w, height: bh + 4,
-                                     r: Math.min(5, w / 2, (bh + 4) / 2) },
-                            style: { fill: 'rgba(0,0,0,0)', stroke: '#ffd166', lineWidth: 2,
-                                     shadowBlur: 12, shadowColor: 'rgba(255,209,102,.55)' } });
-          }
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
@@ -578,17 +585,15 @@ function tlGotoRec(rid){
     if (String(records[i].id) === String(rid)){ rec = records[i]; break; }
   }
   if (!rec) return;
-  var nowT = Date.now();
-  state.end = nowT;
-  if (rec.end == null){
-    state.offset = 0;                        // 进行中：跳到最右
-  } else {
-    var offMin = DATA_MIN - nowT;            // 能回溯到的最早位置
-    state.offset = Math.max(offMin, Math.min(0, rec.end - nowT));
-  }
+  state.end = Date.now();
+  /* 未结束（end 为空）-> 对齐到最右（现在）；已结束 -> 窗口右边缘对齐结束时间 */
+  state.offset = (rec.end == null)
+    ? 0
+    : Math.max(DATA_MIN - state.end, Math.min(0, rec.end - state.end));
   state.focusId = String(rid);
-  tlRender();
-  tlListRender(true);                        // 跳过节流，立刻刷出选中态
+  tlUpdateWindow();
+  tlListRender(true);
+  if (tlChart) tlChart.resize();     // 按当前容器尺寸重算，避免数据块与横轴错位
 }
 function tlListBind(){
   var box = document.getElementById('tlList');
@@ -600,17 +605,30 @@ function tlListBind(){
   });
 }
 function tlScrollSync(){
-  if (!tlScrollTrackEl || !tlScrollThumbEl) return;
+  if (!tlScrollTrackEl || !tlScrollWinEl) return;
   var total = state.end - DATA_MIN;
-  if (!(total > 0)) { tlScrollThumbEl.style.display = 'none'; return; }
-  tlScrollThumbEl.style.display = 'block';
+  if (!(total > 0)) { tlScrollWinEl.style.display = 'none'; return; }
+  tlScrollWinEl.style.display = 'block';
   var tW = tlScrollTrackEl.clientWidth || 1;
   var nowW = Math.min(state.end + state.offset, state.end);
-  var w = Math.max(36, Math.min(tW, state.span / total * tW));
+  var w = Math.max(22, Math.min(tW, state.span / total * tW));
   var frac = (nowW - DATA_MIN) / total;
   var left = Math.max(0, Math.min(tW - w, frac * tW - w));
-  tlScrollThumbEl.style.width = w + 'px';
-  tlScrollThumbEl.style.left = left + 'px';
+  tlScrollWinEl.style.width = w + 'px';
+  tlScrollWinEl.style.left = left + 'px';
+  var info = document.getElementById('tlSpanInfo');
+  if (info) info.textContent = '窗口 ' + fmtSpanLabel(state.span) + '：' +
+                               fmtTime(nowW - state.span) + ' ~ ' + fmtTime(nowW);
+}
+/* 滑块改了窗口大小后同步下拉：值不在预设里就让下拉留空（表示自定义窗口） */
+function syncSpanSelect(){
+  var sel = document.getElementById('selSpan');
+  if (!sel) return;
+  var hit = -1;
+  for (var i = 0; i < sel.options.length; i++){
+    if (+sel.options[i].value === Math.round(state.span)){ hit = i; break; }
+  }
+  sel.selectedIndex = hit;
 }
 function tlUpdateWindow(){ if (curView === 'timeline') tlRender(); }
 function tlResize(){ if (tlChart) tlChart.resize(); }
@@ -646,49 +664,80 @@ function tlInit(){
   if (chkQueue) chkQueue.onchange = function(){ tlUpdateWindow(); };
   chartEl.addEventListener('dblclick', function(){
     state.offset = 0;
-    state.span = parseInt(document.getElementById('selSpan').value, 10);
+    /* 下拉留空（自定义窗口）时保持当前 span，不能把 NaN 写进去 */
+    var v = parseInt(document.getElementById('selSpan').value, 10);
+    if (v > 0) state.span = v;
     state.focusId = null;                    // 恢复实时视图时一并取消高亮
     tlUpdateWindow();
   });
   tlListBind();                              // 列表点行 -> 甘特图对齐该记录的结束时间
-  // 横向滚动条：拖动（触屏/鼠标）浏览时间轴，映射到 state.offset，与滚轮/双击一致
+  syncSpanSelect();                          // 下拉与当前窗口大小对齐（窄高窗口默认 6 小时）
+  /* 时间窗口滑块（PR 式）：拖两端改窗口大小、拖中间平移，轨道空白处点击把窗口移过去 */
   tlScrollTrackEl = document.getElementById('tlScrollTrack');
-  tlScrollThumbEl = document.getElementById('tlScrollThumb');
-  if (tlScrollTrackEl && tlScrollThumbEl) {
-    var dragging = false, startX = 0, startOffset = 0;
-    function pxPerMs(){
-      var total = (state.end - DATA_MIN) || 1;
-      var tW = tlScrollTrackEl.clientWidth || 1;
-      return tW / total;
-    }
+  tlScrollWinEl = document.getElementById('tlScrollWin');
+  if (tlScrollTrackEl && tlScrollWinEl) {
+    var MIN_SPAN = 10 * 60 * 1000;                 // 最小窗口 10 分钟
+    var MAX_SPAN = 30 * 24 * 3600 * 1000;          // 最大窗口 30 天
+    var drag = null;
+
     function clampOffset(o){
       var nowT = Date.now();
       return Math.max(DATA_MIN - nowT, Math.min(0, o));
     }
-    tlScrollThumbEl.addEventListener('pointerdown', function(e){
-      dragging = true;
-      startX = e.clientX;
-      startOffset = state.offset;
-      try { tlScrollThumbEl.setPointerCapture(e.pointerId); } catch(err){}
-      e.preventDefault();
-    });
-    tlScrollThumbEl.addEventListener('pointermove', function(e){
-      if (!dragging) return;
-      var dMs = (e.clientX - startX) / pxPerMs();
-      state.offset = clampOffset(startOffset + dMs);
+    function msPerPx(){
+      var total = (state.end - DATA_MIN) || 1;
+      var tW = tlScrollTrackEl.clientWidth || 1;
+      return total / tW;
+    }
+    /* 把窗口的绝对时间边界写回 state：不能越过「现在」，也不能越出数据范围 */
+    function applyWindow(L, R){
+      var span = Math.max(MIN_SPAN, Math.min(MAX_SPAN, R - L));
+      R = L + span;
+      if (R > state.end){ R = state.end; L = R - span; }
+      if (L < DATA_MIN){ L = DATA_MIN; R = L + span; }
+      if (R > state.end) R = state.end;
+      state.span = Math.max(MIN_SPAN, R - L);
+      state.offset = clampOffset(R - state.end);
+      state.focusId = null;
+      syncSpanSelect();
       tlUpdateWindow();
-    });
-    function stopDrag(){ dragging = false; }
-    tlScrollThumbEl.addEventListener('pointerup', stopDrag);
-    tlScrollThumbEl.addEventListener('pointercancel', stopDrag);
-    tlScrollTrackEl.addEventListener('click', function(e){
-      if (e.target === tlScrollThumbEl) return;
+    }
+    function startDrag(mode, e){
+      var nowW = Math.min(state.end + state.offset, state.end);
+      drag = { mode: mode, x: e.clientX, L: nowW - state.span, R: nowW };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch(err){}
+      e.preventDefault();
+      e.stopPropagation();                          // 别让把手的事件再冒泡到窗口块
+    }
+    function moveDrag(e){
+      if (!drag) return;
+      var dMs = (e.clientX - drag.x) * msPerPx();
+      if (drag.mode === 'move')      applyWindow(drag.L + dMs, drag.R + dMs);
+      else if (drag.mode === 'left') applyWindow(drag.L + dMs, drag.R);
+      else                           applyWindow(drag.L, drag.R + dMs);
+    }
+    function endDrag(){ drag = null; }
+    function bindGrip(el, mode){
+      if (!el) return;
+      el.addEventListener('pointerdown', function(e){ startDrag(mode, e); });
+      el.addEventListener('pointermove', moveDrag);
+      el.addEventListener('pointerup', endDrag);
+      el.addEventListener('pointercancel', endDrag);
+    }
+    bindGrip(document.getElementById('tlGripL'), 'left');
+    bindGrip(document.getElementById('tlGripR'), 'right');
+
+    tlScrollWinEl.addEventListener('pointerdown', function(e){ startDrag('move', e); });
+    tlScrollWinEl.addEventListener('pointermove', moveDrag);
+    tlScrollWinEl.addEventListener('pointerup', endDrag);
+    tlScrollWinEl.addEventListener('pointercancel', endDrag);
+
+    tlScrollTrackEl.addEventListener('pointerdown', function(e){
+      if (e.target !== tlScrollTrackEl) return;
       var rect = tlScrollTrackEl.getBoundingClientRect();
       var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-      var nowT = Date.now();
-      var targetEnd = DATA_MIN + frac * (state.end - DATA_MIN);
-      state.offset = clampOffset(targetEnd - nowT);
-      tlUpdateWindow();
+      var center = DATA_MIN + frac * (state.end - DATA_MIN);
+      applyWindow(center - state.span / 2, center + state.span / 2);
     });
   }
   tlChart.on('click', function(params){
@@ -763,11 +812,11 @@ function anMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, pe
   if (box) box.innerHTML = html;
 }
 function anPie(byWay){
-  var WAYG = { '手动': ['#57dc9f', '#108a59'], '定时触发器': ['#a99bf5', '#5f50bd'],
-               'Webhook': ['#f7a86b', '#bd5f28'] };
+  var WAYHUE = { '手动': [29, 158, 117], '定时触发器': [127, 119, 221], 'Webhook': [216, 118, 63] };
   var data = Object.keys(byWay).map(function(k){
-    var g = WAYG[wayCN(k)] || ['#7abaf6', '#2a67a8'];
-    return { name: wayCN(k), value: byWay[k], itemStyle: { color: gradFill(g[0], g[1]) } };
+    var c = WAYHUE[wayCN(k)] || [55, 138, 221];
+    return { name: wayCN(k), value: byWay[k],
+             itemStyle: { color: shadeGrad('rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',1)', 'v', .1, .12) } };
   });
   anCharts.pie.setOption({
     tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
@@ -782,8 +831,7 @@ function anPie(byWay){
 }
 function anStatus(sc){
   var data = Object.keys(sc).map(function(k){
-    var g = STATUS_GRAD[k] || ['#7abaf6', '#2a67a8'];
-    return { name: STATUS_CN[k] || k, value: sc[k], itemStyle: { color: gradFill(g[0], g[1]) } };
+    return { name: STATUS_CN[k] || k, value: sc[k], itemStyle: { color: statusPieFill(k) } };
   });
   data.sort(function(a, b){ return b.value - a.value; });
   anCharts.statusPie.setOption({
