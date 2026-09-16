@@ -749,16 +749,19 @@ function anRenderAll(recs){
   anRobotTbl(byRobot);
   anFailTbl(recs);
 }
+/* 指标卡：副标题并入第一行（<em>），数字带语义色 */
 function anCard(k, v, s, color){
-  return '<div class="metric"><div class="k">' + k + '</div><div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
+  var label = s ? (k + '<em>' + s + '</em>') : k;
+  return '<div class="metric"><div class="k">' + label + '</div>' +
+         '<div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div></div>';
 }
 function anMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, peak, waitN, runN){
   /* 只保留 4 张核心卡，渲染到顶部工具栏的 #anMetrics（原先在分析页内、共 8 张） */
   var html = '';
-  html += anCard('总运行数', total, '最近 7 天');
-  html += anCard('运行中', running, '');
-  html += anCard('平均排队', fmtDurM(avgWait), waitN + ' 条有排队');
-  html += anCard('平均运行', fmtDurM(avgRun), runN + ' 条已完成');
+  html += anCard('总运行数', total, '最近 7 天', '#378ADD');
+  html += anCard('运行中', running, '进行中的任务', '#EF9F27');
+  html += anCard('平均排队', fmtDurM(avgWait), waitN + ' 条有排队', '#7F77DD');
+  html += anCard('平均运行', fmtDurM(avgRun), runN + ' 条已完成', '#1D9E75');
   var box = document.getElementById('anMetrics');
   if (box) box.innerHTML = html;
 }
@@ -799,11 +802,16 @@ function anStatus(sc){
 }
 function anWaitBar(byRobot){
   var arr = Object.keys(byRobot).map(function(k){ var u = byRobot[k]; return {robot:u.robot, avg: u.waitN ? u.waitSum / u.waitN : 0}; }).sort(function(a, b){ return b.avg - a.avg; });
+  /* y 轴标签按实际机器人名测宽，别按固定值留空 —— 名字短的时候左侧会空一大片 */
+  var labelW = 0;
+  arr.forEach(function(d){ var w = measureW(d.robot, 12); if (w > labelW) labelW = w; });
+  var leftPad = Math.max(46, Math.min(150, Math.ceil(labelW) + 14));
   anCharts.waitBar.setOption({
-    grid:{left:112, right:34, top:10, bottom:24},
+    grid:{left:leftPad, right:34, top:10, bottom:24},
     tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
     xAxis:{type:'value', axisLabel:{color:'#8b8f98', formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
-    yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), axisLabel:{color:'#c9cdd4'}, inverse:true},
+    yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), inverse:true,
+           axisLabel:{color:'#c9cdd4', width:leftPad - 10, overflow:'truncate'}},
     series:[{type:'bar', data:arr.map(function(d){ return d.avg; }), barWidth:'58%',
              itemStyle:{ color: gradFill('#7abaf6', '#275f9e', 'h'), borderRadius:[3, 7, 7, 3] },
              showBackground: true,
