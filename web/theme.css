@@ -1252,23 +1252,11 @@ tbody tr:hover {
   overflow: hidden;
 }
 
+/* 分析页的指标卡已上移到顶部工具栏（#anMetrics），
+   原 #view-analysis .metrics 的容器样式随之移除，统一走工具栏那套尺寸 */
 #view-analysis .metrics {
-  flex: none;
-  gap: 8px;
-  margin-bottom: 0;
-  /* 上下留 4px：指标卡 hover 会向上浮 2px，容器 overflow 裁切会把它切掉一截 */
-  padding: 4px 0;
+  display: none;
 }
-
-#view-analysis .metrics .metric {
-  min-width: 0;
-  padding: 4px 10px;
-  border-radius: 11px;
-}
-
-#view-analysis .metrics .metric .k { font-size: 10.5px; letter-spacing: .04em; }
-#view-analysis .metrics .metric .v { font-size: 15px; line-height: 1.3; }
-#view-analysis .metrics .metric .s { font-size: 9.5px; margin-top: 0; }
 
 #view-analysis .grid {
   flex: 1 1 auto;

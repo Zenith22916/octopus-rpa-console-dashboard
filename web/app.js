@@ -144,6 +144,8 @@ function showView(name){
   var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
   if (tlM) tlM.style.display = (name === 'timeline') ? 'flex' : 'none';
   if (scM) scM.style.display = (name === 'schedule') ? 'flex' : 'none';
+  var anM = document.getElementById('anMetrics');
+  if (anM) anM.style.display = (name === 'analysis') ? 'flex' : 'none';
   // 自动更新开关只在时间轴/分析页显示（自动更新仅抓运行记录，排期页走「立刻更新」全量抓）
   var autoCtl = document.getElementById('autoCtl');
   if (autoCtl) autoCtl.style.display = (name === 'timeline' || name === 'analysis') ? 'flex' : 'none';
@@ -669,17 +671,14 @@ function anCard(k, v, s, color){
   return '<div class="metric"><div class="k">' + k + '</div><div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
 }
 function anMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, peak, waitN, runN){
-  var sr = (finished + failed) ? finished / (finished + failed) : 0;
+  /* 只保留 4 张核心卡，渲染到顶部工具栏的 #anMetrics（原先在分析页内、共 8 张） */
   var html = '';
   html += anCard('总运行数', total, '最近 7 天');
-  html += anCard('成功率', (sr*100).toFixed(1) + '%', '成功 ' + finished + ' / 结果 ' + (finished + failed));
-  html += anCard('失败数', failed, '失败率 ' + (total ? (failed/total*100).toFixed(1) : 0) + '%', failed ? '#E24B4A' : '');
   html += anCard('运行中', running, '');
   html += anCard('平均排队', fmtDurM(avgWait), waitN + ' 条有排队');
   html += anCard('平均运行', fmtDurM(avgRun), runN + ' 条已完成');
-  html += anCard('最长单次', fmtDurM(maxRun), '');
-  html += anCard('并发峰值', peak, '同时运行最多');
-  document.getElementById('metrics').innerHTML = html;
+  var box = document.getElementById('anMetrics');
+  if (box) box.innerHTML = html;
 }
 function anPie(byWay){
   var WAYG = { '手动': ['#57dc9f', '#108a59'], '定时触发器': ['#a99bf5', '#5f50bd'],

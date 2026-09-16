@@ -58,6 +58,8 @@
           <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
           <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
         </div>
+        <!-- 分析页指标：由 app.js 的 anMetrics() 填充，只在分析视图显示 -->
+        <div class="metrics" id="anMetrics" style="display:none;"></div>
       </div>
       <div class="auto-bar">
         <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不受 1 分钟节流限制）">立刻更新</button>
@@ -113,7 +115,6 @@
 
       <!-- ==================== 分析视图 ==================== -->
       <div id="view-analysis" class="view" style="display:none;">
-        <div class="metrics" id="metrics"></div>
         <div class="grid">
           <div class="panel"><h2>触发方式分布</h2><div id="pie" class="cbox"></div></div>
           <div class="panel"><h2>状态分布</h2><div id="statusPie" class="cbox"></div></div>
