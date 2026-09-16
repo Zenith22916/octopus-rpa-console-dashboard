@@ -594,6 +594,7 @@ body {
 
 .metric:hover {
   transform: translateY(-2px);
+  z-index: 3;                 /* 浮起时压过相邻卡片，避免被后一个盖住 */
   border-color: var(--t-line-hi);
   box-shadow: var(--t-shadow-hi), 0 0 0 1px rgba(77, 155, 240, .16);
 }
@@ -1255,6 +1256,8 @@ tbody tr:hover {
   flex: none;
   gap: 8px;
   margin-bottom: 0;
+  /* 上下留 4px：指标卡 hover 会向上浮 2px，容器 overflow 裁切会把它切掉一截 */
+  padding: 4px 0;
 }
 
 #view-analysis .metrics .metric {
@@ -1283,10 +1286,11 @@ tbody tr:hover {
 
 #view-analysis .grid > .panel { grid-column: span 12; }
 
-/* 第一行 */
-#view-analysis .grid > .panel:nth-child(1) { grid-area: 1 / 1 / 2 / 5; }
-#view-analysis .grid > .panel:nth-child(2) { grid-area: 1 / 5 / 2 / 9; }
-#view-analysis .grid > .panel:nth-child(4) { grid-area: 1 / 9 / 2 / 13; }
+/* 第一行：两张饼图各 3 列（左右对称、够放标签），平均排队时长 6 列
+   —— 横向条形图的 y 轴标签本身要吃掉约 112px，给足宽度柱子才不显憋屈 */
+#view-analysis .grid > .panel:nth-child(1) { grid-area: 1 / 1 / 2 / 4; }
+#view-analysis .grid > .panel:nth-child(2) { grid-area: 1 / 4 / 2 / 7; }
+#view-analysis .grid > .panel:nth-child(4) { grid-area: 1 / 7 / 2 / 13; }
 /* 第二行 */
 #view-analysis .grid > .panel:nth-child(3) { grid-area: 2 / 1 / 3 / 8; }
 #view-analysis .grid > .panel:nth-child(5) { grid-area: 2 / 8 / 3 / 13; }
@@ -1317,6 +1321,15 @@ tbody tr:hover {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 机器人负载榜：表格铺满面板高度、行高按比例分配，
+   免得面板被行数撑不满时上下留一大片空白（行多时仍内部滚动） */
+#view-analysis #robotTbl {
+  flex: 1 1 auto;
+  height: 100%;
 }
 
 /* 失败记录看板：已从分析页下线。

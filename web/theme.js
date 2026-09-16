@@ -43,6 +43,16 @@
 
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
+
+    /* 切换视图后，图表容器是 display:none -> flex 重新布局的，
+       ECharts 还停在旧尺寸（canvas 比容器矮，底部组件会落在画布外看不见）。
+       等布局稳定后补发一次 resize，让它按当前容器尺寸重算。 */
+    window.addEventListener("hashchange", function () {
+      window.setTimeout(function () {
+        selfEmit = true;
+        window.dispatchEvent(new Event("resize"));
+      }, 260);
+    });
   } catch (e) {
     /* 缩放失败时退化为 100%，页面仍可正常使用 */
   }

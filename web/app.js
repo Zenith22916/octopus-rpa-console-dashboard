@@ -719,7 +719,7 @@ function anStatus(sc){
 function anWaitBar(byRobot){
   var arr = Object.keys(byRobot).map(function(k){ var u = byRobot[k]; return {robot:u.robot, avg: u.waitN ? u.waitSum / u.waitN : 0}; }).sort(function(a, b){ return b.avg - a.avg; });
   anCharts.waitBar.setOption({
-    grid:{left:130, right:40, top:10, bottom:24},
+    grid:{left:112, right:34, top:10, bottom:24},
     tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
     xAxis:{type:'value', axisLabel:{color:'#8b8f98', formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
     yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), axisLabel:{color:'#c9cdd4'}, inverse:true},
@@ -736,11 +736,12 @@ function anHeat(heat){
   for(var w = 0; w < 7; w++) for(var h = 0; h < 24; h++){ var v = heat[w][h]; if(v > maxV) maxV = v; data.push([h, w, v]); }
   anCharts.heat.setOption({
     tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
-    grid:{left:46, right:20, top:10, bottom:54},
+    grid:{left:46, right:20, top:10, bottom:68},
     xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98'}, splitArea:{show:false}},
     yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4'}},
-    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:0,
-               itemWidth:12, itemHeight:110, textStyle:{color:'#8b8f98'},
+    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:6,
+               itemWidth:11, itemHeight:104, itemGap:6,
+               textStyle:{color:'#8b8f98', fontSize:11},
                inRange:{color:['#151b24','#1e4e7d','#378ADD','#e0a13c','#e05c52']}},
     series:[{type:'heatmap', data:data, label:{show:false},
              itemStyle:{ borderColor:'rgba(10,13,18,.85)', borderWidth:2, borderRadius:5 },
