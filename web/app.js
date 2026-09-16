@@ -23,6 +23,60 @@ function statusColor(r){
   if (r.status === "Stopped") return "rgba(95,94,90,0.6)";
   return "rgba(29,158,117,0.6)";
 }
+/* ==================== 图表视觉：渐变填充与圆角 ====================
+   纯样式层：只影响图形怎么画，不参与任何数据计算与交互逻辑。 */
+function gradFill(a, b, dir){
+  var horizontal = dir === 'h';
+  try {
+    return new echarts.graphic.LinearGradient(0, 0, horizontal ? 1 : 0, horizontal ? 0 : 1,
+      [{ offset: 0, color: a }, { offset: 1, color: b }]);
+  } catch (e) {
+    return a;   // echarts 未就绪时降级为纯色，保证图形仍能画出来
+  }
+}
+/* 任意合法颜色（#hex / rgb / rgba）-> 分量，解析不了返回 null */
+function parseColor(c){
+  var s = String(c == null ? '' : c).trim();
+  var m = s.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+  if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] == null ? 1 : +m[4] };
+  if (/^#[0-9a-f]{6}$/i.test(s)) {
+    return { r: parseInt(s.slice(1, 3), 16), g: parseInt(s.slice(3, 5), 16), b: parseInt(s.slice(5, 7), 16), a: 1 };
+  }
+  if (/^#[0-9a-f]{3}$/i.test(s)) {
+    return { r: parseInt(s.charAt(1) + s.charAt(1), 16),
+             g: parseInt(s.charAt(2) + s.charAt(2), 16),
+             b: parseInt(s.charAt(3) + s.charAt(3), 16), a: 1 };
+  }
+  return null;
+}
+/* 单一底色 -> 派生「上亮下暗」渐变；解析不了就原样返回纯色（安全降级） */
+function shadeGrad(color, dir, lift, drop){
+  var c = parseColor(color);
+  if (!c) return color;
+  var k1 = lift == null ? .26 : lift;
+  var k2 = drop == null ? .24 : drop;
+  return gradFill(
+    'rgba(' + Math.round(c.r + (255 - c.r) * k1) + ',' +
+              Math.round(c.g + (255 - c.g) * k1) + ',' +
+              Math.round(c.b + (255 - c.b) * k1) + ',' + c.a + ')',
+    'rgba(' + Math.round(c.r * (1 - k2)) + ',' +
+              Math.round(c.g * (1 - k2)) + ',' +
+              Math.round(c.b * (1 - k2)) + ',' + c.a + ')',
+    dir);
+}
+/* 状态色阶：上亮下暗（时间轴块、饼图共用同一套语义色） */
+var STATUS_GRAD = {
+  Failed:    ['#ff9697', '#b83837'],
+  Executing: ['#ffcb7a', '#c6781a'],
+  Waiting:   ['#77b8f5', '#2966a3'],
+  Stopped:   ['#9aa0a8', '#54534f'],
+  Finished:  ['#57dc9f', '#108a59']
+};
+function statusFill(r){
+  var g = STATUS_GRAD[r.status] || STATUS_GRAD.Finished;
+  return gradFill(g[0], g[1]);
+}
+var WAIT_FILL = gradFill('#8ac2f8', '#2f6eaf');
 function statusBadge(st){
   var map = { Failed:["失败","rgba(226,75,74,0.18)","#E24B4A"],
              Executing:["运行中","rgba(239,159,39,0.18)","#EF9F27"],
@@ -390,8 +444,10 @@ function tlRender(){
             var wxe = Math.min(api.coord([exec, row])[0], gRight);
             var qw = wxe - wxs;
             if (qw >= 2) {
-              children.push({ type: 'rect', shape: { x: wxs, y: y - bh / 2, width: qw, height: bh },
-                              style: { fill: 'rgba(55,138,221,0.6)' } });
+              children.push({ type: 'rect',
+                              shape: { x: wxs, y: y - bh / 2, width: qw, height: bh,
+                                       r: Math.min(3, qw / 2, bh / 2) },
+                              style: { fill: WAIT_FILL } });
             }
           }
           var rs = hasWait ? exec : api.value(0);
@@ -399,10 +455,13 @@ function tlRender(){
           var rxe = Math.min(api.coord([api.value(1), row])[0], gRight);
           var rw = rxe - rxs;
           if (rw >= 2) {
-            children.push({ type: 'rect', shape: { x: rxs, y: y - bh / 2, width: rw, height: bh },
-                            style: { fill: api.value(5) } });
+            children.push({ type: 'rect',
+                            shape: { x: rxs, y: y - bh / 2, width: rw, height: bh,
+                                     r: Math.min(3, rw / 2, bh / 2) },
+                            style: { fill: statusFill({ status: params.data && params.data.status }) } });
           }
-          children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh },
+          children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh,
+                                                 r: Math.min(3, w / 2, bh / 2) },
                           style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' } });
         }
         if (!children.length) return null;
@@ -623,21 +682,38 @@ function anMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, pe
   document.getElementById('metrics').innerHTML = html;
 }
 function anPie(byWay){
-  var data = Object.keys(byWay).map(function(k){ return {name: wayCN(k), value: byWay[k]}; });
+  var WAYG = { '手动': ['#57dc9f', '#108a59'], '定时触发器': ['#a99bf5', '#5f50bd'],
+               'Webhook': ['#f7a86b', '#bd5f28'] };
+  var data = Object.keys(byWay).map(function(k){
+    var g = WAYG[wayCN(k)] || ['#7abaf6', '#2a67a8'];
+    return { name: wayCN(k), value: byWay[k], itemStyle: { color: gradFill(g[0], g[1]) } };
+  });
   anCharts.pie.setOption({
     tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
-    legend:{bottom:0, textStyle:{color:'#8b8f98'}},
-    series:[{type:'pie', radius:['42%','68%'], center:['50%','46%'], label:{color:'#e6e6e6', formatter:'{b}\n{d}%'}, data:data}]
+    legend:{bottom:0, textStyle:{color:'#8b8f98'}, itemWidth:9, itemHeight:9, itemGap:12},
+    series:[{type:'pie', radius:['46%','70%'], center:['50%','46%'],
+             itemStyle:{ borderRadius:7, borderColor:'#171b23', borderWidth:2 },
+             label:{color:'#dfe5ee', formatter:'{b}\n{d}%'},
+             labelLine:{ lineStyle:{ color:'rgba(255,255,255,.2)' } },
+             emphasis:{ scale:true, scaleSize:4 },
+             data:data}]
   });
 }
 function anStatus(sc){
-  var SC = { Waiting: 'rgba(55,138,221,0.9)', Executing: 'rgba(239,159,39,0.9)', Finished: 'rgba(29,158,117,0.9)', Failed: 'rgba(226,75,74,0.9)', Stopped: 'rgba(95,94,90,0.9)' };
-  var data = Object.keys(sc).map(function(k){ return {name: STATUS_CN[k] || k, value: sc[k], itemStyle:{color: SC[k] || '#888'}}; });
+  var data = Object.keys(sc).map(function(k){
+    var g = STATUS_GRAD[k] || ['#7abaf6', '#2a67a8'];
+    return { name: STATUS_CN[k] || k, value: sc[k], itemStyle: { color: gradFill(g[0], g[1]) } };
+  });
   data.sort(function(a, b){ return b.value - a.value; });
   anCharts.statusPie.setOption({
     tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
-    legend:{bottom:0, textStyle:{color:'#8b8f98'}},
-    series:[{type:'pie', radius:['42%','68%'], center:['50%','46%'], label:{color:'#e6e6e6', formatter:'{b}\n{d}%'}, data:data}]
+    legend:{bottom:0, textStyle:{color:'#8b8f98'}, itemWidth:9, itemHeight:9, itemGap:12},
+    series:[{type:'pie', radius:['46%','70%'], center:['50%','46%'],
+             itemStyle:{ borderRadius:7, borderColor:'#171b23', borderWidth:2 },
+             label:{color:'#dfe5ee', formatter:'{b}\n{d}%'},
+             labelLine:{ lineStyle:{ color:'rgba(255,255,255,.2)' } },
+             emphasis:{ scale:true, scaleSize:4 },
+             data:data}]
   });
 }
 function anWaitBar(byRobot){
@@ -647,7 +723,11 @@ function anWaitBar(byRobot){
     tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
     xAxis:{type:'value', axisLabel:{color:'#8b8f98', formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
     yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), axisLabel:{color:'#c9cdd4'}, inverse:true},
-    series:[{type:'bar', data:arr.map(function(d){ return d.avg; }), itemStyle:{color:'#378ADD'}, barWidth:'55%'}]
+    series:[{type:'bar', data:arr.map(function(d){ return d.avg; }), barWidth:'58%',
+             itemStyle:{ color: gradFill('#7abaf6', '#275f9e', 'h'), borderRadius:[3, 7, 7, 3] },
+             showBackground: true,
+             backgroundStyle:{ color: 'rgba(255,255,255,.035)', borderRadius:[3, 7, 7, 3] },
+             emphasis:{ itemStyle:{ color: gradFill('#a3d1ff', '#3579c0', 'h') } }}]
   });
 }
 function anHeat(heat){
@@ -657,10 +737,15 @@ function anHeat(heat){
   anCharts.heat.setOption({
     tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
     grid:{left:46, right:20, top:10, bottom:54},
-    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98'}, splitArea:{show:true}},
+    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98'}, splitArea:{show:false}},
     yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4'}},
-    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:0, textStyle:{color:'#8b8f98'}, inRange:{color:['#181b21','#378ADD','#EF9F27','#E24B4A']}},
-    series:[{type:'heatmap', data:data, label:{show:false}, emphasis:{itemStyle:{borderColor:'#fff', borderWidth:1}}}]
+    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:0,
+               itemWidth:12, itemHeight:110, textStyle:{color:'#8b8f98'},
+               inRange:{color:['#151b24','#1e4e7d','#378ADD','#e0a13c','#e05c52']}},
+    series:[{type:'heatmap', data:data, label:{show:false},
+             itemStyle:{ borderColor:'rgba(10,13,18,.85)', borderWidth:2, borderRadius:5 },
+             emphasis:{ itemStyle:{ borderColor:'#fff', borderWidth:1.5,
+                                    shadowBlur:12, shadowColor:'rgba(0,0,0,.6)' } }}]
   });
 }
 function anRobotTbl(byRobot){
@@ -1581,10 +1666,12 @@ function scRender(view, filter, status) {
         var yBase = api.coord([api.value(0), ri.center])[1];
         var off = (api.value(3) - (api.value(4) - 1) / 2) * unitPx;
         var bw = Math.max(5, x1 - x0);
-        return { type: 'rect', shape: { x: x0, y: yBase + off - bh / 2, width: bw, height: bh },
-                 style: { fill: api.value(5), stroke: 'rgba(255,255,255,.35)', lineWidth: 1,
+        return { type: 'rect',
+                 shape: { x: x0, y: yBase + off - bh / 2, width: bw, height: bh,
+                          r: Math.min(5, bw / 2, bh / 2) },
+                 style: { fill: shadeGrad(api.value(5)), stroke: 'rgba(255,255,255,.22)', lineWidth: 1,
                           text: api.value(6), textPosition: 'inside',
-                          textFill: '#0f1115', fontSize: 20, fontWeight: 500,
+                          textFill: '#0b0e13', fontSize: 20, fontWeight: 500,
                           overflow: 'truncate', fontFamily: 'inherit' } };
       },
       emphasis: { focus: 'none' }
