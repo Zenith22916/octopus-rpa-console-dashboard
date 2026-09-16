@@ -92,6 +92,27 @@ function statusPieFill(k){     // 饼图扇区
   return shadeGrad(statusRGB(k, 1), 'v', .1, .12);
 }
 var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
+
+/* 饼图在小面板里的比例：标签只留百分比（名称+数值交给图例），引导线缩短，
+   否则扇区外侧的标签会顶出容器被裁掉 */
+var PIE_ITEM = { borderRadius:6, borderColor:'#171b23', borderWidth:2 };
+var PIE_LABEL = { color:'#dfe5ee', fontSize:11, formatter:'{d}%' };
+var PIE_LINE = { length:6, length2:6, lineStyle:{ color:'rgba(255,255,255,.18)' } };
+function pieLegend(data){
+  return { bottom:0, itemWidth:8, itemHeight:8, itemGap:12,
+           textStyle:{ color:'#8b8f98', fontSize:11 },
+           formatter: function(name){
+             var hit = null;
+             data.forEach(function(d){ if (d.name === name) hit = d; });
+             return hit ? (name + ' ' + hit.value) : name;
+           } };
+}
+function pieSeries(data){
+  return [{ type:'pie', radius:['42%','64%'], center:['50%','44%'],
+            itemStyle:PIE_ITEM, label:PIE_LABEL, labelLine:PIE_LINE,
+            emphasis:{ scale:true, scaleSize:4 },
+            data:data }];
+}
 function statusBadge(st){
   var map = { Failed:["失败","rgba(226,75,74,0.18)","#E24B4A"],
              Executing:["运行中","rgba(239,159,39,0.18)","#EF9F27"],
@@ -798,16 +819,18 @@ function anRenderAll(recs){
   anRobotTbl(byRobot);
   anFailTbl(recs);
 }
-function anCard(k, v, s, color){
-  return '<div class="metric"><div class="k">' + k + '</div><div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
+/* 指标卡：只有标题 + 大数字两行，数字带语义色 */
+function anCard(k, v, color){
+  return '<div class="metric"><div class="k">' + k + '</div>' +
+         '<div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div></div>';
 }
 function anMetrics(total, finished, failed, running, avgWait, avgRun, maxRun, peak, waitN, runN){
   /* 只保留 4 张核心卡，渲染到顶部工具栏的 #anMetrics（原先在分析页内、共 8 张） */
   var html = '';
-  html += anCard('总运行数', total, '最近 7 天');
-  html += anCard('运行中', running, '');
-  html += anCard('平均排队', fmtDurM(avgWait), waitN + ' 条有排队');
-  html += anCard('平均运行', fmtDurM(avgRun), runN + ' 条已完成');
+  html += anCard('总运行数', total, '#378ADD');
+  html += anCard('运行中', running, '#EF9F27');
+  html += anCard('平均排队', fmtDurM(avgWait), '#7F77DD');
+  html += anCard('平均运行', fmtDurM(avgRun), '#1D9E75');
   var box = document.getElementById('anMetrics');
   if (box) box.innerHTML = html;
 }
@@ -820,13 +843,8 @@ function anPie(byWay){
   });
   anCharts.pie.setOption({
     tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
-    legend:{bottom:0, textStyle:{color:'#8b8f98'}, itemWidth:9, itemHeight:9, itemGap:12},
-    series:[{type:'pie', radius:['46%','70%'], center:['50%','46%'],
-             itemStyle:{ borderRadius:7, borderColor:'#171b23', borderWidth:2 },
-             label:{color:'#dfe5ee', formatter:'{b}\n{d}%'},
-             labelLine:{ lineStyle:{ color:'rgba(255,255,255,.2)' } },
-             emphasis:{ scale:true, scaleSize:4 },
-             data:data}]
+    legend: pieLegend(data),
+    series: pieSeries(data)
   });
 }
 function anStatus(sc){
@@ -836,22 +854,22 @@ function anStatus(sc){
   data.sort(function(a, b){ return b.value - a.value; });
   anCharts.statusPie.setOption({
     tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
-    legend:{bottom:0, textStyle:{color:'#8b8f98'}, itemWidth:9, itemHeight:9, itemGap:12},
-    series:[{type:'pie', radius:['46%','70%'], center:['50%','46%'],
-             itemStyle:{ borderRadius:7, borderColor:'#171b23', borderWidth:2 },
-             label:{color:'#dfe5ee', formatter:'{b}\n{d}%'},
-             labelLine:{ lineStyle:{ color:'rgba(255,255,255,.2)' } },
-             emphasis:{ scale:true, scaleSize:4 },
-             data:data}]
+    legend: pieLegend(data),
+    series: pieSeries(data)
   });
 }
 function anWaitBar(byRobot){
   var arr = Object.keys(byRobot).map(function(k){ var u = byRobot[k]; return {robot:u.robot, avg: u.waitN ? u.waitSum / u.waitN : 0}; }).sort(function(a, b){ return b.avg - a.avg; });
+  /* y 轴标签按实际机器人名测宽：名字短就少留空，名字长才让位（原来写死 112px，两头不讨好） */
+  var labelW = 0;
+  arr.forEach(function(d){ var w = measureW(d.robot, 11); if (w > labelW) labelW = w; });
+  var leftPad = Math.max(44, Math.min(132, Math.ceil(labelW) + 12));
   anCharts.waitBar.setOption({
-    grid:{left:112, right:34, top:10, bottom:24},
+    grid:{left:leftPad, right:20, top:8, bottom:28},
     tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
-    xAxis:{type:'value', axisLabel:{color:'#8b8f98', formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
-    yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), axisLabel:{color:'#c9cdd4'}, inverse:true},
+    xAxis:{type:'value', axisLabel:{color:'#8b8f98', fontSize:11, formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
+    yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), inverse:true,
+           axisLabel:{color:'#c9cdd4', fontSize:11, width:leftPad - 8, overflow:'truncate'}},
     series:[{type:'bar', data:arr.map(function(d){ return d.avg; }), barWidth:'58%',
              itemStyle:{ color: gradFill('#7abaf6', '#275f9e', 'h'), borderRadius:[3, 7, 7, 3] },
              showBackground: true,
@@ -865,12 +883,12 @@ function anHeat(heat){
   for(var w = 0; w < 7; w++) for(var h = 0; h < 24; h++){ var v = heat[w][h]; if(v > maxV) maxV = v; data.push([h, w, v]); }
   anCharts.heat.setOption({
     tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
-    grid:{left:46, right:20, top:10, bottom:68},
-    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98'}, splitArea:{show:false}},
-    yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4'}},
-    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:6,
-               itemWidth:11, itemHeight:104, itemGap:6,
-               textStyle:{color:'#8b8f98', fontSize:11},
+    grid:{left:42, right:16, top:8, bottom:78},
+    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98', fontSize:11}, splitArea:{show:false}},
+    yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4', fontSize:11}},
+    visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:4,
+               itemWidth:10, itemHeight:92, itemGap:5,
+               textStyle:{color:'#8b8f98', fontSize:10},
                inRange:{color:['#151b24','#1e4e7d','#378ADD','#e0a13c','#e05c52']}},
     series:[{type:'heatmap', data:data, label:{show:false},
              itemStyle:{ borderColor:'rgba(10,13,18,.85)', borderWidth:2, borderRadius:5 },

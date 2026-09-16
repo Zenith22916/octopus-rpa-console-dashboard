@@ -329,6 +329,7 @@ body {
 
 .sidebar .navmenu-list li {
   position: relative;
+  /* 内边距在 hover / 选中时保持不变：原来改 padding-left 会让文字重新换行、行高抖动 */
   padding: 9px 12px;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -336,8 +337,7 @@ body {
   color: #a9b3c4;
   opacity: 1;
   transform: none;
-  transition: background .22s, color .22s, border-color .22s,
-              padding-left .3s var(--t-ease), box-shadow .28s;
+  transition: background .22s, color .22s, border-color .22s, box-shadow .28s;
 }
 
 .sidebar .navmenu-list li::before {
@@ -355,7 +355,6 @@ body {
 }
 
 .sidebar .navmenu-list li:hover {
-  padding-left: 15px;
   color: #fff;
   background: linear-gradient(90deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .012));
 }
@@ -365,7 +364,6 @@ body {
 }
 
 .sidebar .navmenu-list li.cur {
-  padding-left: 15px;
   color: #dbeaff;
   border-color: rgba(77, 155, 240, .32);
   background: linear-gradient(90deg, rgba(77, 155, 240, .2), rgba(77, 155, 240, .025));
