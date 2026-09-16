@@ -1272,17 +1272,24 @@ tbody tr:hover {
   min-height: 0;
   margin-bottom: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1.08fr);
+  /* 12 列制，两行：
+     第一行 触发方式分布 / 状态分布 / 平均排队时长（各 4 列）
+     第二行 运行量热力图（7 列） / 机器人负载榜（5 列）
+     面板在 DOM 中的顺序与视觉顺序不同，这里用 grid-area 显式定位 */
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 9px;
-  /* 热力图（跨 4 列）在 DOM 中排在第三位，会让后续两个面板被推成第 3 行；
-     dense 让它们回填到第一行剩下的两列，始终只占 2 行 */
-  grid-auto-flow: dense;
 }
 
-#view-analysis .grid > .panel.full {
-  grid-column: 1 / -1;
-}
+#view-analysis .grid > .panel { grid-column: span 12; }
+
+/* 第一行 */
+#view-analysis .grid > .panel:nth-child(1) { grid-area: 1 / 1 / 2 / 5; }
+#view-analysis .grid > .panel:nth-child(2) { grid-area: 1 / 5 / 2 / 9; }
+#view-analysis .grid > .panel:nth-child(4) { grid-area: 1 / 9 / 2 / 13; }
+/* 第二行 */
+#view-analysis .grid > .panel:nth-child(3) { grid-area: 2 / 1 / 3 / 8; }
+#view-analysis .grid > .panel:nth-child(5) { grid-area: 2 / 8 / 3 / 13; }
 
 #view-analysis .panel {
   min-height: 0;
@@ -1312,24 +1319,11 @@ tbody tr:hover {
   max-height: none;
 }
 
-/* 失败记录看板：占主区底部约四分之一，表格自身滚动 */
+/* 失败记录看板：已从分析页下线。
+   用隐藏而不是删 DOM —— app.js 仍会往 failTbl 写内容，保留节点可避免空引用报错，
+   想恢复这个面板，删掉下面这条 display:none 即可。 */
 #view-analysis > .panel.full {
-  flex: 0 0 auto;
-  height: 25%;
-  min-height: 128px;
-  display: flex;
-  flex-direction: column;
-}
-
-#view-analysis > .panel.full .toolbar {
-  flex: none;
-  margin-bottom: 5px;
-}
-
-#view-analysis > .panel.full .scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
+  display: none;
 }
 
 #view-analysis table { font-size: 11px; }
@@ -1380,10 +1374,11 @@ tbody tr:hover {
     height: auto;
   }
 
-  /* 缩放机制下逻辑宽度（视口宽 / --s）始终比视口更宽，栅格保持 4 列：
+  /* 缩放机制下逻辑宽度（视口宽 / --s）始终比视口更宽，栅格保持 12 列：
      一旦掉列会变成纵向堆叠，反而撑出一屏导致滚动，这里锁死列数 */
   #view-analysis .grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 
