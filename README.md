@@ -60,8 +60,10 @@ feishu_cfg.py ─▶ 飞书多维表格配置中心读写
 local_server.py ──▶ 启动时/刷新/每日更新后载入内存
                         │
 web/（纯前端，hash 路由五视图）
-    index.html + app.js + style.css
+    index.html + app.js + style.css + theme.css + theme.js + fonts/
     #/analysis（默认主页） #/timeline #/detail?id= #/schedule #/projects
+    # 版面：左侧固定导航栏（品牌 + 四视图 + 数据时间）+ 右侧主内容区
+    # theme.css 为视觉增强层（配色/质感/动效/字体），删掉 index.html 里的引用即可回退原样式
 ```
 
 ### 后端接口
@@ -295,8 +297,12 @@ octopus-rpa-console-dashboard/
 │   ├── monaco/vs/          # Monaco Editor（日志只读高亮，离线自托管）
 │   └── effect_*.png        # 效果图（README 引用）
 ├── web/                    # 纯前端（前后端分离）
-│   ├── index.html          # 单页骨架 + hash 路由五视图
+│   ├── index.html          # 单页骨架（左侧导航 + 主内容区）+ hash 路由五视图
 │   ├── app.js              # 路由 + 时间轴/分析/详情/日程/项目控制台 渲染
-│   └── style.css
+│   ├── style.css           # 基础样式（布局与组件）
+│   ├── theme.css           # 视觉增强层（配色/质感/圆角/动效，可整层回退）
+│   ├── theme.js            # 装饰层（鼠标跟随光晕，失败静默降级）
+│   └── fonts/
+│       └── maple-mono.woff2  # 界面字体 Maple Mono（woff2，约 5.4 MB）
 └── output/                 # 抓取数据 + 整理文档 + 更新日志（git 忽略）
 ```

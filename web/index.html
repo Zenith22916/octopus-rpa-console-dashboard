@@ -6,180 +6,208 @@
 <meta http-equiv="Cache-Control" content="no-store">
 <title>RPA 运行仪表盘</title>
 <link rel="stylesheet" href="/style.css">
+<!-- 视觉增强层：只覆盖外观与动效，不含业务逻辑；删掉这行即可回退到原样式 -->
+<link rel="stylesheet" href="/theme.css">
 <script src="/echarts.min.js"></script>
 <!-- Monaco 的 AMD loader 必须在 echarts 之后加载：否则 echarts 的 UMD 包装检测到 define.amd 会注册成 AMD 模块，不再暴露 window.echarts 全局 -->
 <script src="/monaco/vs/loader.js"></script>
 </head>
 <body>
-<div class="head">
-  <div class="titlebar">
-    <div class="navmenu" id="navMenu">
-      <button class="navmenu-btn" id="navMenuBtn" type="button" title="切换视图（悬停展开）">运行数据分析</button>
+<div class="app">
+
+  <!-- ==================== 左侧导航 ==================== -->
+  <aside class="sidebar">
+    <div class="side-brand">
+      <span class="side-logo" aria-hidden="true"></span>
+      <span class="side-brand-txt">
+        <span class="side-brand-name">RPA 控制台</span>
+        <span class="side-brand-sub">Octopus RPA</span>
+      </span>
+    </div>
+
+    <nav class="navmenu" id="navMenu">
+      <div class="side-group">视图</div>
       <ul class="navmenu-list" id="navMenuList">
         <li data-hash="#/analysis">运行数据分析</li>
         <li data-hash="#/timeline">任务时间轴</li>
         <li data-hash="#/schedule">触发器排期</li>
         <li data-hash="#/projects">项目控制台</li>
       </ul>
-    </div>
-    <div class="datatime" id="dataTime">数据获取：—</div>
-    <div class="datatime warn" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
-  </div>
-  <div id="headMetrics">
-    <div class="metrics" id="tlMetrics" style="display:none;">
-      <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
-      <div class="metric"><div class="k">手动记录</div><div class="v" id="mManual" style="color:#1D9E75">0</div></div>
-      <div class="metric"><div class="k">定时触发记录</div><div class="v" id="mTiming" style="color:#7F77DD">0</div></div>
-      <div class="metric"><div class="k">机器人</div><div class="v" id="mRobots" style="color:#378ADD">0</div></div>
-    </div>
-    <div class="metrics" id="scMetrics" style="display:none;">
-      <div class="metric"><div class="k">触发器总数</div><div class="v" id="sTotal" style="color:#378ADD">0</div></div>
-      <div class="metric"><div class="k">已启用</div><div class="v" id="sEnabled" style="color:#1D9E75">0</div></div>
-      <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
-      <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
-    </div>
-  </div>
-  <div class="auto-bar">
-    <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不受 1 分钟节流限制）">立刻更新</button>
-    <span id="autoCtl" style="display:flex;align-items:center;gap:8px;">
-      <span class="auto-update-label">自动更新：</span>
-      <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
-    </span>
-  </div>
-</div>
+    </nav>
 
-<!-- ==================== 时间轴视图 ==================== -->
-<div id="view-timeline" class="view" style="display:none;">
-  <div class="chart-head">
-    <span class="filter-label">时间窗口：</span>
-    <select id="selSpan">
-      <option value="1800000">30 分钟</option>
-      <option value="3600000">1 小时</option>
-      <option value="7200000" selected>2 小时</option>
-      <option value="21600000">6 小时</option>
-      <option value="43200000">12 小时</option>
-      <option value="86400000">1 天</option>
-      <option value="259200000">3 天</option>
-      <option value="604800000">7 天</option>
-    </select>
-    <span class="filter-label way-label">触发方式：</span>
-    <select id="selWay">
-      <option value="__ALL__" selected>全部</option>
-      <option value="Manual">手动</option>
-      <option value="TimingTrigger">定时触发器</option>
-      <option value="Webhook">Webhook</option>
-    </select>
-    <span class="filter-label way-label">显示排队：</span>
-    <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
-  </div>
-  <div class="tl-scroll" id="tlScroll">
-    <div class="tl-scroll-track" id="tlScrollTrack"></div>
-    <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
-  </div>
-  <div id="chart" class="chart"></div>
-  <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook，「显示排队」开关控制蓝色排队块的显示；拖动上方滚动条或滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
-    <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
-    <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
-    <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
-    <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
-    <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
-  </div>
-  <div id="toast"></div>
-</div>
-
-<!-- ==================== 分析视图 ==================== -->
-<div id="view-analysis" class="view" style="display:none;">
-  <div class="metrics" id="metrics"></div>
-  <div class="grid">
-    <div class="panel"><h2>触发方式分布</h2><div id="pie" class="cbox"></div></div>
-    <div class="panel"><h2>状态分布</h2><div id="statusPie" class="cbox"></div></div>
-    <div class="panel full"><h2>运行量热力图（星期 × 小时）</h2><div id="heat" class="cbox tall"></div></div>
-    <div class="panel"><h2>各机器人平均排队时长（资源争抢）</h2><div id="waitBar" class="cbox"></div></div>
-    <div class="panel"><h2>机器人负载榜</h2><div class="scroll"><table id="robotTbl"></table></div></div>
-  </div>
-  <div class="panel full">
-    <div class="toolbar"><h2 style="margin:0;">失败记录看板</h2>
-      <button class="btn" id="btnExport">导出失败记录 CSV</button>
-      <span id="failCount" class="datatime"></span>
+    <div class="side-foot">
+      <div class="datatime" id="dataTime">数据获取：—</div>
+      <div class="side-tip">运行记录每分钟自动刷新</div>
     </div>
-    <div class="scroll"><table id="failTbl"></table></div>
-  </div>
-</div>
+  </aside>
 
-<!-- ==================== 详情视图 ==================== -->
-<div id="view-detail" class="view" style="display:none;">
-  <div class="topbar">
-    <div class="title"><span id="ttl">运行记录详情</span></div>
-    <button class="back rerun" id="btnRerun">↻ 重新运行</button>
-    <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
-    <button class="back" id="btnBack">← 返回上一页</button>
-  </div>
-  <div id="app"></div>
-</div>
-
-<!-- ==================== 日程视图 ==================== -->
-<div id="view-schedule" class="view" style="display:none;">
-  <div class="panels">
-    <div class="panel">
-      <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select></h2>
-      <div id="c1" class="chart"></div>
-      <div class="hint">视图：每周=周一~周日（每天/每周任务），每月=当月有任务的日期（每月任务）；同色=同一应用，格内为应用短名，悬停看明细；红色十字线=当前时刻与今天。</div>
-    </div>
-  </div>
-</div>
-
-<!-- ==================== 项目控制台视图 ==================== -->
-<div id="view-projects" class="view" style="display:none;">
-  <div class="pj-layout">
-    <div class="pj-side">
-      <div class="pj-side-head">
-        <span class="filter-label">项目列表</span>
-        <select id="pjSort" title="排序方式">
-          <option value="time" selected>按修改时间</option>
-          <option value="name">按名称</option>
-        </select>
-        <button class="btn" id="pjReload">刷新</button>
-      </div>
-      <div class="pj-list" id="pjList"></div>
-      <div class="pj-foot" id="pjFoot"></div>
-    </div>
-    <div class="pj-main">
-      <div class="pj-empty" id="pjEmpty">← 从左侧选择一个项目</div>
-      <div class="pj-detail" id="pjDetail" style="display:none;">
-        <div class="pj-detail-head">
-          <div class="pj-title-row">
-            <h2 id="pjName"></h2>
-            <div class="pj-tabs">
-              <button class="pj-tab active" data-tab="cfg">飞书配置</button>
-              <button class="pj-tab" data-tab="runs">运行记录</button>
-            </div>
-            <button class="btn rerun" id="pjRun" title="立即触发一次执行（自动复用该项目历史成功运行的机器人）">▶ 运行该应用</button>
-          </div>
-          <span class="datatime" id="pjMeta"></span>
+  <!-- ==================== 主内容区 ==================== -->
+  <main class="main">
+    <header class="main-bar">
+      <button class="navmenu-btn" id="navMenuBtn" type="button" title="当前视图">运行数据分析</button>
+      <div id="headMetrics">
+        <div class="metrics" id="tlMetrics" style="display:none;">
+          <div class="metric"><div class="k">Webhook 记录</div><div class="v" id="mTotal" style="color:#D85A30">0</div></div>
+          <div class="metric"><div class="k">手动记录</div><div class="v" id="mManual" style="color:#1D9E75">0</div></div>
+          <div class="metric"><div class="k">定时触发记录</div><div class="v" id="mTiming" style="color:#7F77DD">0</div></div>
+          <div class="metric"><div class="k">机器人</div><div class="v" id="mRobots" style="color:#378ADD">0</div></div>
         </div>
-        <div class="pj-cards">
-          <div class="pj-tab-panel" id="pjPanelCfg">
-            <div class="toolbar">
-              <span class="filter-label">配置组：</span>
-              <input type="text" id="pjGroup" placeholder="如 qcc" style="width:120px;">
-              <button class="btn" id="pjGroupSave">保存映射</button>
-              <button class="btn" id="pjCfgLoad">加载配置</button>
-              <button class="btn" id="pjCfgAdd">＋ 新增配置</button>
-            </div>
-            <div class="scroll"><table id="pjCfgTbl" class="pj-cfg-tbl"></table></div>
-            <div class="hint" id="pjCfgHint">配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置；点「编辑」或「＋ 新增配置」在弹窗中修改。</div>
+        <div class="metrics" id="scMetrics" style="display:none;">
+          <div class="metric"><div class="k">触发器总数</div><div class="v" id="sTotal" style="color:#378ADD">0</div></div>
+          <div class="metric"><div class="k">已启用</div><div class="v" id="sEnabled" style="color:#1D9E75">0</div></div>
+          <div class="metric"><div class="k">已停用</div><div class="v" id="sDisabled" style="color:#888780">0</div></div>
+          <div class="metric"><div class="k">Webhook</div><div class="v" id="sWebhook" style="color:#D85A30">0</div></div>
+        </div>
+      </div>
+      <div class="auto-bar">
+        <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不受 1 分钟节流限制）">立刻更新</button>
+        <span id="autoCtl" style="display:flex;align-items:center;gap:8px;">
+          <span class="auto-update-label">自动更新：</span>
+          <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
+        </span>
+      </div>
+    </header>
+
+    <div class="warn-bar" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
+
+    <div class="main-body">
+
+      <!-- ==================== 时间轴视图 ==================== -->
+      <div id="view-timeline" class="view" style="display:none;">
+        <div class="chart-head">
+          <span class="filter-label">时间窗口：</span>
+          <select id="selSpan">
+            <option value="1800000">30 分钟</option>
+            <option value="3600000">1 小时</option>
+            <option value="7200000" selected>2 小时</option>
+            <option value="21600000">6 小时</option>
+            <option value="43200000">12 小时</option>
+            <option value="86400000">1 天</option>
+            <option value="259200000">3 天</option>
+            <option value="604800000">7 天</option>
+          </select>
+          <span class="filter-label way-label">触发方式：</span>
+          <select id="selWay">
+            <option value="__ALL__" selected>全部</option>
+            <option value="Manual">手动</option>
+            <option value="TimingTrigger">定时触发器</option>
+            <option value="Webhook">Webhook</option>
+          </select>
+          <span class="filter-label way-label">显示排队：</span>
+          <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
+        </div>
+        <div class="tl-scroll" id="tlScroll">
+          <div class="tl-scroll-track" id="tlScrollTrack"></div>
+          <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
+        </div>
+        <div id="chart" class="chart"></div>
+        <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook，「显示排队」开关控制蓝色排队块的显示；拖动上方滚动条或滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
+          <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
+          <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
+          <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
+          <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
+          <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+        </div>
+        <div id="toast"></div>
+      </div>
+
+      <!-- ==================== 分析视图 ==================== -->
+      <div id="view-analysis" class="view" style="display:none;">
+        <div class="metrics" id="metrics"></div>
+        <div class="grid">
+          <div class="panel"><h2>触发方式分布</h2><div id="pie" class="cbox"></div></div>
+          <div class="panel"><h2>状态分布</h2><div id="statusPie" class="cbox"></div></div>
+          <div class="panel full"><h2>运行量热力图（星期 × 小时）</h2><div id="heat" class="cbox tall"></div></div>
+          <div class="panel"><h2>各机器人平均排队时长（资源争抢）</h2><div id="waitBar" class="cbox"></div></div>
+          <div class="panel"><h2>机器人负载榜</h2><div class="scroll"><table id="robotTbl"></table></div></div>
+        </div>
+        <div class="panel full">
+          <div class="toolbar"><h2 style="margin:0;">失败记录看板</h2>
+            <button class="btn" id="btnExport">导出失败记录 CSV</button>
+            <span id="failCount" class="datatime"></span>
           </div>
-          <div class="pj-tab-panel" id="pjPanelRuns" style="display:none;">
-            <div class="toolbar">
-              <button class="btn" id="pjRunsReload">刷新</button>
-            </div>
-            <div class="scroll" id="pjRunsList"></div>
-            <div class="hint" id="pjRunsInfo">该应用最近 7 天的运行记录，点击某条可查看日志详情。</div>
+          <div class="scroll"><table id="failTbl"></table></div>
+        </div>
+      </div>
+
+      <!-- ==================== 详情视图 ==================== -->
+      <div id="view-detail" class="view" style="display:none;">
+        <div class="topbar">
+          <div class="title"><span id="ttl">运行记录详情</span></div>
+          <button class="back rerun" id="btnRerun">↻ 重新运行</button>
+          <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
+          <button class="back" id="btnBack">← 返回上一页</button>
+        </div>
+        <div id="app"></div>
+      </div>
+
+      <!-- ==================== 日程视图 ==================== -->
+      <div id="view-schedule" class="view" style="display:none;">
+        <div class="panels">
+          <div class="panel">
+            <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select></h2>
+            <div id="c1" class="chart"></div>
+            <div class="hint">视图：每周=周一~周日（每天/每周任务），每月=当月有任务的日期（每月任务）；同色=同一应用，格内为应用短名，悬停看明细；红色十字线=当前时刻与今天。</div>
           </div>
         </div>
       </div>
+
+      <!-- ==================== 项目控制台视图 ==================== -->
+      <div id="view-projects" class="view" style="display:none;">
+        <div class="pj-layout">
+          <div class="pj-side">
+            <div class="pj-side-head">
+              <span class="filter-label">项目列表</span>
+              <select id="pjSort" title="排序方式">
+                <option value="time" selected>按修改时间</option>
+                <option value="name">按名称</option>
+              </select>
+              <button class="btn" id="pjReload">刷新</button>
+            </div>
+            <div class="pj-list" id="pjList"></div>
+            <div class="pj-foot" id="pjFoot"></div>
+          </div>
+          <div class="pj-main">
+            <div class="pj-empty" id="pjEmpty">← 从左侧选择一个项目</div>
+            <div class="pj-detail" id="pjDetail" style="display:none;">
+              <div class="pj-detail-head">
+                <div class="pj-title-row">
+                  <h2 id="pjName"></h2>
+                  <div class="pj-tabs">
+                    <button class="pj-tab active" data-tab="cfg">飞书配置</button>
+                    <button class="pj-tab" data-tab="runs">运行记录</button>
+                  </div>
+                  <button class="btn rerun" id="pjRun" title="立即触发一次执行（自动复用该项目历史成功运行的机器人）">▶ 运行该应用</button>
+                </div>
+                <span class="datatime" id="pjMeta"></span>
+              </div>
+              <div class="pj-cards">
+                <div class="pj-tab-panel" id="pjPanelCfg">
+                  <div class="toolbar">
+                    <span class="filter-label">配置组：</span>
+                    <input type="text" id="pjGroup" placeholder="如 qcc" style="width:120px;">
+                    <button class="btn" id="pjGroupSave">保存映射</button>
+                    <button class="btn" id="pjCfgLoad">加载配置</button>
+                    <button class="btn" id="pjCfgAdd">＋ 新增配置</button>
+                  </div>
+                  <div class="scroll"><table id="pjCfgTbl" class="pj-cfg-tbl"></table></div>
+                  <div class="hint" id="pjCfgHint">配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置；点「编辑」或「＋ 新增配置」在弹窗中修改。</div>
+                </div>
+                <div class="pj-tab-panel" id="pjPanelRuns" style="display:none;">
+                  <div class="toolbar">
+                    <button class="btn" id="pjRunsReload">刷新</button>
+                  </div>
+                  <div class="scroll" id="pjRunsList"></div>
+                  <div class="hint" id="pjRunsInfo">该应用最近 7 天的运行记录，点击某条可查看日志详情。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
-  </div>
+  </main>
 </div>
 
 <!-- 配置编辑弹窗 -->
@@ -225,5 +253,7 @@
 </div>
 
 <script src="/app.js"></script>
+<!-- 装饰层：跟随鼠标的氛围光晕，失败不影响主页面 -->
+<script src="/theme.js"></script>
 </body>
 </html>
