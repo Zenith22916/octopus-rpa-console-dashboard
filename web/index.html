@@ -76,39 +76,51 @@
 
       <!-- ==================== 时间轴视图 ==================== -->
       <div id="view-timeline" class="view" style="display:none;">
-        <div class="chart-head">
-          <span class="filter-label">时间窗口：</span>
-          <select id="selSpan">
-            <option value="1800000">30 分钟</option>
-            <option value="3600000">1 小时</option>
-            <option value="7200000" selected>2 小时</option>
-            <option value="21600000">6 小时</option>
-            <option value="43200000">12 小时</option>
-            <option value="86400000">1 天</option>
-            <option value="259200000">3 天</option>
-            <option value="604800000">7 天</option>
-          </select>
-          <span class="filter-label way-label">触发方式：</span>
-          <select id="selWay">
-            <option value="__ALL__" selected>全部</option>
-            <option value="Manual">手动</option>
-            <option value="TimingTrigger">定时触发器</option>
-            <option value="Webhook">Webhook</option>
-          </select>
-          <span class="filter-label way-label">显示排队：</span>
-          <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
+        <!-- 大卡片：筛选栏 + 甘特图 + 横向滚动条（滚动条贴图表下方、同卡内） -->
+        <div class="tl-card">
+          <div class="chart-head">
+            <span class="filter-label">时间窗口：</span>
+            <select id="selSpan">
+              <option value="1800000">30 分钟</option>
+              <option value="3600000">1 小时</option>
+              <option value="7200000" selected>2 小时</option>
+              <option value="21600000">6 小时</option>
+              <option value="43200000">12 小时</option>
+              <option value="86400000">1 天</option>
+              <option value="259200000">3 天</option>
+              <option value="604800000">7 天</option>
+            </select>
+            <span class="filter-label way-label">触发方式：</span>
+            <select id="selWay">
+              <option value="__ALL__" selected>全部</option>
+              <option value="Manual">手动</option>
+              <option value="TimingTrigger">定时触发器</option>
+              <option value="Webhook">Webhook</option>
+            </select>
+            <span class="filter-label way-label">显示排队：</span>
+            <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
+          </div>
+          <div id="chart" class="chart"></div>
+          <div class="tl-scroll" id="tlScroll">
+            <div class="tl-scroll-track" id="tlScrollTrack"></div>
+            <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
+          </div>
         </div>
-        <div class="tl-scroll" id="tlScroll">
-          <div class="tl-scroll-track" id="tlScrollTrack"></div>
-          <div class="tl-scroll-thumb" id="tlScrollThumb" title="拖动浏览时间轴（触屏可用），双击图表恢复实时"></div>
-        </div>
-        <div id="chart" class="chart"></div>
-        <div class="hint">竖轴=机器人（手动/定时/Webhook 运行记录），横轴=时间（随时间缓慢左移）；「时间窗口」可切换 30 分钟~7 天范围，「触发方式」可筛选手动/定时/Webhook，「显示排队」开关控制蓝色排队块的显示；拖动上方滚动条或滚动鼠标滚轮左右移动数据，双击图表恢复实时；点击记录查看明细。
+        <div class="hint">
           <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
           <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
           <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
           <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
           <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+        </div>
+        <!-- 运行记录列表：点行让甘特图右边缘对齐该条记录的结束时间 -->
+        <div class="panel tl-list-panel">
+          <div class="toolbar">
+            <h2 style="margin:0;">运行记录</h2>
+            <span class="datatime" id="tlListInfo">—</span>
+            <span class="hint" style="margin:0 0 0 auto;">点击某行可让甘特图对齐该条记录的结束时间</span>
+          </div>
+          <div class="scroll" id="tlList"><table id="tlListTbl"></table></div>
         </div>
         <div id="toast"></div>
       </div>

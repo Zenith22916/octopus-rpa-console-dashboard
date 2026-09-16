@@ -225,7 +225,7 @@ if (window.innerWidth < window.innerHeight){
 }
 var records = [];           // 时间轴工作副本（来自 RECORDS）
 var robots = [];
-var state = { span: DEF_SPAN, end: Date.now(), offset: 0 };
+var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
 var tlScrollTrackEl = null, tlScrollThumbEl = null;
@@ -465,6 +465,14 @@ function tlRender(){
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh,
                                                  r: Math.min(3, w / 2, bh / 2) },
                           style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' } });
+          /* 从下方列表点进来对齐的那条记录：加一圈金色描边，方便在图上定位 */
+          if (state.focusId && String(params.data.rid) === String(state.focusId)){
+            children.push({ type: 'rect',
+                            shape: { x: x, y: y - bh / 2 - 2, width: w, height: bh + 4,
+                                     r: Math.min(5, w / 2, (bh + 4) / 2) },
+                            style: { fill: 'rgba(0,0,0,0)', stroke: '#ffd166', lineWidth: 2,
+                                     shadowBlur: 12, shadowColor: 'rgba(255,209,102,.55)' } });
+          }
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
@@ -520,6 +528,76 @@ function tlRender(){
   document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
   document.getElementById('mRobots').textContent = robots.length;
   tlScrollSync();
+  tlListRender(false);
+}
+/* ==================== 运行记录列表（时间轴卡片下方） ====================
+   展示当前时间窗口内的记录；点某行 -> 甘特图右边缘对齐该记录的结束时间，
+   记录还没结束（end 为空）则对齐到最右，也就是当前时刻。 */
+var tlListLast = 0;
+function tlListRender(force){
+  var tbl = document.getElementById('tlListTbl');
+  if (!tbl) return;
+  var now = Date.now();
+  if (!force && now - tlListLast < 600) return;   // 窗口一直在实时推进，重绘做节流
+  tlListLast = now;
+
+  var nowW = Math.min(state.end + state.offset, state.end);
+  var winStart = nowW - state.span;
+  var rows = records.filter(function(r){
+    var en = r.end == null ? state.end : r.end;
+    return en >= winStart && r.start <= nowW;
+  });
+  rows.sort(function(a, b){ return b.start - a.start; });
+
+  var info = document.getElementById('tlListInfo');
+  if (info) info.textContent = '窗口内 ' + rows.length + ' 条 · 共 ' + records.length + ' 条';
+
+  if (!rows.length){
+    tbl.innerHTML = '<tbody><tr><td class="pj-empty-sm" style="border:none;">当前时间窗口内没有记录</td></tr></tbody>';
+    return;
+  }
+  var html = '<thead><tr><th>机器人</th><th>应用</th><th>状态</th><th>开始</th><th>结束</th><th>用时</th></tr></thead><tbody>';
+  rows.slice(0, 120).forEach(function(r){
+    var live = (r.end == null);
+    var endMs = live ? state.end : r.end;
+    html += '<tr data-rid="' + esc(String(r.id)) + '"' +
+            (String(r.id) === String(state.focusId) ? ' class="on"' : '') + '>' +
+            '<td>' + esc(r.robot) + '</td>' +
+            '<td>' + esc(r.name || r.app || '—') + '</td>' +
+            '<td>' + statusBadge(r.status) + '</td>' +
+            '<td class="num">' + fmtTime(r.start) + '</td>' +
+            '<td class="num">' + (live ? '进行中' : fmtTime(r.end)) + '</td>' +
+            '<td class="num">' + fmtDur(endMs - r.start) + '</td>' +
+            '</tr>';
+  });
+  tbl.innerHTML = html + '</tbody>';
+}
+function tlGotoRec(rid){
+  var rec = null;
+  for (var i = 0; i < records.length; i++){
+    if (String(records[i].id) === String(rid)){ rec = records[i]; break; }
+  }
+  if (!rec) return;
+  var nowT = Date.now();
+  state.end = nowT;
+  if (rec.end == null){
+    state.offset = 0;                        // 进行中：跳到最右
+  } else {
+    var offMin = DATA_MIN - nowT;            // 能回溯到的最早位置
+    state.offset = Math.max(offMin, Math.min(0, rec.end - nowT));
+  }
+  state.focusId = String(rid);
+  tlRender();
+  tlListRender(true);                        // 跳过节流，立刻刷出选中态
+}
+function tlListBind(){
+  var box = document.getElementById('tlList');
+  if (!box || box._tlBound) return;
+  box._tlBound = 1;
+  box.addEventListener('click', function(e){
+    var tr = (e.target && e.target.closest) ? e.target.closest('tr[data-rid]') : null;
+    if (tr) tlGotoRec(tr.getAttribute('data-rid'));
+  });
 }
 function tlScrollSync(){
   if (!tlScrollTrackEl || !tlScrollThumbEl) return;
@@ -556,10 +634,12 @@ function tlInit(){
   document.getElementById('selSpan').onchange = function(){
     state.span = parseInt(this.value, 10);
     state.offset = 0;
+    state.focusId = null;
     tlUpdateWindow();
   };
   document.getElementById('selWay').onchange = function(){
     state.offset = 0;
+    state.focusId = null;
     tlUpdateWindow();
   };
   var chkQueue = document.getElementById('chkQueue');
@@ -567,8 +647,10 @@ function tlInit(){
   chartEl.addEventListener('dblclick', function(){
     state.offset = 0;
     state.span = parseInt(document.getElementById('selSpan').value, 10);
+    state.focusId = null;                    // 恢复实时视图时一并取消高亮
     tlUpdateWindow();
   });
+  tlListBind();                              // 列表点行 -> 甘特图对齐该记录的结束时间
   // 横向滚动条：拖动（触屏/鼠标）浏览时间轴，映射到 state.offset，与滚轮/双击一致
   tlScrollTrackEl = document.getElementById('tlScrollTrack');
   tlScrollThumbEl = document.getElementById('tlScrollThumb');

@@ -671,17 +671,106 @@ body {
   border-radius: 10px;
 }
 
-/* 时间轴三段拼接件：chart-head + tl-scroll + chart */
-.chart-head {
+/* ------------- 时间轴大卡片：筛选栏 + 甘特图 + 横向滚动条（同一张卡） ------------- */
+.tl-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--t-surface);
   border: 1px solid var(--t-line);
-  border-radius: 14px 14px 0 0;
+  border-radius: 14px;
   box-shadow: var(--t-shadow);
+  overflow: hidden;
 }
 
-.tl-scroll {
-  background: var(--t-surface-soft);
-  border-color: transparent;
+.tl-card .chart-head {
+  flex: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--t-line-soft);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.tl-card #chart {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 滚动条贴在图表正下方，作为卡片的最后一行 */
+.tl-card .tl-scroll {
+  flex: none;
+  background: rgba(0, 0, 0, .2);
+  border: none;
+  border-top: 1px solid var(--t-line-soft);
+}
+
+/* 时间轴视图纵向分配：大卡片吃掉剩余高度，图例与记录列表固定在下方 */
+#view-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: hidden;
+}
+
+#view-timeline > .hint {
+  flex: none;
+  margin: 0;
+}
+
+/* --------------- 运行记录列表：点行让甘特图右边缘对齐该记录结束时间 --------------- */
+.tl-list-panel {
+  flex: 0 0 auto;
+  height: 30%;
+  min-height: 142px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+}
+
+.tl-list-panel .toolbar {
+  flex: none;
+  margin-bottom: 6px;
+}
+
+.tl-list-panel .scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+#tlListTbl {
+  width: 100%;
+}
+
+#tlListTbl th,
+#tlListTbl td {
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+#tlListTbl tbody tr {
+  cursor: pointer;
+}
+
+#tlListTbl tbody tr:hover {
+  background: linear-gradient(90deg, rgba(77, 155, 240, .13), rgba(77, 155, 240, .02));
+}
+
+/* 当前已对齐的这条记录 */
+#tlListTbl tbody tr.on {
+  background: linear-gradient(90deg, rgba(255, 209, 102, .17), rgba(255, 209, 102, .02));
+  box-shadow: inset 2px 0 0 #ffd166;
+}
+
+#tlListTbl td.num {
+  font-variant-numeric: tabular-nums;
+  color: #9aa3b3;
 }
 
 .tl-scroll-track {
@@ -705,12 +794,11 @@ body {
   box-shadow: 0 0 18px -2px rgba(77, 155, 240, .85);
 }
 
+/* #chart 的卡片外观已由 .tl-card 统一承担，这里不再单独画边框 */
 #chart {
-  background: var(--t-surface);
-  border: 1px solid var(--t-line);
-  border-top: none;
-  border-radius: 0 0 14px 14px;
-  box-shadow: var(--t-shadow);
+  background: none;
+  border: none;
+  border-radius: 0;
 }
 
 /* ------------------------------------------------------- 7. 入场与切换动画 */
@@ -732,17 +820,15 @@ body {
 }
 
 /* 首屏骨架依次浮起；用 backwards 而非 both，动画结束后把 transform 交还给 hover */
-#view-timeline > .chart-head,
-#view-timeline > .tl-scroll,
-#view-timeline > #chart,
-#view-timeline > .hint {
+#view-timeline > .tl-card,
+#view-timeline > .hint,
+#view-timeline > .tl-list-panel {
   animation: riseIn .62s var(--t-ease) backwards;
 }
 
-#view-timeline > .chart-head { animation-delay: .02s; }
-#view-timeline > .tl-scroll { animation-delay: .07s; }
-#view-timeline > #chart     { animation-delay: .11s; }
-#view-timeline > .hint      { animation-delay: .19s; }
+#view-timeline > .tl-card       { animation-delay: .02s; }
+#view-timeline > .hint          { animation-delay: .08s; }
+#view-timeline > .tl-list-panel { animation-delay: .14s; }
 
 .grid > .panel,
 .panels > .panel {
