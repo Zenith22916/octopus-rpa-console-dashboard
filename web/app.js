@@ -82,12 +82,12 @@ var STATUS_HUE = {
   Finished:  [29, 158, 117]
 };
 function statusRGB(k, alpha){
-  var c = STATUS_HUE[k] || STATUS_HUE.Finished;
+  /* 未知状态兜底用中性灰，不要落成「已完成」的绿色 —— 那会把失败/新状态伪装成成功 */
+  var c = STATUS_HUE[k] || STATUS_HUE.Stopped;
   return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')';
 }
-function statusFill(r){        // 时间轴数据块
-  return shadeGrad(statusRGB(r.status, .72), 'v', .12, .14);
-}
+/* 注意：时间轴数据块不走这里 —— 它的颜色在数据构造时由 segColor() 算好存进 value(5)，
+   renderItem 直接读 value(5)，原因见 tlRender 里那段注释 */
 function statusPieFill(k){     // 饼图扇区
   return shadeGrad(statusRGB(k, 1), 'v', .1, .12);
 }
@@ -264,6 +264,7 @@ var robots = [];
 var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
+var tlLastData = null;      // 最近一次渲染的数据项：custom series 取不到附加字段时按 dataIndex 回查
 var tlScrollTrackEl = null, tlScrollWinEl = null;
 function recomputeBounds(){
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
@@ -423,6 +424,7 @@ function tlRender(){
   var recIds = {};
   visible.forEach(function(s){ recIds[s.r.id] = 1; });
   var recCount = Object.keys(recIds).length;
+  tlLastData = data;
   tlChart.setOption({
     backgroundColor: 'transparent',
     animation: false,
@@ -496,7 +498,10 @@ function tlRender(){
             children.push({ type: 'rect',
                             shape: { x: rxs, y: y - bh / 2, width: rw, height: bh,
                                      r: Math.min(3, rw / 2, bh / 2) },
-                            style: { fill: statusFill({ status: params.data && params.data.status }) } });
+                            /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
+                               不要在 renderItem 里读 params.data.status —— custom series
+                               不保证保留附加字段，取不到就会全部落到兜底色（全变绿） */
+                            style: { fill: shadeGrad(api.value(5), 'v', .12, .14) } });
           }
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh,
                                                  r: Math.min(3, w / 2, bh / 2) },
@@ -632,7 +637,10 @@ function tlScrollSync(){
   tlScrollWinEl.style.display = 'block';
   var tW = tlScrollTrackEl.clientWidth || 1;
   var nowW = Math.min(state.end + state.offset, state.end);
-  var w = Math.max(22, Math.min(tW, state.span / total * tW));
+  /* 视觉下限：窗口再小也按 6 小时对应的宽度画，否则窄到点不中；
+     真实窗口大小不受影响，拖动换算走 msPerPx（与这个宽度无关） */
+  var minW = 6 * 3600 * 1000 / total * tW;
+  var w = Math.max(minW, Math.min(tW, state.span / total * tW));
   var frac = (nowW - DATA_MIN) / total;
   var left = Math.max(0, Math.min(tW - w, frac * tW - w));
   tlScrollWinEl.style.width = w + 'px';
@@ -762,9 +770,15 @@ function tlInit(){
     });
   }
   tlChart.on('click', function(params){
-    if (params && params.data && params.data.rid) {
-      location.hash = '#/detail?id=' + encodeURIComponent(params.data.rid);
+    /* 优先用 params.data.rid；custom series 不保证保留附加字段，
+       取不到就按 dataIndex 回查 tlLastData（同一份数据，双保险） */
+    if (!params || params.seriesIndex !== 0) return;
+    var rid = (params.data && params.data.rid) || null;
+    if (!rid && tlLastData && typeof params.dataIndex === 'number'){
+      var it = tlLastData[params.dataIndex];
+      if (it) rid = it.rid;
     }
+    if (rid) location.hash = '#/detail?id=' + encodeURIComponent(rid);
   });
   tlRender();
 }

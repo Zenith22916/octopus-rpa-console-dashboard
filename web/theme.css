@@ -799,15 +799,15 @@ body {
   box-sizing: border-box;
   transform: translateY(-50%);
   border-radius: 7px;
-  background: rgba(77, 155, 240, .22);
-  border: 1px solid rgba(77, 155, 240, .5);
+  background: rgba(255, 255, 255, .13);
+  border: 1px solid rgba(255, 255, 255, .3);
   cursor: grab;
   transition: background .2s, border-color .2s;
 }
 
 .tl-scroll-win:hover {
-  background: rgba(77, 155, 240, .32);
-  border-color: rgba(77, 155, 240, .72);
+  background: rgba(255, 255, 255, .21);
+  border-color: rgba(255, 255, 255, .48);
 }
 
 .tl-scroll-win:active {
@@ -821,15 +821,15 @@ body {
   height: 18px;
   transform: translateY(-50%);
   border-radius: 3px;
-  background: linear-gradient(180deg, #8fc0f0, #3f7db8);
-  box-shadow: 0 0 8px -1px rgba(77, 155, 240, .75);
+  background: linear-gradient(180deg, #e9ecf1, #a7b0be);
+  box-shadow: 0 1px 4px -1px rgba(0, 0, 0, .55);
   cursor: ew-resize;
   touch-action: none;
   transition: background .2s;
 }
 
 .tl-grip:hover {
-  background: linear-gradient(180deg, #b0d5f8, #4d8fcd);
+  background: linear-gradient(180deg, #ffffff, #c3cbd6);
 }
 
 .tl-grip-l { left: -3px; }
