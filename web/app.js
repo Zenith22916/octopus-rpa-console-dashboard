@@ -91,6 +91,27 @@ function statusRGB(k, alpha){
 function statusPieFill(k){     // 饼图扇区
   return shadeGrad(statusRGB(k, 1), 'v', .1, .12);
 }
+/* 排期配色：直接用后端 PALETTE 给的颜色（v1 逻辑，恢复原状），
+   应用之间的辨识交给「悬停点亮同应用全部块」。 */
+/* 悬停高亮：鼠标所在的块 -> 找到同应用的全部块 -> dispatchAction 批量点亮。
+   dataIndex 回查走 scLastData（custom series 不保证保留附加字段，教训同时间轴） */
+var scHotApp = null;
+var scLastData = null;
+function scHighlight(app){
+  if (!scChart || !scLastData) return;
+  if (app === scHotApp) return;
+  scHotApp = app;
+  var idxs = [];
+  scLastData.forEach(function(it, i){ if (it && it.app === app) idxs.push(i); });
+  scChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+  if (idxs.length) scChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idxs });
+}
+function scUnhighlight(){
+  if (!scChart || scHotApp == null) return;
+  scHotApp = null;
+  scChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+}
+
 var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
 
 /* 饼图在小面板里的比例：标签只留百分比（名称+数值交给图例），引导线缩短，
@@ -449,7 +470,7 @@ function tlRender(){
                  if (d.execStart && d.execStart > d.start) s += '<br/>开始运行：' + fmtTime(d.execStart);
                  return s;
                } },
-    grid: { left: 100, right: 20, top: 20, bottom: 44 },
+    grid: { left: 100, right: 20, top: 20, bottom: 30 },
     xAxis: { type: 'time', min: nowW - state.span, max: nowW,
              axisLabel: { color: '#8b8f98', fontSize: 11, hideOverlap: true,
                           formatter: function(v){ return fmtTime(v); } },
@@ -501,7 +522,7 @@ function tlRender(){
                             /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
                                不要在 renderItem 里读 params.data.status —— custom series
                                不保证保留附加字段，取不到就会全部落到兜底色（全变绿） */
-                            style: { fill: shadeGrad(api.value(5), 'v', .12, .14) } });
+                            style: { fill: shadeGrad(api.value(5), 'v', .07, .09) } });
           }
           children.push({ type: 'rect', shape: { x: x, y: y - bh / 2, width: w, height: bh,
                                                  r: Math.min(3, w / 2, bh / 2) },
@@ -1766,6 +1787,7 @@ function scRender(view, filter, status) {
     (groups[m.t] = groups[m.t] || []).push(m);
   });
   var rowInfo = [];
+  var rowInfo = [];
   var acc = 0;
   times.forEach(function(t, i){
     var n = groups[t].length;
@@ -1796,6 +1818,7 @@ function scRender(view, filter, status) {
       });
     });
   });
+  scLastData = data;
   scChart.setOption({
     backgroundColor: 'transparent',
     tooltip: { trigger: 'item', confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
@@ -1831,12 +1854,16 @@ function scRender(view, filter, status) {
         return { type: 'rect',
                  shape: { x: x0, y: yBase + off - bh / 2, width: bw, height: bh,
                           r: Math.min(5, bw / 2, bh / 2) },
-                 style: { fill: shadeGrad(api.value(5)), stroke: 'rgba(255,255,255,.22)', lineWidth: 1,
+                 style: { fill: api.value(5), stroke: 'rgba(255,255,255,.22)', lineWidth: 1,
                           text: api.value(6), textPosition: 'inside',
                           textFill: '#0b0e13', fontSize: 20, fontWeight: 500,
                           overflow: 'truncate', fontFamily: 'inherit' } };
       },
-      emphasis: { focus: 'none' }
+      /* 灰阶格子用描边 + 投影表达「高亮」；同项目的其余块由 mouseover 里的
+         dispatchAction 批量点亮（见 scInit 绑定），不在 renderItem 里做判断 */
+      emphasis: { focus: 'none',
+                  itemStyle: { fill: 'rgba(230,240,250,.95)', stroke: '#ffffff', lineWidth: 2,
+                               shadowBlur: 20, shadowColor: 'rgba(0,0,0,.75)' } }
     }]
   }, true);
   scUpdateLines();
@@ -1861,6 +1888,13 @@ function scInit(){
   scEl = document.getElementById('c1');
   if (scChart) { try { scChart.dispose(); } catch(e){} }
   scChart = echarts.init(scEl);
+  scChart.on('mouseover', function(params){
+    if (!params || params.seriesIndex !== 0 || typeof params.dataIndex !== 'number') return;
+    var it = scLastData && scLastData[params.dataIndex];
+    if (it && it.app) scHighlight(it.app);
+  });
+  scChart.on('mouseout', scUnhighlight);
+  scChart.on('globalout', scUnhighlight);
   scFillSelect('selView', [['week', '每周'], ['month', '每月']], function(v){ scRender(v, scFilter, scStatus); });
   scFillSelect('selRobot',
     [['__ALL__', '全部机器人'], ['__SUXI__', '所有硕晞'], ['__BAOSHI__', '所有宝实']]

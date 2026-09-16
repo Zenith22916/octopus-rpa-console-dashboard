@@ -304,6 +304,17 @@ body {
   display: none;
 }
 
+/* 关键：style.css 里残留着原「悬停展开下拉」的规则
+   `.navmenu:hover .navmenu-list { display: block }`，特异性 (0,2,2) 高于上面的 (0,2,0)。
+   结果鼠标一进侧边栏，列表就从 flex 退回 block —— gap 失效、行距当场塌掉，
+   这就是行高抖动的真正来源。这里用同特异性后置覆盖，把常驻的 flex 布局钉死。 */
+.navmenu:hover .navmenu-list,
+.navmenu.open .navmenu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .side-group {
   padding: 0 8px 8px;
   font-size: 11px;
@@ -329,11 +340,19 @@ body {
 
 .sidebar .navmenu-list li {
   position: relative;
-  /* 内边距在 hover / 选中时保持不变：原来改 padding-left 会让文字重新换行、行高抖动 */
-  padding: 9px 12px;
+  /* 行高硬固定 + 禁止 flex 收缩：
+     li 是 .navmenu-list（flex column）的子项，默认 flex-shrink:1 会被挤扁，
+     容器高度的任何微小波动都会让整列行高跳一下。这里彻底钉死，hover 只改颜色/背景。 */
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 9px;
   font-size: 13px;
+  line-height: 1;
   color: #a9b3c4;
   opacity: 1;
   transform: none;
