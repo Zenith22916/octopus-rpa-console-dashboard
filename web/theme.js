@@ -12,12 +12,25 @@
 
   /* ---------------------------------------------------- 1. 视口等比缩放 */
   try {
-    var BASE_H = 900;                 // 设计基准高度：逻辑高度不低于此值
+    var BASE_H = 900;                      // 设计基准高度：逻辑高度不低于此值
+    var MOBILE_Q = "(max-width: 880px)";   // 与 mobile.css 的断点保持一致
     var root = document.documentElement;
 
+    /* 手机端由 mobile.css 整体换一套布局（自然文档流 + 整页滚动），
+       与桌面端「等比缩放铺满一屏」是互斥的两套策略：这里必须把 --s 归 1，
+       否则 .app 仍会按逻辑尺寸放大再缩回，和 mobile.css 打架。
+       判定结果同时写到 html[data-layout]，便于调试与按设备分流样式。 */
+    var mqMobile = window.matchMedia ? window.matchMedia(MOBILE_Q) : null;
+
+    var isMobile = function () {
+      return !!(mqMobile && mqMobile.matches);
+    };
+
     var fit = function () {
-      var s = Math.min(1, window.innerHeight / BASE_H);   // 只缩不放
+      var mobile = isMobile();
+      var s = mobile ? 1 : Math.min(1, window.innerHeight / BASE_H);   // 只缩不放
       root.style.setProperty("--s", s.toFixed(4));
+      root.setAttribute("data-layout", mobile ? "mobile" : "desktop");
     };
 
     fit();
@@ -43,6 +56,12 @@
 
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
+
+    /* 跨断点（拖动窗口 / 手机横竖屏切换）时重新判定：桌面 <-> 移动端布局互切 */
+    if (mqMobile) {
+      if (mqMobile.addEventListener) mqMobile.addEventListener("change", onResize);
+      else if (mqMobile.addListener) mqMobile.addListener(onResize);   // 老浏览器兜底
+    }
 
     /* 切换视图后，图表容器是 display:none -> flex 重新布局的，
        ECharts 还停在旧尺寸（canvas 比容器矮，底部组件会落在画布外看不见）。

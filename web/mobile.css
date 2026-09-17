@@ -1,0 +1,814 @@
+/* ============================================================================
+ * mobile.css — 手机端布局层（与桌面端布局逻辑完全分离）
+ * 加载顺序：style.css -> theme.css -> mobile.css
+ * 触发条件：视口宽度 ≤ 880px（与 theme.js / app.js 里的断点常量保持一致）
+ *
+ * 为什么单独一层：
+ *   桌面端走的是「禁止原生滚动条、所有内容压进一屏」的策略（.app 等比缩放 +
+ *   .view overflow:hidden + 各面板 flex:1 分配剩余高度）。这套策略在手机上必然
+ *   把每块内容压扁，再叠加一层层 max-width 媒体查询去打补丁只会越补越乱。
+ *   因此这里不「覆盖」桌面布局，而是整体换一套：
+ *     - .app / .main / .main-body / .view 全部脱离 flex 撑满逻辑，回到自然文档流；
+ *     - 整页纵向滚动（允许出现原生滚动条）；
+ *     - 宽内容（表格 / 图表 / 日志）保留各自容器内的横竖滚动。
+ *
+ * 约束：只改布局尺寸与排布，不动任何 DOM、不改文字内容。
+ *       图表内部的内边距 / 刻度字号由 app.js 里的 IS_MOBILE 分支处理（图表配置
+ *       拿不到 CSS 变量，只能在那里分流）。
+ * 维护：删掉 index.html 里 mobile.css 的引用即可回到桌面那套表现。
+ * ========================================================================= */
+
+@media (max-width: 880px) {
+
+  /* ==========================================================================
+   * 1. 解除「一屏铺满」，改为整页滚动
+   * ======================================================================== */
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* 桌面端 body 靠 100% 高 + flex 撑满；移动端回到普通块级流。
+     内边距交给 .sidebar / .main 各自处理，方便接入刘海屏安全区。 */
+  body {
+    display: block;
+    padding: 0;
+  }
+
+  /* .app：去掉等比缩放的逻辑尺寸与 transform，改纵向堆叠 */
+  .app {
+    display: block;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    gap: 0;
+    transform: none;
+  }
+
+  /* 氛围层在手指滚动时重绘代价高：保留渐变、停掉漂移动画 */
+  body::before {
+    animation: none;
+  }
+
+  /* 入场位移在纵向长页里会让内容短暂错位，只保留视图级淡入 */
+  #view-timeline > .tl-card,
+  #view-timeline > .tl-list-panel,
+  .grid > .panel,
+  .panels > .panel,
+  .detail-wrap > .card,
+  .pj-list > .pj-item {
+    animation: none;
+  }
+
+  /* ==========================================================================
+   * 2. 顶栏：品牌 + 数据时间 + 常显横向导航（吸顶）
+   * ======================================================================== */
+  /* 桌面端左栏是 214px 固定竖排；移动端压成吸顶条：
+     第一行 品牌 / 数据时间，第二行 导航 tab（横向可滑动） */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    width: auto;
+    max-height: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 6px;
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
+    border: none;
+    border-bottom: 1px solid var(--t-line);
+    border-radius: 0 0 14px 14px;
+    background: linear-gradient(180deg, rgba(16, 20, 28, .97) 0%, rgba(11, 14, 20, .94) 100%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    box-shadow: 0 14px 30px -22px rgba(0, 0, 0, 1);
+    overflow: visible;
+  }
+
+  /* 顶部光斑在窄条里没有意义 */
+  .sidebar::before {
+    display: none;
+  }
+
+  .side-brand {
+    flex: 0 0 auto;
+    order: 1;
+    padding: 0;
+    margin: 0;
+    border: none;
+    gap: 8px;
+  }
+
+  .side-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+  }
+
+  .side-logo::after {
+    inset: 7px;
+  }
+
+  /* 品牌名与副标题并排一行，省一行高度。
+     theme.css 的窄屏规则把品牌文字整块 display:none 了 —— 那是给单行横排
+     （只剩 logo + 导航）设计的。手机端这里改成两行，有空间把品牌露出来。 */
+  .side-brand-txt {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .side-brand-name {
+    font-size: 12px;
+  }
+
+  .side-brand-sub {
+    display: inline;
+    font-size: 9.5px;
+  }
+
+  /* 数据时间：允许换行而不是被裁掉（min-width:0 + flex:1 才能让它在窄屏收缩）。
+     order 把「品牌 + 数据时间」排到同一行：DOM 里 .navmenu 夹在中间，
+     浏览器按 DOM 顺序分行，导航（basis 100%）会先把同一行占满，
+     数据时间就被挤到第三行去了。 */
+  .side-foot {
+    flex: 1 1 auto;
+    order: 2;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    text-align: right;
+  }
+
+  .side-foot .datatime {
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.3;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .side-tip {
+    display: none;   /* 「每分钟自动刷新」是说明文字，窄条里无处安放 */
+  }
+
+  /* 导航：常显横向 tab，直接可点，不再依赖悬停/点击展开 */
+  .sidebar .navmenu {
+    flex: 1 1 100%;
+    order: 3;
+    display: block;
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .side-group {
+    display: none;
+  }
+
+  .sidebar .navmenu .navmenu-list,
+  .sidebar .navmenu:hover .navmenu-list,
+  .sidebar .navmenu.open .navmenu-list {
+    display: flex;
+    position: static;
+    flex-direction: row;
+    gap: 4px;
+    padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sidebar .navmenu-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 4 个 tab 在 390px 宽度下刚好一行放得下；更窄时退化为横向滑动。
+     宽度算式（Maple Mono 是等宽字体，一个汉字 ≈ 1em）：
+     6 字 × 11.5px + 左右内边距 14px = 83px，4 个 tab + 3 个 4px 间隙 = 344px < 360px */
+  .sidebar .navmenu-list li {
+    flex: 0 1 auto;
+    height: 30px;
+    padding: 0 7px;
+    font-size: 11.5px;
+    border: 1px solid var(--t-line-soft);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .03);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 竖条指示器在横向 tab 里不成立，选中态改用底色 + 边框表达 */
+  .sidebar .navmenu-list li::before,
+  .sidebar .navmenu-list li:hover::before,
+  .sidebar .navmenu-list li.cur::before {
+    display: none;
+  }
+
+  .sidebar .navmenu-list li.cur {
+    color: #dbeaff;
+    border-color: rgba(77, 155, 240, .45);
+    background: linear-gradient(180deg, rgba(77, 155, 240, .26), rgba(77, 155, 240, .08));
+  }
+
+  /* ==========================================================================
+   * 3. 主区骨架：自然高度堆叠
+   * ======================================================================== */
+  .main {
+    display: block;
+    padding: 10px max(10px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    gap: 0;
+  }
+
+  /* 工具栏：标题 / 指标卡 / 操作行 各自占一整行，不再互相挤 */
+  .main-bar {
+    display: block;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    border-radius: 13px;
+  }
+
+  .main-bar .navmenu-btn {
+    display: block;
+    font-size: 15px;
+  }
+
+  /* 指标卡：每行两张。 */
+  .main-bar #headMetrics {
+    display: block;
+    margin: 10px 0 0;
+  }
+
+  #headMetrics .metrics {
+    gap: 8px;
+  }
+
+  /* 关键点一：flex-basis 的百分比是按「内容盒」算的，而卡片自己还带
+     10px*2 内边距 + 1px*2 边框 —— 用 calc(50% - 4px) 时两张卡的实际外框
+     是 (167-4+22)*2 + gap 8 = 386 > 334，浏览器只能每张独占一行（这正是
+     手机端指标卡竖着排四行、白占半屏的原因）。所以必须配 box-sizing:
+     border-box，让基准宽度和 padding 处在同一坐标系里。
+     关键点二：再留 2px 余量（calc(50% - 6px)）避开亚像素舍入，多出的
+     空间由 flex-grow 补平，两张卡最终等宽。 */
+  .main-bar #headMetrics .metric {
+    box-sizing: border-box;
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+    min-height: 52px;
+    padding: 8px 10px;
+  }
+
+  .main-bar #headMetrics .metric .v {
+    font-size: 18px;
+  }
+
+  .main-bar .auto-bar {
+    display: flex;
+    margin: 10px 0 0;
+    gap: 10px;
+    justify-content: space-between;
+  }
+
+  .main-bar .auto-bar .btn {
+    flex: 1 1 auto;
+    min-height: 36px;
+    font-size: 13px;
+  }
+
+  .main-body {
+    display: block;
+    overflow: visible;
+  }
+
+  .view {
+    display: block;
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .warn-bar {
+    margin-bottom: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  /* ==========================================================================
+   * 4. 时间轴视图
+   * ======================================================================== */
+  #view-timeline {
+    display: block;
+    overflow: visible;
+  }
+
+  .tl-card {
+    display: block;
+    flex: none;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  /* 筛选栏：两列网格（左标签 / 右控件），每行一组，不再出现标签孤行 */
+  .tl-card .chart-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 9px 10px;
+    padding: 10px 12px;
+    row-gap: 9px;
+  }
+
+  .tl-card .chart-head .filter-label {
+    margin-right: 0;
+  }
+
+  .tl-card .chart-head .way-label {
+    margin-left: 0;
+  }
+
+  .tl-card .chart-head select {
+    width: 100%;
+    min-height: 32px;
+    box-sizing: border-box;
+  }
+
+  .tl-card .chart-head .switch {
+    justify-self: start;
+  }
+
+  /* 甘特图改固定高：不再靠 flex 分配剩余高度（手机上剩余高度是负的） */
+  .tl-card #chart {
+    display: block;
+    flex: none;
+    height: 58vh;
+    min-height: 380px;
+  }
+
+  /* 时间窗口滑块：加粗轨道、加大触控热区 */
+  .tl-card .tl-scroll {
+    height: 36px;
+    margin: 0 12px;
+    background: none;
+    border: none;
+  }
+
+  .tl-scroll-track {
+    left: 0;
+    right: 0;
+    height: 6px;
+    border-radius: 6px;
+  }
+
+  .tl-scroll-win {
+    height: 24px;
+    min-width: 46px;
+    border-radius: 12px;
+  }
+
+  /* 抓手比窗口块矮、窄，避免整块被两个白条占满 */
+  .tl-grip {
+    width: 7px;
+    height: 16px;
+    border-radius: 3px;
+  }
+
+  .tl-grip-l { left: 4px; }
+  .tl-grip-r { right: 4px; }
+
+  .tl-card .hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 2px;
+    padding: 8px 12px 10px;
+  }
+
+  .tl-card .hint .legend {
+    margin-left: 8px;
+  }
+
+  .tl-card .hint .tl-span-info {
+    flex: 1 1 100%;
+    margin-right: 0;
+  }
+
+  /* 运行记录列表：容器内滚动，高度按屏占比给 */
+  .tl-list-panel {
+    height: auto;
+    min-height: 0;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .tl-list-panel .scroll {
+    flex: none;
+    max-height: 50vh;
+    min-height: 120px;
+  }
+
+  /* ==========================================================================
+   * 5. 分析视图：12 列栅格拆成单列堆叠
+   * ======================================================================== */
+  #view-analysis {
+    display: block;
+    overflow: visible;
+  }
+
+  #view-analysis .grid {
+    display: block;
+    margin-bottom: 0;
+  }
+
+  /* theme.css 用 grid-area 显式摆了 5 个面板的位置；display:block 后失效，
+     这里只用元素顺序决定上下顺序 */
+  #view-analysis .grid > .panel {
+    display: block;
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+
+  #view-analysis .cbox,
+  #view-analysis .cbox.tall {
+    flex: none;
+    height: 264px;
+    min-height: 264px;
+  }
+
+  #view-analysis .cbox.tall {
+    height: 340px;
+    min-height: 340px;
+  }
+
+  #view-analysis .panel .scroll {
+    flex: none;
+    max-height: 340px;
+  }
+
+  /* 机器人负载榜：表格按内容宽度铺开 + 容器内横向滚动 */
+  #view-analysis #robotTbl {
+    flex: none;
+    height: auto;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* ==========================================================================
+   * 6. 排期视图
+   * ======================================================================== */
+  #view-schedule {
+    display: block;
+    overflow: visible;
+  }
+
+  #view-schedule .panels {
+    display: block;
+    overflow: visible;
+  }
+
+  #view-schedule .panel {
+    display: block;
+    flex: none;
+    min-height: 0;
+  }
+
+  #c1 {
+    flex: none;
+    height: 62vh;
+    min-height: 420px;
+  }
+
+  /* 面板标题里的筛选控件换行排布，三组「标签 + 下拉」自动折行 */
+  .panel h2 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+  }
+
+  .panel h2 select {
+    width: auto;
+    flex: 1 1 88px;
+    min-width: 0;
+    min-height: 30px;
+    margin-left: 0;
+  }
+
+  .panel h2 select + .filter-label {
+    margin-left: 0;
+  }
+
+  /* ==========================================================================
+   * 7. 详情视图（运行记录详情）
+   * ======================================================================== */
+  #view-detail {
+    display: block;
+    overflow: visible;
+  }
+
+  .topbar {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .topbar .title {
+    flex: 1 1 100%;
+    margin-right: 0;
+    font-size: 18px;
+  }
+
+  /* 三个操作按钮平分一行：基准宽度按内容算（flex:auto）而不是 0，
+     再配 white-space:nowrap —— 按钮里是中文，默认任意处可断行，
+     窄一点就会把「← 返回上一页」折成两行。 */
+  .topbar .back,
+  .topbar .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 8px;
+    font-size: 13px;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  #app {
+    display: block;
+  }
+
+  /* 桌面端左右分栏（信息 400px + 日志）拆成上下两段 */
+  .detail-wrap {
+    display: block;
+  }
+
+  .card {
+    padding: 12px 14px;
+  }
+
+  /* 同上：.card 自带 padding/border，width:100% 在 content-box 下会多出
+     28px 内边距 + 2px 边框，直接把卡片顶出屏外（实测右侧溢出 10px）。
+     凡是显式给 width:100% 的块，一律补上 border-box。 */
+  .info-card {
+    box-sizing: border-box;
+    flex: none;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    margin-bottom: 10px;
+  }
+
+  .log-card {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+  }
+
+  /* .log-body 在桌面端是 flex 行容器，里面只有 #logbox 一个子项。
+     移动端这里把 #logbox 设为固定高（不再靠 flex 分配高度），但千万不能顺手
+     写 flex:none —— 那等于 flex-basis:auto，宽度会退化成内容的 min-content。
+     Monaco 的正文是绝对定位的，min-content 只有 7px，编辑器会缩成一条竖线。
+     所以这里显式改回块级流 + 宽度 100%。 */
+  .log-body {
+    display: block;
+  }
+
+  /* Monaco 需要明确高度：固定成屏高的六成，日志自身内部滚动 */
+  #logbox {
+    display: block;
+    flex: none;
+    width: 100%;
+    box-sizing: border-box;
+    height: 62vh;
+    min-height: 340px;
+    overflow: hidden;
+  }
+
+  .logtabs-list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .logtabs-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .logtab {
+    flex: none;
+    max-width: 74vw;
+  }
+
+  /* ==========================================================================
+   * 8. 项目控制台
+   * ======================================================================== */
+  #view-projects {
+    overflow: visible;
+  }
+
+  .pj-layout {
+    display: block;
+  }
+
+  /* 项目列表：固定屏占比、自身滚动，不把下方详情推到屏幕外 */
+  .pj-side {
+    width: auto;
+    flex: none;
+    max-height: none;
+    margin-bottom: 10px;
+  }
+
+  .pj-side-head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .pj-side-head select {
+    width: auto;
+    flex: 1 1 96px;
+    min-width: 0;
+  }
+
+  .pj-list {
+    flex: none;
+    max-height: 52vh;
+  }
+
+  .pj-main {
+    display: block;
+  }
+
+  .pj-detail {
+    display: block;
+    overflow: visible;
+  }
+
+  .pj-title-row {
+    gap: 8px;
+  }
+
+  .pj-title-row h2 {
+    flex: 1 1 100%;
+    font-size: 16px;
+  }
+
+  .pj-title-row .btn.rerun {
+    flex: 1 1 auto;
+    margin-left: 0;
+    min-height: 34px;
+    text-align: center;
+  }
+
+  .pj-tabs {
+    flex: 1 1 auto;
+  }
+
+  .pj-tab {
+    flex: 1 1 0;
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  .pj-cards {
+    display: block;
+  }
+
+  .pj-tab-panel {
+    display: block;
+    overflow: visible;
+    padding: 10px 12px;
+  }
+
+  /* 配置/记录表：容器内滚动（父级已是自然高度，必须给明确上限） */
+  .pj-tab-panel .scroll {
+    flex: none;
+    max-height: 54vh;
+  }
+
+  .pj-tab-panel input[type="text"] {
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  /* ==========================================================================
+   * 9. 宽表格：容器内横向滚动
+   * ======================================================================== */
+  .scroll {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* 表格宽度交给内容决定（max-content），内容窄时仍铺满容器；
+     这样列不会被压成竖排文字，超出部分横向滑动查看 */
+  #tlListTbl,
+  .pj-runs-tbl,
+  #failTbl {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* 配置表含输入控件，给个最小宽度保证可编辑区不被压扁 */
+  .pj-cfg-tbl {
+    min-width: 620px;
+  }
+
+  .pj-cfg-tbl td.d {
+    max-width: 200px;
+  }
+
+  /* ==========================================================================
+   * 10. 表单与触控尺寸
+   * ======================================================================== */
+  /* 16px 是 iOS 的临界值：小于它聚焦时 Safari 会自动放大整页 */
+  select,
+  input[type="search"],
+  input[type="text"],
+  input[type="password"],
+  textarea,
+  .pj-tab-panel input,
+  .pj-tab-panel select,
+  .pj-cfg-tbl input,
+  .pj-cfg-tbl select,
+  .pj-modal-row input,
+  .pj-modal-row select,
+  .pj-modal-row textarea,
+  #mValWrap input,
+  #mValWrap textarea {
+    font-size: 16px;
+  }
+
+  .btn,
+  .back,
+  .pj-tab,
+  .chip,
+  .btn-more {
+    min-height: 34px;
+  }
+
+  /* ==========================================================================
+   * 11. 弹窗：宽度贴边、内容内部滚动
+   * ======================================================================== */
+  .pj-modal {
+    width: calc(100vw - 24px);
+    max-width: 520px;
+    max-height: 86vh;
+    padding: 16px;
+  }
+
+  .pj-modal-row {
+    display: block;
+    margin-bottom: 14px;
+  }
+
+  .pj-modal-row > label {
+    display: block;
+    width: auto;
+    padding: 0 0 5px;
+  }
+
+  .pj-modal-row > input[type="text"],
+  .pj-modal-row > select,
+  .pj-modal-row > textarea {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .pj-modal-actions {
+    position: sticky;
+    bottom: 0;
+  }
+
+  .m-key-lock {
+    display: block;
+    padding-top: 4px;
+  }
+
+  #toast {
+    top: auto;
+    bottom: 24px;
+    max-width: calc(100vw - 24px);
+  }
+
+  /* ==========================================================================
+   * 12. 触屏：去掉只对鼠标有意义的 hover 位移，避免点按后元素「粘」在浮起态
+   * ======================================================================== */
+  @media (hover: none) {
+    .metric:hover,
+    .btn:hover:not(:disabled),
+    .back:hover,
+    .chip:hover:not(:disabled),
+    .btn-more:hover:not(:disabled),
+    .pj-tab:hover,
+    .pj-item:hover,
+    .logtab:hover {
+      transform: none;
+    }
+  }
+}

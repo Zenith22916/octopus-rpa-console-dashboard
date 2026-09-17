@@ -2,12 +2,15 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>RPA 运行仪表盘</title>
 <link rel="stylesheet" href="/style.css">
 <!-- 视觉增强层：只覆盖外观与动效，不含业务逻辑；删掉这行即可回退到原样式 -->
 <link rel="stylesheet" href="/theme.css">
+<!-- 手机端布局层：视口 ≤880px 时整体换一套布局（脱离桌面「压进一屏」策略，改为整页滚动）；
+     删掉这行即可回退到桌面那套窄屏表现 -->
+<link rel="stylesheet" href="/mobile.css">
 <script src="/echarts.min.js"></script>
 <!-- Monaco 的 AMD loader 必须在 echarts 之后加载：否则 echarts 的 UMD 包装检测到 define.amd 会注册成 AMD 模块，不再暴露 window.echarts 全局 -->
 <script src="/monaco/vs/loader.js"></script>

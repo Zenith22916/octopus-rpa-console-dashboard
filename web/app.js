@@ -270,6 +270,16 @@ function route(){
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('resize', function(){
+  /* 桌面 <-> 手机布局互切：图表的内边距/刻度字号是按布局算出来的，
+     断点变了必须整块重画，只 resize() 会保留旧布局量出来的边距 */
+  var mob = !!(window.matchMedia && window.matchMedia(MOBILE_Q).matches);
+  if (mob !== IS_MOBILE){
+    IS_MOBILE = mob;
+    if (typeof LOGM !== 'undefined' && LOGM.editor) LOGM.editor.updateOptions(lgViewOptions());
+    if (curView === 'timeline' && tlReady) tlRender();
+    if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
+    if (curView === 'schedule' && scReady && RECORDS.length) scReload();
+  }
   if (curView === 'timeline' && tlReady) tlChartResize();
   if (curView === 'analysis' && anReady) anResize();
   if (curView === 'schedule' && scReady) scResize();
@@ -329,6 +339,23 @@ var TITLE_FS = (function(){
   try { var el = document.querySelector('.title'); if (el) return parseFloat(getComputedStyle(el).fontSize) || 20; } catch(e){}
   return 20;
 })();
+/* 手机端断点：与 web/mobile.css、web/theme.js 里的 880px 保持一致。
+   CSS 管不到 ECharts 画布内部，图表的内边距与刻度字号只能在这里分流：
+   桌面那套 left:100px 的左留白是给宽图表配的，原样搬到手机上会把绘图区压没。 */
+var MOBILE_Q = "(max-width: 880px)";
+var IS_MOBILE = !!(window.matchMedia && window.matchMedia(MOBILE_Q).matches);
+
+/* Monaco 里跟屏幕宽度有关的选项：手机屏只有 300 多 px，缩略图（minimap）要吃掉
+   近两成宽度而且根本看不清，概览标尺同理 —— 手机端关掉，把宽度全让给日志正文。
+   单独抽成函数是为了断点切换时能 updateOptions 热更新。 */
+function lgViewOptions(){
+  return {
+    minimap: { enabled: !IS_MOBILE, renderCharacters: false, maxColumn: 150 },
+    overviewRulerLanes: IS_MOBILE ? 0 : 2,
+    scrollbar: { verticalScrollbarSize: IS_MOBILE ? 6 : 10,
+                 horizontalScrollbarSize: IS_MOBILE ? 6 : 10, useShadows: false }
+  };
+}
 // 单行文字：放得下整串显示；放不下则截断并在末尾加 "..."
 function truncateLabel(name, maxW, fs){
   if (!name) return '';
@@ -470,14 +497,15 @@ function tlRender(){
                  if (d.execStart && d.execStart > d.start) s += '<br/>开始运行：' + fmtTime(d.execStart);
                  return s;
                } },
-    grid: { left: 100, right: 20, top: 20, bottom: 30 },
+    grid: { left: IS_MOBILE ? 76 : 100, right: IS_MOBILE ? 14 : 20, top: 20, bottom: 30 },
     xAxis: { type: 'time', min: nowW - state.span, max: nowW,
-             axisLabel: { color: '#8b8f98', fontSize: 11, hideOverlap: true,
+             axisLabel: { color: '#8b8f98', fontSize: IS_MOBILE ? 10 : 11, hideOverlap: true,
                           formatter: function(v){ return fmtTime(v); } },
              axisLine: { lineStyle: { color: '#333' } },
              splitLine: { show: true, lineStyle: { color: '#20242c' } } },
     yAxis: { type: 'category', data: yLabels,
-             axisLabel: { color: '#c9cdd4', fontSize: 12, width: 95, overflow: 'truncate' },
+             axisLabel: { color: '#c9cdd4', fontSize: IS_MOBILE ? 11 : 12,
+                          width: IS_MOBILE ? 70 : 95, overflow: 'truncate' },
              axisLine: { lineStyle: { color: '#333' } },
              splitLine: { show: true, lineStyle: { color: '#20242c' } } },
     series: [{
@@ -548,7 +576,8 @@ function tlRender(){
         var y = api.coord([vc, row])[1];
         var wTotal = Math.abs(api.coord([vEnd, row])[0] - api.coord([vStart, row])[0]);
         // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
-        var fs = TITLE_FS;
+        // 手机上绘图区只剩 200 多 px，20px 字号一个字都塞不下，缩到 12px 才看得见内容
+        var fs = IS_MOBILE ? 12 : TITLE_FS;
         var label = truncateLabel(api.value(2), Math.max(2, wTotal - 4), fs);
         if (!label || label.length < 8) return null;
         return { type: 'text', style: { text: label, x: cx, y: y, textAlign: 'center',
@@ -898,7 +927,8 @@ function anWaitBar(byRobot){
   /* y 轴标签按实际机器人名测宽：名字短就少留空，名字长才让位（原来写死 112px，两头不讨好） */
   var labelW = 0;
   arr.forEach(function(d){ var w = measureW(d.robot, 11); if (w > labelW) labelW = w; });
-  var leftPad = Math.max(44, Math.min(132, Math.ceil(labelW) + 12));
+  var leftPad = IS_MOBILE ? Math.max(40, Math.min(86, Math.ceil(labelW) + 8))
+                          : Math.max(44, Math.min(132, Math.ceil(labelW) + 12));
   anCharts.waitBar.setOption({
     grid:{left:leftPad, right:20, top:8, bottom:28},
     tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
@@ -918,8 +948,9 @@ function anHeat(heat){
   for(var w = 0; w < 7; w++) for(var h = 0; h < 24; h++){ var v = heat[w][h]; if(v > maxV) maxV = v; data.push([h, w, v]); }
   anCharts.heat.setOption({
     tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
-    grid:{left:42, right:16, top:8, bottom:78},
-    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98', fontSize:11}, splitArea:{show:false}},
+    /* 手机上绘图区只有 300px 左右，24 个小时刻度必须缩号，否则标签互相叠字 */
+    grid:{left: IS_MOBILE ? 36 : 42, right:16, top:8, bottom:78},
+    xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98', fontSize: IS_MOBILE ? 9 : 11}, splitArea:{show:false}},
     yAxis:{type:'category', data:days.map(function(d){ return '周' + d; }), axisLabel:{color:'#c9cdd4', fontSize:11}},
     visualMap:{min:0, max:(maxV || 1), calculable:true, orient:'horizontal', left:'center', bottom:4,
                itemWidth:10, itemHeight:92, itemGap:5,
@@ -1157,6 +1188,7 @@ function logEditorCreate(){
         stickyScroll: { enabled: false },
         scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false }
       });
+      LOGM.editor.updateOptions(lgViewOptions());   // 与屏幕宽度相关的选项按桌面/手机分流
       // 点击最左行号 / 行首箭头：展开或收起超长行（普通行不响应）
       LOGM.editor.onMouseDown(function(e){
         var mc = window.monaco, t = e.target;
@@ -1823,9 +1855,9 @@ function scRender(view, filter, status) {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'item', confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
                textStyle: { color: '#e6e6e6', fontSize: 12 } },
-    grid: { left: 44, right: 16, top: 10, bottom: isMonth ? 46 : 34 },
+    grid: { left: IS_MOBILE ? 38 : 44, right: 16, top: 10, bottom: isMonth ? 46 : 34 },
     xAxis: { type: 'category', data: xLabels,
-             axisLabel: { color: '#8b8f98', interval: 0, rotate: isMonth ? 40 : 0, fontSize: 11 },
+             axisLabel: { color: '#8b8f98', interval: 0, rotate: isMonth ? 40 : 0, fontSize: IS_MOBILE ? 10 : 11 },
              axisLine: { lineStyle: { color: '#333' } } },
     yAxis: { type: 'value', min: 0, max: yMax, interval: 1,
              axisLabel: { color: '#8b8f98', fontSize: 11,
@@ -1856,7 +1888,7 @@ function scRender(view, filter, status) {
                           r: Math.min(5, bw / 2, bh / 2) },
                  style: { fill: api.value(5), stroke: 'rgba(255,255,255,.22)', lineWidth: 1,
                           text: api.value(6), textPosition: 'inside',
-                          textFill: '#0b0e13', fontSize: 20, fontWeight: 500,
+                          textFill: '#0b0e13', fontSize: IS_MOBILE ? 11 : 20, fontWeight: 500,
                           overflow: 'truncate', fontFamily: 'inherit' } };
       },
       /* 灰阶格子用描边 + 投影表达「高亮」；同项目的其余块由 mouseover 里的

@@ -60,10 +60,13 @@ feishu_cfg.py ─▶ 飞书多维表格配置中心读写
 local_server.py ──▶ 启动时/刷新/每日更新后载入内存
                         │
 web/（纯前端，hash 路由五视图）
-    index.html + app.js + style.css + theme.css + theme.js + fonts/
+    index.html + app.js + style.css + theme.css + mobile.css + theme.js + fonts/
     #/analysis（默认主页） #/timeline #/detail?id= #/schedule #/projects
     # 版面：左侧固定导航栏（品牌 + 四视图 + 数据时间）+ 右侧主内容区
+    # 桌面端（>880px）：theme.js 按窗口高度等比缩放 --s，所有内容压进一屏、不出原生滚动条
+    # 手机端（≤880px）：mobile.css 整体换一套布局，自然文档流 + 整页滚动（详见「手机端适配」）
     # theme.css 为视觉增强层（配色/质感/动效/字体），删掉 index.html 里的引用即可回退原样式
+    # mobile.css 为手机端布局层，删掉引用即回到桌面那套窄屏表现
 ```
 
 ### 后端接口
@@ -171,6 +174,34 @@ web/（纯前端，hash 路由五视图）
   - 弹窗：编辑时 key 锁定、type 下拉（string/number/bool/json）、bool 开关、json 自动格式化；desc 保存时去除换行
   - 后端校验：group/key 仅允许 `字母数字._-`，number 需可转数字，bool 仅接受 true/false，json 需可解析（存储时压成紧凑单行）
   - 列表/配置/运行记录加载时显示全屏半透明遮罩，防止加载中误操作
+
+## 手机端适配
+
+桌面端与手机端是**互斥的两套布局逻辑**，断点统一取 `880px`（`mobile.css`、`theme.js`、
+`app.js` 的 `MOBILE_Q` / `IS_MOBILE` 三处保持一致）：
+
+| | 桌面端（>880px） | 手机端（≤880px） |
+|---|---|---|
+| 策略 | 禁止原生滚动条，内容压进一屏 | 自然文档流，整页纵向滚动（允许出现滚动条） |
+| 缩放 | `theme.js` 写 `--s`，`.app` 等比缩放 | `--s` 归 1，`transform: none` |
+| 左栏 | 214px 竖排固定栏 | 吸顶：品牌 + 数据时间 / 横向 tab（导航可直接点） |
+| 指标卡 | 一行横排 | 每行两张（`box-sizing: border-box` + `calc(50% - 6px)`） |
+| 图表 | 由 flex 分配剩余高度 | 固定高度（视口百分比 + 最小高度） |
+| 宽表格 | 列自适应压缩 | 内容宽度 `max-content`，容器内横向滚动 |
+
+实现要点：
+
+- **`web/mobile.css` 是唯一的手机端布局层**，只在 `@media (max-width: 880px)` 内生效；
+  删除 `index.html` 里这一行引用即可整体回退到桌面那套窄屏表现。
+- **`web/theme.js`** 在断点两侧切换 `--s`（手机端归 1，避免与 `mobile.css` 打架），
+  并把判定结果写到 `html[data-layout="mobile|desktop"]` 便于调试；跨断点自动重算。
+- **`web/app.js`** 用 `IS_MOBILE` 分流 ECharts / Monaco 里 CSS 管不到的部分：
+  时间轴左留白 100→76、y 轴标签宽 95→70、热力图刻度 11→9px、排期图块文字 20→11px、
+  手机端关闭 Monaco 缩略图（minimap）。跨断点（拖动窗口 / 横竖屏切换）会自动重画，
+  无需刷新页面。
+- 布局层的两条坑（都已修）：flex 子项同时有百分比基准和 padding 时必须配
+  `box-sizing: border-box`，否则两张「半宽」卡片永远排不进一行；不能给
+  `#logbox`（Monaco 宿主）随手写 `flex: none`，那会让宽度退化成 7px 的竖线。
 
 ## 飞书配置中心
 
@@ -298,10 +329,11 @@ octopus-rpa-console-dashboard/
 │   └── effect_*.png        # 效果图（README 引用）
 ├── web/                    # 纯前端（前后端分离）
 │   ├── index.html          # 单页骨架（左侧导航 + 主内容区）+ hash 路由五视图
-│   ├── app.js              # 路由 + 时间轴/分析/详情/日程/项目控制台 渲染
+│   ├── app.js              # 路由 + 时间轴/分析/详情/日程/项目控制台 渲染（含手机端图表分流）
 │   ├── style.css           # 基础样式（布局与组件）
 │   ├── theme.css           # 视觉增强层（配色/质感/圆角/动效，可整层回退）
-│   ├── theme.js            # 装饰层（鼠标跟随光晕，失败静默降级）
+│   ├── mobile.css          # 手机端布局层（≤880px 整体换布局，删除引用即可回退）
+│   ├── theme.js            # 适配/装饰层（--s 等比缩放与断点判定、鼠标跟随光晕，失败静默降级）
 │   └── fonts/
 │       └── maple-mono.woff2  # 界面字体 Maple Mono（woff2，约 5.4 MB）
 └── output/                 # 抓取数据 + 整理文档 + 更新日志（git 忽略）
