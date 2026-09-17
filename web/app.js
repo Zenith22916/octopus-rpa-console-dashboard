@@ -119,6 +119,17 @@ var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
 var PIE_ITEM = { borderRadius:6, borderColor:'#171b23', borderWidth:2 };
 var PIE_LABEL = { color:'#dfe5ee', fontSize:11, formatter:'{d}%' };
 var PIE_LINE = { length:6, length2:6, lineStyle:{ color:'rgba(255,255,255,.18)' } };
+
+/* 悬停提示窗的统一皮肤：ECharts 默认是白底黑字，跟这套深色界面完全不搭。
+   放在这里做单一出处，所有图表（时间轴/分析/排期）都从这里拼，避免漏一个又变回白底。 */
+var TIP_SKIN = { confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
+                 borderWidth: 1, textStyle: { color: '#e6e6e6', fontSize: 12 } };
+function tipOpt(extra){
+  var o = {}, k;
+  for (k in TIP_SKIN) o[k] = TIP_SKIN[k];
+  for (k in extra) o[k] = extra[k];
+  return o;
+}
 function pieLegend(data){
   return { bottom:0, itemWidth:8, itemHeight:8, itemGap:12,
            textStyle:{ color:'#8b8f98', fontSize:11 },
@@ -476,8 +487,7 @@ function tlRender(){
   tlChart.setOption({
     backgroundColor: 'transparent',
     animation: false,
-    tooltip: { trigger: 'item', confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
-               textStyle: { color: '#e6e6e6', fontSize: 12 },
+    tooltip: tipOpt({ trigger: 'item',
                formatter: function(p){
                  var d = p.data;
                  var stName = STATUS_CN[d.status] || d.status || '已完成';
@@ -496,7 +506,7 @@ function tlRender(){
                  if (d.endRaw != null) s += '（运行 ' + fmtDur(d.end - runFrom) + '）';
                  if (d.execStart && d.execStart > d.start) s += '<br/>开始运行：' + fmtTime(d.execStart);
                  return s;
-               } },
+               } }),
     grid: { left: IS_MOBILE ? 76 : 100, right: IS_MOBILE ? 14 : 20, top: 20, bottom: 30 },
     xAxis: { type: 'time', min: nowW - state.span, max: nowW,
              axisLabel: { color: '#8b8f98', fontSize: IS_MOBILE ? 10 : 11, hideOverlap: true,
@@ -906,7 +916,7 @@ function anPie(byWay){
              itemStyle: { color: shadeGrad('rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',1)', 'v', .1, .12) } };
   });
   anCharts.pie.setOption({
-    tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
+    tooltip: tipOpt({ trigger:'item', formatter:'{b}: {c} ({d}%)' }),
     legend: pieLegend(data),
     series: pieSeries(data)
   });
@@ -917,7 +927,7 @@ function anStatus(sc){
   });
   data.sort(function(a, b){ return b.value - a.value; });
   anCharts.statusPie.setOption({
-    tooltip:{trigger:'item', confine:true, formatter:'{b}: {c} ({d}%)'},
+    tooltip: tipOpt({ trigger:'item', formatter:'{b}: {c} ({d}%)' }),
     legend: pieLegend(data),
     series: pieSeries(data)
   });
@@ -931,7 +941,7 @@ function anWaitBar(byRobot){
                           : Math.max(44, Math.min(132, Math.ceil(labelW) + 12));
   anCharts.waitBar.setOption({
     grid:{left:leftPad, right:20, top:8, bottom:28},
-    tooltip:{trigger:'axis', confine:true, formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); }},
+    tooltip: tipOpt({ trigger:'axis', formatter:function(p){ return p[0].name + '：' + fmtDurM(p[0].value); } }),
     xAxis:{type:'value', axisLabel:{color:'#8b8f98', fontSize:11, formatter:function(v){ return (v/60000).toFixed(0) + '分'; }}, splitLine:{lineStyle:{color:'#20242c'}}},
     yAxis:{type:'category', data:arr.map(function(d){ return d.robot; }), inverse:true,
            axisLabel:{color:'#c9cdd4', fontSize:11, width:leftPad - 8, overflow:'truncate'}},
@@ -947,7 +957,7 @@ function anHeat(heat){
   var data = [], maxV = 0;
   for(var w = 0; w < 7; w++) for(var h = 0; h < 24; h++){ var v = heat[w][h]; if(v > maxV) maxV = v; data.push([h, w, v]); }
   anCharts.heat.setOption({
-    tooltip:{position:'top', confine:true, formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; }},
+    tooltip: tipOpt({ position:'top', formatter:function(p){ return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; } }),
     /* 手机上绘图区只有 300px 左右，24 个小时刻度必须缩号，否则标签互相叠字 */
     grid:{left: IS_MOBILE ? 36 : 42, right:16, top:8, bottom:78},
     xAxis:{type:'category', data:Array.from({length:24}, function(_, i){ return i; }), axisLabel:{color:'#8b8f98', fontSize: IS_MOBILE ? 9 : 11}, splitArea:{show:false}},
@@ -1853,8 +1863,7 @@ function scRender(view, filter, status) {
   scLastData = data;
   scChart.setOption({
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item', confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
-               textStyle: { color: '#e6e6e6', fontSize: 12 } },
+    tooltip: tipOpt({ trigger: 'item' }),
     grid: { left: IS_MOBILE ? 38 : 44, right: 16, top: 10, bottom: isMonth ? 46 : 34 },
     xAxis: { type: 'category', data: xLabels,
              axisLabel: { color: '#8b8f98', interval: 0, rotate: isMonth ? 40 : 0, fontSize: IS_MOBILE ? 10 : 11 },
