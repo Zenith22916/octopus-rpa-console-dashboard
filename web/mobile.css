@@ -798,7 +798,102 @@
   }
 
   /* ==========================================================================
-   * 12. 触屏：去掉只对鼠标有意义的 hover 位移，避免点按后元素「粘」在浮起态
+   * 12. 运维三视图（机器人状态 / 日志检索 / 触发器合规）
+   *     与其余视图一致：脱离「压进一屏」，回到自然文档流，滚动交给页面本身；
+   *     宽表格 / 结果列表保留各自容器内的滚动。
+   * ======================================================================== */
+  /* 桌面端用 ID 选择器钉死了 overflow:hidden（要盖过 .view），这里必须同样用 ID 才能改回滚动 */
+  #view-botstatus,
+  #view-logsearch,
+  #view-compliance {
+    display: block;
+    overflow: visible;
+  }
+
+  #view-botstatus .bs-panel,
+  #view-logsearch .ls-panel {
+    flex: none;
+  }
+
+  #view-botstatus .bs-scroll,
+  #view-logsearch .ls-scroll {
+    flex: none;
+    max-height: 62vh;
+  }
+
+  /* 机器人卡片：单列铺开，卡片之间留间距 */
+  .bs-grid {
+    display: block;
+  }
+
+  .bs-card {
+    margin-bottom: 8px;
+  }
+
+  #view-botstatus .panel > .toolbar h2,
+  #view-logsearch .panel > .toolbar h2 {
+    flex: 1 1 100%;
+  }
+
+  /* 工具栏右端的说明文字：窄屏不再靠 auto 外边距挤在右边（会被裁掉），改为独占一行 */
+  .bs-tip {
+    flex: 1 1 100%;
+    margin: 4px 0 0;
+  }
+
+  /* 触发器合规指标卡：沿用「每行两张」的约定（5 张时最后一张不再独占整行） */
+  #cpMetrics {
+    gap: 8px;
+  }
+
+  #cpMetrics .metric {
+    flex: 0 0 auto;
+    width: calc(50% - 4px);
+    box-sizing: border-box;
+  }
+
+  /* 日志检索：关键词输入框占满一行，结果列表自身滚动 */
+  .ls-kw {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .ls-hit-text {
+    font-size: 11px;
+  }
+
+  /* 触发器合规：左右两栏改上下堆叠 */
+  .cp-layout {
+    display: block;
+  }
+
+  .cp-side,
+  .cp-main {
+    flex: none;
+    max-width: none;
+    width: auto;
+  }
+
+  .cp-side {
+    margin-bottom: 10px;
+  }
+
+  .cp-layout .scroll {
+    flex: none;
+    max-height: 56vh;
+  }
+
+  .cp-tbl .cp-app {
+    max-width: 150px;
+  }
+
+  /* 导航「运维」分组标题在移动端隐藏（.side-group 统一隐藏），两组 tab 横向平铺 */
+  .side-group.split {
+    display: none;
+  }
+
+  /* ==========================================================================
+   * 13. 触屏：去掉只对鼠标有意义的 hover 位移，避免点按后元素「粘」在浮起态
    * ======================================================================== */
   @media (hover: none) {
     .metric:hover,

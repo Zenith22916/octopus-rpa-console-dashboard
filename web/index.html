@@ -36,6 +36,12 @@
         <li data-hash="#/schedule">触发器排期</li>
         <li data-hash="#/projects">项目控制台</li>
       </ul>
+      <div class="side-group split">运维</div>
+      <ul class="navmenu-list" id="navMenuList2">
+        <li data-hash="#/botstatus">机器人状态</li>
+        <li data-hash="#/logsearch">日志检索</li>
+        <li data-hash="#/compliance">触发器合规</li>
+      </ul>
     </nav>
 
     <div class="side-foot">
@@ -230,6 +236,88 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== 机器人实时状态视图 ==================== -->
+      <div id="view-botstatus" class="view" style="display:none;">
+        <div class="panel bs-panel">
+          <div class="toolbar">
+            <h2 style="margin:0;">机器人实时状态</h2>
+            <span class="filter-label">筛选：</span>
+            <select id="bsFilter">
+              <option value="__ALL__" selected>全部</option>
+              <option value="__BUSY__">仅忙（运行中/排队中）</option>
+              <option value="__IDLE__">仅空闲</option>
+            </select>
+            <button class="btn" id="bsReload">刷新</button>
+            <span class="datatime" id="bsInfo">—</span>
+            <span class="hint bs-tip">状态由运行记录推断：有「运行中」记录即在跑，否则看是否有排队记录</span>
+          </div>
+          <div class="scroll bs-scroll"><div class="bs-grid" id="bsGrid"></div></div>
+        </div>
+      </div>
+
+      <!-- ==================== 全局日志检索视图 ==================== -->
+      <div id="view-logsearch" class="view" style="display:none;">
+        <div class="panel ls-panel">
+          <div class="toolbar">
+            <h2 style="margin:0;">全局日志检索</h2>
+            <span class="filter-label">关键词：</span>
+            <input type="search" id="lsKw" class="ls-kw" placeholder="如 超时 / Timeout / 异常 / 未找到元素">
+            <span class="filter-label">机器人：</span>
+            <select id="lsRobot"></select>
+            <span class="filter-label">范围：</span>
+            <select id="lsDays">
+              <option value="1">最近 1 天</option>
+              <option value="3">最近 3 天</option>
+              <option value="7" selected>最近 7 天</option>
+            </select>
+            <span class="filter-label">级别：</span>
+            <select id="lsLvl" title="「超时」这类词会命中大量等待进度行，只看异常可直接过滤掉噪声">
+              <option value="all" selected>全部行</option>
+              <option value="warn">异常 + 警告</option>
+              <option value="err">仅错误</option>
+            </select>
+            <button class="btn rerun" id="lsGo">检索</button>
+            <span class="datatime" id="lsInfo">—</span>
+          </div>
+          <div class="scroll ls-scroll" id="lsResult"></div>
+          <div class="hint" id="lsHint">在机器人本机共享日志目录里检索关键词（只扫本机可访问的目录）。点命中行直达该条运行记录的日志，并自动带上关键词与文件定位。</div>
+        </div>
+      </div>
+
+      <!-- ==================== 触发器合规视图 ==================== -->
+      <div id="view-compliance" class="view" style="display:none;">
+        <div class="metrics" id="cpMetrics"></div>
+        <div class="cp-layout">
+          <div class="panel cp-side">
+            <h2>各机器人命中率</h2>
+            <div class="scroll"><table id="cpRobotTbl"></table></div>
+            <div class="hint">「应用不符」= 触发到了、但跑的是别的应用（触发器指向与实跑应用不一致）。</div>
+          </div>
+          <div class="panel cp-main">
+            <div class="toolbar">
+              <span class="filter-label">范围：</span>
+              <select id="cpDays">
+                <option value="3">最近 3 天</option>
+                <option value="7" selected>最近 7 天</option>
+                <option value="14">最近 14 天</option>
+              </select>
+              <span class="filter-label">机器人：</span>
+              <select id="cpRobot"></select>
+              <span class="filter-label">只看：</span>
+              <select id="cpOnly">
+                <option value="problem" selected>漏跑 + 应用不符 + 延迟</option>
+                <option value="missed">只看漏跑</option>
+                <option value="__ALL__">全部（含按时）</option>
+              </select>
+              <button class="btn" id="cpReload">刷新</button>
+              <span class="datatime" id="cpInfo">—</span>
+            </div>
+            <div class="scroll"><table id="cpTbl"></table></div>
+            <div class="hint" id="cpHint">—</div>
           </div>
         </div>
       </div>

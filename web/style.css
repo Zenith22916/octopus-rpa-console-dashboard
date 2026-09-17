@@ -1487,3 +1487,306 @@ tbody tr:hover {
   #view-timeline .hint { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
   #view-timeline .hint .legend { margin-left: 4px; }
 }
+
+/* ==================== 导航分组（运维组与视图组之间留白） ==================== */
+.side-group.split {
+  margin-top: 16px;
+}
+
+/* ==================== 机器人实时状态视图 ==================== */
+#view-botstatus {
+  overflow: hidden;
+}
+
+/* 工具栏/表头不参与 flex 收缩：列向 flex 容器里高度不够时会先把它们压扁 */
+#view-botstatus .bs-panel > .toolbar,
+#view-logsearch .ls-panel > .toolbar,
+.cp-main > .toolbar {
+  flex: none;
+}
+
+/* 工具栏右端的说明文字（窄屏下由 mobile.css 改为独占一行） */
+.bs-tip {
+  margin: 0 0 0 auto;
+}
+
+#view-botstatus .bs-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+#view-botstatus .bs-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.bs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
+  gap: 10px;
+}
+
+.bs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: #14171d;
+  border: 1px solid #262a33;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.bs-card.bs-running { border-color: rgba(239, 159, 39, .45); }
+.bs-card.bs-queued { border-color: rgba(55, 138, 221, .45); }
+
+.bs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bs-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.bs-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e6e6e6;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bs-state {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.bs-task {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: #0f1115;
+  border: 1px solid #262a33;
+  border-radius: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.bs-task:hover { background: #171b22; }
+
+.bs-task-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #d6dae0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bs-task-meta {
+  flex: none;
+  font-size: 11px;
+  color: #8b8f98;
+  white-space: nowrap;
+}
+
+.bs-idle {
+  font-size: 12px;
+  color: #8b8f98;
+  line-height: 1.5;
+}
+
+.bs-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  border-top: 1px solid #1f232b;
+  padding-top: 6px;
+  font-size: 11px;
+  color: #8b8f98;
+}
+
+.bs-stats b {
+  color: #c9cdd4;
+  font-weight: 500;
+}
+
+.bs-stats .s-bad { color: #E24B4A; }
+
+.bs-empty {
+  padding: 24px;
+  text-align: center;
+  color: #6f7480;
+  font-size: 12px;
+}
+
+/* ==================== 全局日志检索视图 ==================== */
+#view-logsearch {
+  overflow: hidden;
+}
+
+#view-logsearch .ls-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+#view-logsearch .ls-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.ls-kw { width: 250px; }
+
+.ls-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #14171d;
+  border: 1px solid #262a33;
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.ls-hit:hover {
+  background: #1b1f27;
+  border-color: #333a45;
+}
+
+.ls-hit-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #8b8f98;
+}
+
+.ls-hit-text {
+  font-family: ui-monospace, Consolas, "Microsoft YaHei", monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #cdd3da;
+  word-break: break-all;
+}
+
+.ls-hit-text mark {
+  background: rgba(74, 144, 217, .34);
+  color: #dbeaff;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.ls-file { color: #7fb2e5; }
+
+.ls-lv {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+.ls-empty {
+  padding: 26px;
+  text-align: center;
+  color: #6f7480;
+  font-size: 12px;
+}
+
+/* ==================== 触发器合规视图 ==================== */
+#view-compliance {
+  overflow: hidden;
+}
+
+.cp-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+}
+
+.cp-layout > .panel {
+  min-height: 0;
+}
+
+.cp-side {
+  flex: 0 0 336px;
+  max-width: 336px;
+}
+
+.cp-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-layout .scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.cp-tbl td.num,
+.cp-tbl th.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cp-tbl tbody tr[data-rid] { cursor: pointer; }
+
+.cp-tbl .cp-app {
+  max-width: 320px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cp-tbl .cp-missed { color: #E24B4A; }
+.cp-tbl .cp-late { color: #EF9F27; }
+.cp-tbl .cp-mismatch { color: #D85A30; }
+.cp-tbl .cp-pending { color: #8b8f98; }
+.cp-tbl .cp-rate-bad { color: #E24B4A; }
+
+.cp-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+
+  #view-botstatus .bs-scroll,
+  #view-logsearch .ls-scroll {
+    max-height: 70vh;
+  }
+
+  .cp-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .cp-side {
+    flex: none;
+    max-width: none;
+  }
+
+  .cp-layout .scroll {
+    flex: none;
+    max-height: 56vh;
+  }
+}

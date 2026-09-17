@@ -246,6 +246,134 @@ def read_log_file_slice(raw, fn, offset, limit):
 
 
 
+# 行级别判定（与前端 app.js 的 LG_RE 同一套语义：1=错误 2=警告 3=成功 0=普通）
+LOG_LEVEL_RE = re.compile(
+    r"(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)"
+    r"|(warn(?:ing)?|timeout|retry|警告|重试|超时(?![\[0-9]))"
+    r"|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)", re.I)
+LOG_LEVEL_EXC = re.compile(r"(已启用异常监控|触发错误处理的|忽略异常并执行)")
+
+
+def log_line_level(line):
+    """按与前端一致的关键词规则判定单行级别：1 错误 / 2 警告 / 3 成功 / 0 普通。"""
+    if not line or len(line) > 20000:
+        return 0
+    if LOG_LEVEL_EXC.search(line):
+        return 0
+    lv = 0
+    for m in LOG_LEVEL_RE.finditer(line):
+        c = 1 if m.group(1) else (2 if m.group(2) else 3)
+        if c == 1:
+            return 1
+        if lv == 0 or c < lv:
+            lv = c
+    return lv
+
+
+SEARCH_SNIPPET = 240       # 命中行片段宽度（超长行以关键词为中心截取）
+SEARCH_MAX_HITS = 400      # 单次检索最多返回的命中数
+SEARCH_MAX_RECORDS = 60    # 单次检索最多扫描的运行记录数
+SEARCH_MAX_LINES = 400000  # 单次检索最多扫描的行数（防止海量日志把请求拖死）
+
+
+def _search_snippet(line, pos, kw_len, width=SEARCH_SNIPPET):
+    """把命中行截成以关键词为中心的片段（超长行首尾加省略号）。"""
+    s = line.rstrip("\n").rstrip()
+    if len(s) <= width:
+        return s
+    half = max(0, (width - kw_len) // 2)
+    start = max(0, pos - half)
+    end = min(len(s), start + width)
+    start = max(0, end - width)
+    return ("…" if start > 0 else "") + s[start:end] + ("…" if end < len(s) else "")
+
+
+def search_logs(records, kw, robot="", days=7, only_lvl=None,
+                max_hits=SEARCH_MAX_HITS, max_records=SEARCH_MAX_RECORDS,
+                max_lines=SEARCH_MAX_LINES):
+    """在运行记录对应的共享日志目录里按关键词检索（仅限白名单根目录内的 .log）。
+
+    只扫「日志目录确实存在」的记录（load_records 已解析出 logOk），按时间倒序逐条扫描；
+    受 max_records / max_lines / max_hits 三重上限约束，命中或扫满即停并置 truncated=True。
+    only_lvl：None=所有行；1=只要错误行；2=错误 + 警告行（放在后端过滤，
+    否则「超时」这类关键词会被 [0/3000] 等待进度噪声占满名额，真正的错误反而被截断）。
+    返回 {ok, hits, scanned:{records,files,lines}, truncated, candidates}。
+    """
+    kw_low = str(kw or "").lower()
+    now_ms = int(time.time() * 1000)
+    since = now_ms - int(days) * 86400000
+
+    cands = []
+    for r in records:
+        if not r.get("start") or r["start"] < since:
+            continue
+        if not r.get("log") or not r.get("logOk"):
+            continue
+        if robot and robot != "__ALL__" and (r.get("robot") or "") != robot:
+            continue
+        cands.append(r)
+    cands.sort(key=lambda r: r["start"], reverse=True)
+
+    hits, scanned = [], {"records": 0, "files": 0, "lines": 0}
+    truncated = stop = False
+
+    for r in cands:
+        if stop:
+            break
+        if scanned["records"] >= max_records:
+            truncated = True
+            break
+        d = os.path.normpath(r["log"])
+        if not is_allowed(d):
+            continue
+        try:
+            if not os.path.isdir(d):
+                continue
+            names = sorted(fn for fn in os.listdir(d) if fn.lower().endswith(".log"))
+        except Exception:
+            continue
+        scanned["records"] += 1
+        for fn in names:
+            if stop:
+                break
+            fp = os.path.normpath(os.path.join(d, fn))
+            if not fp.startswith(d + os.sep) or not os.path.isfile(fp):
+                continue
+            scanned["files"] += 1
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    for ln, line in enumerate(f, 1):
+                        scanned["lines"] += 1
+                        if scanned["lines"] >= max_lines:
+                            truncated = stop = True
+                            break
+                        pos = line.lower().find(kw_low)
+                        if pos < 0:
+                            continue
+                        lv = log_line_level(line)
+                        # 级别筛选：1=只看错误；2=错误 + 警告
+                        if only_lvl == 1 and lv != 1:
+                            continue
+                        if only_lvl == 2 and lv not in (1, 2):
+                            continue
+                        hits.append({
+                            "rid": r.get("id"), "robot": r.get("robot") or "",
+                            "name": r.get("name") or r.get("app") or "",
+                            "start": r.get("start"), "status": r.get("status") or "",
+                            "file": fn, "line": ln,
+                            "lvl": lv,
+                            "text": _search_snippet(line, pos, len(kw_low)),
+                        })
+                        if len(hits) >= max_hits:
+                            truncated = stop = True
+                            break
+            except Exception:
+                continue
+
+    return {"ok": True, "hits": hits, "scanned": scanned, "truncated": truncated,
+            "candidates": len(cands)}
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB, **kwargs)
@@ -281,6 +409,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path0 == "/api/schedule":
             self.handle_api_schedule()
+            return
+        if path0 == "/api/botstatus":
+            self.handle_api_botstatus()
+            return
+        if path0 == "/api/compliance":
+            self.handle_api_compliance()
+            return
+        if path0 == "/api/logsearch":
+            self.handle_log_search()
             return
         if path0 == "/api/projects":
             self.handle_api_projects()
@@ -629,6 +766,62 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def handle_api_botstatus(self):
+        """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。"""
+        try:
+            payload = dashboard.build_bot_status(RECORDS)
+            payload["time"] = LAST_UPDATE_TIME[0] or now_text()
+        except Exception as e:
+            payload = {"ok": False, "error": "机器人状态聚合失败：%s" % e}
+        self._send_json(payload)
+
+    def handle_api_compliance(self):
+        """GET /api/compliance?days=7&window=60：触发器排期 vs 实际运行（命中/延迟/漏跑）。"""
+        q = parse_qs(urlparse(self.path).query)
+
+        def _int(name, dflt, lo, hi):
+            try:
+                v = int(q.get(name, [str(dflt)])[0])
+            except Exception:
+                return dflt
+            return max(lo, min(hi, v))
+
+        days = _int("days", 7, 1, 30)
+        window = _int("window", 60, 5, 720)
+        path = os.path.join(DIR, "triggers_normalized.csv")
+        if not os.path.exists(path):
+            return self._send_json({"ok": False, "error": "缺少 triggers_normalized.csv"})
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                rows = list(csv.DictReader(f))
+            payload = dashboard.build_compliance(rows, RECORDS, days=days, window_min=window)
+        except Exception as e:
+            payload = {"ok": False, "error": "命中率聚合失败：%s" % e}
+        self._send_json(payload)
+
+    def handle_log_search(self):
+        """GET /api/logsearch?q=&robot=&days=：跨运行记录的日志关键词检索。
+
+        结果里每条命中带运行记录 id 与文件名，前端据此跳详情页并自动定位关键词。
+        """
+        q = parse_qs(urlparse(self.path).query)
+        kw = unquote(q.get("q", [""])[0]).strip()
+        robot = unquote(q.get("robot", [""])[0]).strip()
+        lvl = unquote(q.get("lvl", ["all"])[0]).strip().lower()
+        only_lvl = 1 if lvl == "err" else (2 if lvl == "warn" else None)
+        try:
+            days = int(q.get("days", ["7"])[0])
+        except Exception:
+            days = 7
+        days = max(1, min(30, days))
+        if len(kw) < 2:
+            return self._send_json({"ok": False, "error": "关键词至少 2 个字符", "hits": []})
+        payload = search_logs(RECORDS, kw, robot=robot, days=days, only_lvl=only_lvl)
+        payload["q"] = kw
+        payload["days"] = days
+        payload["lvl"] = lvl
+        self._send_json(payload)
 
     # ---- 访问密码保护 ----
     def _provided_pwd(self):
