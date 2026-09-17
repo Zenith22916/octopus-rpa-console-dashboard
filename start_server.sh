@@ -1,60 +1,70 @@
 #!/usr/bin/env bash
 # ============================================================================
-# start_server.sh —— Linux / macOS 版一键启动（与 start_server.bat 功能一致）
+# start_server.sh -- one-click launcher for Linux / macOS
+#                    (same behaviour as start_server.bat)
 #
-# 流程：
-#   1. 检查服务端口占用：被占用则打印占用进程（PID / 名称 / 命令行），
-#      请求确认后清空端口（先 SIGTERM，10 秒不退再 SIGKILL），确认不通过则原样退出
-#   2. 抓取触发器和运行记录      crawler.py
-#   3. 生成触发器排期            organize.py
-#   4. 启动局域网服务（前台运行，Ctrl+C 停止）  local_server.py
+# Steps:
+#   1. Check the service port: if it is already in use, print the owning process
+#      (PID / name / command line) and ask for confirmation, then free the port
+#      (SIGTERM first, SIGKILL after 10s). Aborts untouched if you answer no.
+#   2. Fetch triggers and run records                     crawler.py
+#   3. Build the trigger schedule                         organize.py
+#   4. Start the LAN server (foreground, Ctrl+C to stop)  local_server.py
 #
-# 用法：
-#   chmod +x start_server.sh     # 只需一次
-#   ./start_server.sh            # 正常启动（端口被占用时会停下来问你）
-#   ./start_server.sh -y         # 端口被占用时不再询问，直接清空（cron / systemd 用）
-#   ./start_server.sh silent     # 与 .bat 的 silent 一致：只静默更新数据，不启动服务
+# Usage:
+#   chmod +x start_server.sh     # once
+#   ./start_server.sh            # normal start (asks before killing anything)
+#   ./start_server.sh -y         # free the port without asking (cron / systemd)
+#   ./start_server.sh silent     # update data only, do not start the server
 #
-# 端口以 local_server.py 里的 PORT 为准（单一出处）；也可用环境变量 PORT 临时覆盖。
-# 注意：本文件必须是 LF 换行，带 \r 会报 "bad interpreter"。
+# The port is read from PORT in local_server.py (single source of truth) and can
+# be overridden with the PORT environment variable.
+# Keep this file LF-only: CRLF endings cause "bad interpreter" errors.
+#
+# NOTE: keep every message in this file ASCII-only. Non-ASCII output breaks on
+# terminals whose locale is not UTF-8 (shows up as mojibake).
 # ============================================================================
 set -uo pipefail
 
-# 等价于 bat 的 cd /d "%~dp0"：切到脚本所在目录（并解析软链接）
+# Same as "cd /d %~dp0" in the .bat: move to the script directory (resolve symlinks)
 SELF="$0"
 while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
 cd "$(dirname "$SELF")"
 
-# ------------------------------------------------------------------ 参数
+# ------------------------------------------------------------------- options
 MODE=normal      # normal | silent
-AUTO_YES=0       # 1 = 端口被占用时不再询问
+AUTO_YES=0       # 1 = do not ask before freeing the port
 for a in "$@"; do
   case "$a" in
     silent)      MODE=silent ;;
     -y|--yes)    AUTO_YES=1 ;;
-    -h|--help)   sed -n '2,20p' "$0"; exit 0 ;;
-    *)           echo "[WARN] 未知参数：$a（可用：silent / -y）" ;;
+    -h|--help)   sed -n '2,26p' "$0"; exit 0 ;;
+    *)           echo "[WARN] unknown argument: $a (available: silent / -y)" ;;
   esac
 done
 
-# ------------------------------------------------------- 解释器与依赖自检
-# 等价于 bat 的 py -3 -> python -> 绝对路径 逐级探测
+# ------------------------------------------------------ interpreter / deps
+# Same order as the .bat: py launcher -> python -> explicit path
 PY="$(command -v python3 || command -v python || true)"
 if [ -z "$PY" ]; then
-  echo "[ERROR] 未找到 Python 3，请先安装（Debian/Ubuntu: sudo apt install python3 python3-pip）"
+  echo "[ERROR] python3 not found. Install it first"
+  echo "        Debian/Ubuntu: sudo apt install python3 python3-pip"
   exit 1
 fi
 if ! "$PY" -c "import requests" >/dev/null 2>&1; then
-  echo "[WARN] 缺少 requests，正在安装 …"
-  "$PY" -m pip install -q requests || { echo "[ERROR] requests 安装失败，请手动执行：$PY -m pip install requests"; exit 1; }
+  echo "[WARN] the 'requests' module is missing, installing ..."
+  "$PY" -m pip install -q requests || {
+    echo "[ERROR] failed to install requests. Run manually: $PY -m pip install requests"
+    exit 1
+  }
 fi
 
-# ------------------------------------------------------------------ 端口
-# 端口号从 local_server.py 读取，避免两处各写一份
+# ---------------------------------------------------------------------- port
+# Read the port from local_server.py so it is defined in exactly one place
 PORT="${PORT:-$(sed -n 's/^PORT *= *\([0-9][0-9]*\).*/\1/p' local_server.py 2>/dev/null | head -1)}"
 PORT="${PORT:-8000}"
 
-# 输出占用该端口的 PID（按可用工具逐级降级）
+# Print the PIDs listening on the port (fall back through the available tools)
 port_pids() {
   if command -v ss >/dev/null 2>&1; then
     ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
@@ -65,7 +75,7 @@ port_pids() {
   fi
 }
 
-# 端口是否在监听（工具全缺时退回 bash 内建的 /dev/tcp 连接探测）
+# Is anything listening on the port? Last resort: bash built-in /dev/tcp probe
 port_in_use() {
   if command -v ss >/dev/null 2>&1; then
     ss -ltn 2>/dev/null | grep -qE "[:.]${PORT}[[:space:]]"
@@ -78,13 +88,13 @@ port_in_use() {
   fi
 }
 
-# 结束进程并等待端口释放：先温和后强制
+# Terminate the given PIDs and wait for the port to be released (SIGTERM -> SIGKILL)
 kill_pids() {
   local pids="$1" pid i=0
   for pid in $pids; do kill "$pid" 2>/dev/null || true; done
   while [ $i -lt 10 ] && port_in_use; do sleep 1; i=$((i + 1)); done
   if port_in_use; then
-    echo "[WARN] 进程未响应结束信号，改用 SIGKILL 强制结束"
+    echo "[WARN] process did not exit on SIGTERM, sending SIGKILL"
     for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
     i=0
     while [ $i -lt 5 ] && port_in_use; do sleep 1; i=$((i + 1)); done
@@ -94,52 +104,54 @@ kill_pids() {
 
 free_port() {
   if ! port_in_use; then
-    echo "  [OK] 端口 ${PORT} 空闲"
+    echo "  [OK] port ${PORT} is free"
     return 0
   fi
 
   local pids pid
   pids="$(port_pids | tr '\n' ' ')"
-  echo "[WARN] 端口 ${PORT} 已被占用"
+  echo "[WARN] port ${PORT} is already in use"
   if [ -n "$pids" ]; then
     for pid in $pids; do
-      echo "        占用进程：PID ${pid}  $(ps -o comm= -p "$pid" 2>/dev/null)"
-      ps -o args= -p "$pid" 2>/dev/null | sed 's/^ */        命令行：/'
+      echo "        process: PID ${pid}  $(ps -o comm= -p "$pid" 2>/dev/null)"
+      ps -o args= -p "$pid" 2>/dev/null | sed 's/^ */        command: /'
     done
   else
-    echo "        （读不到占用进程：多半是别的用户起的，请用 sudo 重跑本脚本）"
+    echo "        (cannot read the owning process: it probably belongs to another user, re-run with sudo)"
   fi
 
-  # ---- 请求确认 ----
+  # ---- ask for confirmation ----
   local ans=
   if [ "$AUTO_YES" = "1" ]; then
-    echo "        已指定 -y，直接清空端口"
+    echo "        -y given, freeing the port without asking"
     ans=y
   elif [ ! -t 0 ]; then
-    echo "[ERROR] 当前不是交互终端，无法确认。请加 -y 明确同意清空端口，或自行处理该进程。"
+    echo "[ERROR] not an interactive terminal, cannot ask for confirmation."
+    echo "        Add -y to allow killing the process, or handle it manually."
     return 1
   else
-    read -r -p "        是否结束上述进程并继续？[y/N] " ans
+    read -r -p "        Kill the process(es) above and continue? [y/N] " ans
   fi
   case "$ans" in
     y|Y|yes|YES) ;;
-    *) echo "[INFO] 已取消，未做任何改动。"; return 1 ;;
+    *) echo "[INFO] cancelled, nothing was changed."; return 1 ;;
   esac
 
   if [ -z "$pids" ]; then
-    echo "[ERROR] 拿不到占用进程的 PID，请手动处理（例如 sudo fuser -k ${PORT}/tcp 或 sudo lsof -i:${PORT}）"
+    echo "[ERROR] cannot determine the PID holding the port. Handle it manually, e.g.:"
+    echo "        sudo fuser -k ${PORT}/tcp   (or: sudo lsof -i:${PORT})"
     return 1
   fi
 
   if kill_pids "$pids"; then
-    echo "[OK] 端口 ${PORT} 已释放"
+    echo "[OK] port ${PORT} released"
     return 0
   fi
-  echo "[ERROR] 端口 ${PORT} 仍未释放，请手动处理后重试"
+  echo "[ERROR] port ${PORT} is still in use, handle it manually and retry"
   return 1
 }
 
-# ------------------------------------------------------------ silent 分支
+# ---------------------------------------------------------- silent mode only
 LOG="output/update_log.txt"
 mkdir -p output
 
@@ -158,38 +170,38 @@ if [ "$MODE" = "silent" ]; then
   exit $rc
 fi
 
-# -------------------------------------------------------------- 正常启动
+# ----------------------------------------------------------- normal startup
 echo "============================================"
-echo "  RPA 触发器仪表盘 - 一键启动"
-echo "  步骤：1.检查端口  2.抓取  3.整理  4.起服务"
+echo "  RPA Trigger Dashboard - one-click"
+echo "  Steps: 1.port  2.fetch  3.schedule  4.serve"
 echo "============================================"
 echo
 
-echo "[1/4] 检查端口 ${PORT} …"
+echo "[1/4] Checking port ${PORT} ..."
 if ! free_port; then
   exit 1
 fi
 
 echo
-echo "[2/4] 抓取触发器和运行记录 …"
+echo "[2/4] Fetching triggers and run records ..."
 if ! "$PY" crawler.py --config config.json --out output; then
   echo
-  echo "[ERROR] 抓取失败，请检查网络 / 登录态（详见 $LOG）"
+  echo "[ERROR] fetch failed. Check network / login state (see $LOG)"
   exit 1
 fi
 
 echo
-echo "[3/4] 生成触发器排期 …"
+echo "[3/4] Building schedule ..."
 if ! "$PY" organize.py --input output/triggers_normalized.csv --out output; then
   echo
-  echo "[ERROR] 排期生成失败"
+  echo "[ERROR] schedule build failed"
   exit 1
 fi
 
 echo
-echo "[4/4] 启动局域网服务（端口 ${PORT}）…"
-echo "  本机：  http://localhost:${PORT}"
-echo "  更新日志：${LOG}"
-echo "  按 Ctrl+C 停止服务"
+echo "[4/4] Starting LAN server on port ${PORT} ..."
+echo "  Local:      http://localhost:${PORT}"
+echo "  Update log: ${LOG}"
+echo "  Press Ctrl+C to stop the server"
 echo
 exec "$PY" local_server.py

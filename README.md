@@ -102,8 +102,8 @@ Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者**功
 ```
 
 **端口处理**：发现占用会打印占用进程的 PID、进程名与命令行，问一句
-「是否结束上述进程并继续？」——回答 `N` 原样退出（不动任何进程）；回答 `Y` 先温和结束
-（Linux `kill` / Windows `taskkill`），10 秒不退再强制结束，端口确认释放后才继续。
+`Kill the process(es) above and continue? [y/N]`——回答 `N` 原样退出（不动任何进程）；回答 `Y`
+先温和结束（Linux `kill` / Windows `taskkill`），10 秒不退再强制结束，端口确认释放后才继续。
 
 ```bat
 start_server.bat          :: Windows：双击也行
@@ -116,6 +116,9 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 ./start_server.sh silent  # 只静默更新数据，不启动服务
 ```
 
+- **两个脚本的输出全为 ASCII 英文**（注释也是）：cmd.exe 按 OEM/ANSI 代码页读 `.bat`，
+  Linux 终端 locale 不是 UTF-8 时同样如此——只要文件里有中文，提示就会变乱码。
+  改这两个脚本时请继续保持纯 ASCII。
 - 非交互场景（cron、systemd、计划任务、`< /dev/null`）**必须加 `-y`**：脚本检测到没有终端
   可询问时会拒绝执行并给出提示，而不是默默杀掉进程。
 - `.sh` 必须是 LF 换行（从 Windows 传过去先 `sed -i 's/\r$//' start_server.sh`，否则报

@@ -10,7 +10,9 @@ rem    Double click: check port -> fetch -> schedule -> start LAN server (port 8
 rem    -y / --yes  : free the port without asking (for scheduled tasks)
 rem    silent      : silent update only (log to output\update_log.txt), no server
 rem
-rem  与 start_server.sh 功能一致（同样四步、同样的端口确认交互）
+rem  Same behaviour as start_server.sh (same 4 steps, same port confirmation).
+rem  NOTE: keep every message in this file ASCII-only. cmd.exe reads this file
+rem        with the OEM/ANSI codepage, so UTF-8 text shows up as mojibake.
 rem ============================================
 
 set "MODE=normal"
@@ -108,9 +110,10 @@ echo [%date% %time%] update FAILED >> output\update_log.txt
 exit /b 1
 
 rem ============================================
-rem  :free_port -- 端口被占用则列出占用进程，请求确认后清空
-rem  返回 0 = 端口可用（本来就空，或已清空）
-rem  返回 1 = 用户取消 / 清空失败 / 拿不到 PID
+rem  :free_port -- if the port is in use, list the owning process(es) and ask
+rem                for confirmation before freeing it
+rem  returns 0 = port is available (was free, or has been freed)
+rem  returns 1 = cancelled by the user / could not free / no PID available
 rem ============================================
 :free_port
 set "FP_FOUND="
@@ -126,13 +129,13 @@ if not defined FP_FOUND (
 )
 
 if defined AUTO_YES (
-    echo         已指定 -y，直接清空端口
+    echo          -y given, freeing the port without asking
     goto :fp_kill
 )
 
-choice /C YN /N /M "        是否结束上述进程并继续？[Y/N] "
+choice /C YN /N /M "        Kill the process(es) above and continue? [Y/N] "
 if errorlevel 2 (
-    echo   [INFO] 已取消，未做任何改动。
+    echo   [INFO] cancelled, nothing was changed.
     exit /b 1
 )
 
@@ -141,7 +144,8 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:":%PORT% " ^| findstr /c:"
     taskkill /PID %%p /F >nul 2>&1
 )
 
-rem 等端口释放，最多 10 秒（用 ping 当 sleep：timeout 在输入被重定向时会报错）
+rem Wait for the port to be released, up to 10 seconds.
+rem ping is used as a sleep: "timeout /t" fails when stdin is redirected.
 set "FP_WAIT="
 for /l %%i in (1,1,10) do (
     if not defined FP_WAIT (
@@ -156,7 +160,7 @@ if not defined FP_WAIT (
 echo   [OK] port %PORT% released
 exit /b 0
 
-rem 打印单个占用进程的信息（由 :free_port 对每个 PID 调用一次）
+rem Print one occupying process (called once per PID by :free_port)
 :fp_show
 echo   [WARN] port %PORT% is in use, PID=%1
 for /f "delims=" %%l in ('tasklist /FI "PID eq %1" /NH') do echo         %%l
