@@ -105,6 +105,11 @@ Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者**功
 `Kill the process(es) above and continue? [y/N]`——回答 `N` 原样退出（不动任何进程）；回答 `Y`
 先温和结束（Linux `kill` / Windows `taskkill`），10 秒不退再强制结束，端口确认释放后才继续。
 
+- **占用者属于其他用户时自动提权**：普通用户跑 `ss -ltnp` 看不到别人进程的 PID（只会看到一个
+  「端口被占」却找不到人）。脚本遇到这种情况会自己再用 `sudo` 读一次（会问一次 sudo 密码），
+  确认后连结束信号也走 `sudo`；`sudo` 也读不到时才提示手工执行 `sudo fuser -k 8000/tcp`。
+  端口留在那里谁也不认，比直接猜着杀更安全。
+
 ```bat
 start_server.bat          :: Windows：双击也行
 start_server.bat -y       :: 端口被占用时不再询问，直接清空（计划任务用）

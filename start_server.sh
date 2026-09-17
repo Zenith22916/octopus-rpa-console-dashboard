@@ -64,16 +64,25 @@ fi
 PORT="${PORT:-$(sed -n 's/^PORT *= *\([0-9][0-9]*\).*/\1/p' local_server.py 2>/dev/null | head -1)}"
 PORT="${PORT:-8000}"
 
-# Print the PIDs listening on the port (fall back through the available tools)
+# Print the PIDs listening on the port (fall back through the available tools).
+# Pass "sudo" as $1 to read processes owned by other users -- without privileges
+# "ss -p" / "lsof" simply omit them, which used to leave us with a port we could
+# see but could not attribute.
 port_pids() {
+  local pre=""
+  [ "${1:-}" = "sudo" ] && pre="sudo"
   if command -v ss >/dev/null 2>&1; then
-    ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
+    $pre ss -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
   elif command -v lsof >/dev/null 2>&1; then
-    lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | sort -u
+    $pre lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | sort -u
+  elif command -v fuser >/dev/null 2>&1; then
+    $pre fuser "${PORT}/tcp" 2>&1 | tr -s ' \t' '\n' | grep -E '^[0-9]+$' | sort -u
   elif command -v netstat >/dev/null 2>&1; then
-    netstat -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -o '[0-9][0-9]*/' | cut -d/ -f1 | sort -u
+    $pre netstat -ltnp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" | grep -o '[0-9][0-9]*/' | cut -d/ -f1 | sort -u
   fi
 }
+
+have_sudo() { command -v sudo >/dev/null 2>&1; }
 
 # Is anything listening on the port? Last resort: bash built-in /dev/tcp probe
 port_in_use() {
@@ -88,14 +97,27 @@ port_in_use() {
   fi
 }
 
+# KILL_SUDO=1 when the PIDs came from a privileged lookup: the process belongs to
+# another user, so signalling it needs sudo as well.
+KILL_SUDO=0
+
+signal_pid() {   # $1 = pid, $2 = signal flag ("" or "-9")
+  local sig="${2:-}"
+  if [ "$KILL_SUDO" = "1" ] && have_sudo; then
+    sudo kill $sig "$1" 2>/dev/null || true
+  else
+    kill $sig "$1" 2>/dev/null || true
+  fi
+}
+
 # Terminate the given PIDs and wait for the port to be released (SIGTERM -> SIGKILL)
 kill_pids() {
   local pids="$1" pid i=0
-  for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+  for pid in $pids; do signal_pid "$pid"; done
   while [ $i -lt 10 ] && port_in_use; do sleep 1; i=$((i + 1)); done
   if port_in_use; then
     echo "[WARN] process did not exit on SIGTERM, sending SIGKILL"
-    for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+    for pid in $pids; do signal_pid "$pid" -9; done
     i=0
     while [ $i -lt 5 ] && port_in_use; do sleep 1; i=$((i + 1)); done
   fi
@@ -108,8 +130,17 @@ free_port() {
     return 0
   fi
 
-  local pids pid
+  local pids="" pid
   pids="$(port_pids | tr '\n' ' ')"
+  if [ -z "$pids" ] && have_sudo; then
+    # Not visible without privileges -> the holder belongs to another user
+    # (usually a leftover instance started with sudo / by a service).
+    # Ask sudo for the same list; the password prompt here is expected.
+    echo "  [INFO] need root privileges to identify the process, asking sudo ..."
+    pids="$(port_pids sudo | tr '\n' ' ')"
+    [ -n "$pids" ] && KILL_SUDO=1
+  fi
+
   echo "[WARN] port ${PORT} is already in use"
   if [ -n "$pids" ]; then
     for pid in $pids; do
@@ -117,7 +148,7 @@ free_port() {
       ps -o args= -p "$pid" 2>/dev/null | sed 's/^ */        command: /'
     done
   else
-    echo "        (cannot read the owning process: it probably belongs to another user, re-run with sudo)"
+    echo "        (cannot read the owning process, not even with sudo)"
   fi
 
   # ---- ask for confirmation ----
@@ -138,8 +169,9 @@ free_port() {
   esac
 
   if [ -z "$pids" ]; then
-    echo "[ERROR] cannot determine the PID holding the port. Handle it manually, e.g.:"
-    echo "        sudo fuser -k ${PORT}/tcp   (or: sudo lsof -i:${PORT})"
+    echo "[ERROR] still cannot determine the PID holding the port."
+    echo "        Free it manually, then re-run this script:"
+    echo "        sudo fuser -k ${PORT}/tcp     (or:  sudo lsof -i:${PORT})"
     return 1
   fi
 
