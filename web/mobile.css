@@ -180,27 +180,28 @@
     display: flex;
     position: static;
     flex-direction: row;
+    flex-wrap: wrap;            /* 窄机型（320/360px）一行放不下时折行，保证四个 tab 都点得到 */
     gap: 4px;
     padding: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
     min-width: 0;
     scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
   }
 
   .sidebar .navmenu-list::-webkit-scrollbar {
     display: none;
   }
 
-  /* 4 个 tab 在 390px 宽度下刚好一行放得下；更窄时退化为横向滑动。
-     宽度算式（Maple Mono 是等宽字体，一个汉字 ≈ 1em）：
-     6 字 × 11.5px + 左右内边距 14px = 83px，4 个 tab + 3 个 4px 间隙 = 344px < 360px */
+  /* 4 个 tab 在主流机型（≥390px）一行放得下，320/360/375px 折成两行，不会溢出栏外。
+     宽度算式（Maple Mono 的中文字宽 ≈ 1.21em，实测 11px 时「运行数据分析」= 94px）：
+     4 个 tab 合计 94 + 81 + 81 + 81 = 337px，加 3 个 4px 间隙 = 349px，
+     刚好落在 390 视口扣除纵向滚动条后的可用宽 360px 里。
+     不能用 flex-shrink：让它们缩，文字会溢出到 tab 外面（栏外被裁、还滑不到）。 */
   .sidebar .navmenu-list li {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     height: 30px;
-    padding: 0 7px;
-    font-size: 11.5px;
+    padding: 0 6px;
+    font-size: 11px;
     border: 1px solid var(--t-line-soft);
     border-radius: 9px;
     background: rgba(255, 255, 255, .03);
