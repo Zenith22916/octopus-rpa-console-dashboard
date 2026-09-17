@@ -6,9 +6,18 @@ cd /d "%~dp0"
 rem ============================================
 rem  RPA Trigger Dashboard - One-click
 rem  Usage:
-rem    Double click : update data + start LAN server (port 8000)
-rem    silent       : silent update (log to output\update_log.txt)
+rem    Double click: check port -> fetch -> schedule -> start LAN server (port 8000)
+rem    -y / --yes  : free the port without asking (for scheduled tasks)
+rem    silent      : silent update only (log to output\update_log.txt), no server
+rem
+rem  与 start_server.sh 功能一致（同样四步、同样的端口确认交互）
 rem ============================================
+
+set "MODE=normal"
+set "AUTO_YES="
+if /i "%~1"=="silent" set "MODE=silent"
+if /i "%~1"=="-y" set "AUTO_YES=1"
+if /i "%~1"=="--yes" set "AUTO_YES=1"
 
 rem Try Python 3 in order: py launcher -> python -> system install path
 set "PY="
@@ -37,15 +46,26 @@ if errorlevel 1 (
     )
 )
 
-if /i "%~1"=="silent" goto silent
+if /i "%MODE%"=="silent" goto silent
+
+set "PORT=8000"
 
 echo ============================================
 echo   RPA Trigger Dashboard - One-click
-echo   Steps: 1.fetch  2.schedule  3.serve
+echo   Steps: 1.port  2.fetch  3.schedule  4.serve
 echo ============================================
 echo.
 
-echo [1/3] Fetching triggers and run records ...
+echo [1/4] Checking port %PORT% ...
+call :free_port
+if errorlevel 1 (
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [2/4] Fetching triggers and run records ...
 %PY% crawler.py --config config.json --out output
 if errorlevel 1 (
     echo.
@@ -54,7 +74,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [2/3] Building schedule ...
+echo.
+echo [3/4] Building schedule ...
 %PY% organize.py --input output\triggers_normalized.csv --out output
 if errorlevel 1 (
     echo.
@@ -63,21 +84,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [3/3] Starting LAN server on port 8000 ...
 echo.
-
-rem Check if port 8000 is already in use (server may be running)
-netstat -ano | findstr /c:":8000 " | findstr LISTENING >nul 2>&1
-if not errorlevel 1 (
-    echo [INFO] Port 8000 already in use. Server is probably already running.
-    echo        Open http://localhost:8000 in your browser.
-    start http://localhost:8000
-    pause
-    exit /b 0
-)
-
-echo   Local:  http://localhost:8000
-echo   LAN:    http://[this-PC-IP]:8000   (IP printed by the server on startup)
+echo [4/4] Starting LAN server on port %PORT% ...
+echo   Local:  http://localhost:%PORT%
+echo   LAN:    http://[this-PC-IP]:%PORT%   (IP printed by the server on startup)
 echo   Update log: output\update_log.txt
 echo   Close this window to stop the server.
 echo.
@@ -96,3 +106,58 @@ exit /b 0
 :silent_fail
 echo [%date% %time%] update FAILED >> output\update_log.txt
 exit /b 1
+
+rem ============================================
+rem  :free_port -- 端口被占用则列出占用进程，请求确认后清空
+rem  返回 0 = 端口可用（本来就空，或已清空）
+rem  返回 1 = 用户取消 / 清空失败 / 拿不到 PID
+rem ============================================
+:free_port
+set "FP_FOUND="
+
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:":%PORT% " ^| findstr /c:"LISTENING"') do (
+    set "FP_FOUND=1"
+    call :fp_show %%p
+)
+
+if not defined FP_FOUND (
+    echo   [OK] port %PORT% is free
+    exit /b 0
+)
+
+if defined AUTO_YES (
+    echo         已指定 -y，直接清空端口
+    goto :fp_kill
+)
+
+choice /C YN /N /M "        是否结束上述进程并继续？[Y/N] "
+if errorlevel 2 (
+    echo   [INFO] 已取消，未做任何改动。
+    exit /b 1
+)
+
+:fp_kill
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:":%PORT% " ^| findstr /c:"LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+
+rem 等端口释放，最多 10 秒（用 ping 当 sleep：timeout 在输入被重定向时会报错）
+set "FP_WAIT="
+for /l %%i in (1,1,10) do (
+    if not defined FP_WAIT (
+        netstat -ano | findstr /c:":%PORT% " | findstr /c:"LISTENING" >nul 2>&1
+        if errorlevel 1 (set "FP_WAIT=1") else (ping -n 2 127.0.0.1 >nul)
+    )
+)
+if not defined FP_WAIT (
+    echo   [ERROR] port %PORT% was not released, please handle it manually.
+    exit /b 1
+)
+echo   [OK] port %PORT% released
+exit /b 0
+
+rem 打印单个占用进程的信息（由 :free_port 对每个 PID 调用一次）
+:fp_show
+echo   [WARN] port %PORT% is in use, PID=%1
+for /f "delims=" %%l in ('tasklist /FI "PID eq %1" /NH') do echo         %%l
+exit /b 0

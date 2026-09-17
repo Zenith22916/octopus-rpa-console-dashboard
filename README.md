@@ -39,12 +39,12 @@ pip install -r requirements.txt          # requests（抓取）+ openpyxl（整�
 # 2. 配置：复制模板并填入账号密码
 cp config.example.json config.json
 
-# 3. 启动：双击 start_server.bat（或 python local_server.py 仅起服务）
+# 3. 启动：双击 start_server.bat（Linux/macOS 用 ./start_server.sh；只要起服务就 python local_server.py）
 ```
 
 浏览器打开 `http://localhost:8000`；局域网其他电脑用 `http://<本机IP>:8000`。
 
-> 首次运行若提示缺少 `requests`，`start_server.bat` 会自动 `pip install`（找不到 Python 则报错退出）。
+> 首次运行若提示缺少 `requests`，两个一键脚本都会自动 `pip install`（找不到 Python 则报错退出）。
 
 ## 架构
 
@@ -92,17 +92,37 @@ web/（纯前端，hash 路由五视图）
 
 ## 一键启动
 
-**双击 `start_server.bat`**，完成数据更新并启动局域网服务器（端口 `8000`）：
+Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者**功能一致**，都是四步：
 
 ```
-1. 抓取      crawler.py    触发器 + 运行记录 → output/triggers_normalized.csv / runs_normalized.csv
-2. 整理      organize.py   按机器人整理时刻表 → output/schedule_all.md / .xlsx / .csv
-3. 启动      local_server.py  → http://localhost:8000/
+1. 检查端口  8000 被占用则列出占用进程，确认后清空
+2. 抓取      crawler.py    触发器 + 运行记录 → output/triggers_normalized.csv / runs_normalized.csv
+3. 整理      organize.py   按机器人整理时刻表 → output/schedule_all.md / .xlsx / .csv
+4. 启动      local_server.py  → http://localhost:8000/
 ```
 
-- 脚本会先检测 8000 端口：已被占用则判定服务已在运行，直接打开浏览器。
+**端口处理**：发现占用会打印占用进程的 PID、进程名与命令行，问一句
+「是否结束上述进程并继续？」——回答 `N` 原样退出（不动任何进程）；回答 `Y` 先温和结束
+（Linux `kill` / Windows `taskkill`），10 秒不退再强制结束，端口确认释放后才继续。
+
+```bat
+start_server.bat          :: Windows：双击也行
+start_server.bat -y       :: 端口被占用时不再询问，直接清空（计划任务用）
+start_server.bat silent   :: 只静默更新数据（日志 output\update_log.txt），不启动服务
+
+chmod +x start_server.sh  # Linux/macOS：只需一次
+./start_server.sh         # 端口被占用时会停下来问你
+./start_server.sh -y      # 不再询问，直接清空端口（cron / systemd 用）
+./start_server.sh silent  # 只静默更新数据，不启动服务
+```
+
+- 非交互场景（cron、systemd、计划任务、`< /dev/null`）**必须加 `-y`**：脚本检测到没有终端
+  可询问时会拒绝执行并给出提示，而不是默默杀掉进程。
+- `.sh` 必须是 LF 换行（从 Windows 传过去先 `sed -i 's/\r$//' start_server.sh`，否则报
+  `bad interpreter`）；端口号从 `local_server.py` 的 `PORT` 读，也可用环境变量 `PORT` 临时覆盖。
 - 服务器启动后**数据进内存**，网页通过 JSON API 动态渲染，详情页按需拉取。
-- 启动横幅会输出本机局域网 IP；关窗即停止。
+- 启动横幅会输出本机局域网 IP；关窗（或 Ctrl+C）即停止。
+- 换端口/换机器不用改脚本：`PORT` 只在 `local_server.py` 里定义一处。
 
 ## 标题栏（全局）
 
@@ -317,7 +337,8 @@ octopus-rpa-console-dashboard/
 ├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv）
 ├── octo_api.py             # 八爪鱼云端调度 API（登录/项目列表/触发运行）
 ├── feishu_cfg.py           # 飞书多维表格配置中心读写
-├── start_server.bat        # 一键：更新 + 启动服务器（双击）
+├── start_server.bat        # 一键（Windows）：检查端口 → 更新 → 启动服务器
+├── start_server.sh         # 一键（Linux/macOS）：同上，功能一致
 ├── requirements.txt        # requests / openpyxl
 ├── config.example.json     # 配置模板
 ├── robot_logs.json         # 日志目录白名单（机器人 → 共享根目录）

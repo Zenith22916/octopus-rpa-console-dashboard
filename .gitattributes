@@ -1,0 +1,6 @@
+# 换行符：脚本文件按平台固定，避免「在 Windows 检出、拿到 Linux 跑」时报
+#   start_server.sh: bad interpreter: /usr/bin/env: 'bash\r'
+# 库里一律存 LF；.bat 检出成 CRLF（cmd.exe 对 LF-only 的 goto/label 不可靠），
+# .sh 检出成 LF（LF 是 shell 脚本唯一安全的选择）。
+*.bat text eol=crlf
+*.sh  text eol=lf
