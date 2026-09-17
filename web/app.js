@@ -2094,9 +2094,11 @@ document.getElementById('btnToProjects').addEventListener('click', function(){
   pjPendingFid = rec.fid;
   location.hash = '#/projects?fid=' + encodeURIComponent(rec.fid);
 });
-document.getElementById('navMenuList').addEventListener('click', function(e){
+/* 导航点击：绑在导航容器上（不是某一个 <ul>）——侧栏按「视图 / 运维」分成两组 <ul>，
+   绑单个列表会让后加的那组点不动。用 closest 取最近的可跳转项，后续再加分组也不用改这里。 */
+document.getElementById('navMenu').addEventListener('click', function(e){
   var li = e.target.closest('li[data-hash]');
-  if (li){ location.hash = li.getAttribute('data-hash'); document.getElementById('navMenu').classList.remove('open'); }
+  if (li){ location.hash = li.getAttribute('data-hash'); this.classList.remove('open'); }
 });
 // 触屏设备没有 hover：点标题切换展开，点别处收起
 document.getElementById('navMenuBtn').addEventListener('click', function(e){
