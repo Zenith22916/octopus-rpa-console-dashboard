@@ -2480,10 +2480,10 @@ function bsBind(){
   if (sel) sel.addEventListener('change', function(){ bsFilter = this.value; bsRender(); });
   var rb = document.getElementById('bsReload');
   if (rb) rb.addEventListener('click', function(){ bsLoad().then(bsRender); });
-  var grid = document.getElementById('bsGrid');
-  if (grid) grid.addEventListener('click', function(e){
-    var box = e.target.closest ? e.target.closest('.bs-task[data-rid]') : null;
-    if (box) location.hash = '#/detail?id=' + encodeURIComponent(box.getAttribute('data-rid'));
+  var tbl = document.getElementById('bsTbl');
+  if (tbl) tbl.addEventListener('click', function(e){
+    var a = e.target.closest ? e.target.closest('.bs-task-link[data-rid]') : null;
+    if (a) location.hash = '#/detail?id=' + encodeURIComponent(a.getAttribute('data-rid'));
   });
 }
 function bsLoad(){
@@ -2492,11 +2492,17 @@ function bsLoad(){
     return BS_DATA;
   }).catch(function(){ BS_DATA = null; return null; });
 }
+var BS_COLS = 9;
+function bsEmpty(msg){
+  var tbl = document.getElementById('bsTbl');
+  if (tbl) tbl.innerHTML = '<tbody><tr><td colspan="' + BS_COLS + '" class="bs-empty">'
+    + esc(msg) + '</td></tr></tbody>';
+}
 function bsRender(){
-  var grid = document.getElementById('bsGrid');
-  if (!grid) return;
+  var tbl = document.getElementById('bsTbl');
+  if (!tbl) return;
   if (!BS_DATA){
-    grid.innerHTML = '<div class="bs-empty">机器人状态加载失败，请确认后端服务正常。</div>';
+    bsEmpty('机器人状态加载失败，请确认后端服务正常。');
     return;
   }
   var s = BS_DATA.summary || {};
@@ -2511,43 +2517,47 @@ function bsRender(){
   var list = BS_DATA.bots || [];
   if (bsFilter === '__BUSY__') list = list.filter(function(b){ return b.state !== 'idle'; });
   else if (bsFilter === '__IDLE__') list = list.filter(function(b){ return b.state === 'idle'; });
+  var head = '<thead><tr><th>机器人</th><th>状态</th><th>当前任务</th><th>空闲</th>'
+    + '<th>近24h</th><th>近7天</th><th>失败率</th><th>平均排队</th><th>平均运行</th></tr></thead>';
   if (!list.length){
-    grid.innerHTML = '<div class="bs-empty">没有符合条件的机器人。</div>';
+    tbl.innerHTML = head + '<tbody><tr><td colspan="' + BS_COLS + '" class="bs-empty">没有符合条件的机器人。</td></tr></tbody>';
     return;
   }
-  grid.innerHTML = list.map(bsCard).join('');
+  tbl.innerHTML = head + '<tbody>' + list.map(bsRow).join('') + '</tbody>';
 }
-function bsCard(b){
+/* 一个机器人一行：当前任务可点（跳该条记录日志），无在途任务则显示最近一次跑的应用 */
+function bsRow(b){
   var st = BS_STATE[b.state] || BS_STATE.idle;
-  var h = '<div class="bs-card bs-' + esc(b.state) + '">'
-    + '<div class="bs-head">'
-    +   '<span class="bs-dot" style="background:' + st.color + '"></span>'
-    +   '<span class="bs-name" title="' + esc(b.robot) + '">' + esc(b.robot) + '</span>'
-    +   '<span class="bs-state" style="background:' + st.bg + ';color:' + st.color + '">' + st.cn + '</span>'
-    + '</div>';
+  var cell;
   if (b.tasks && b.tasks.length){
-    b.tasks.forEach(function(t){
-      var meta = (t.waited ? '排队 ' + fmtDur(t.waited) + ' · ' : '')
-               + (t.status === 'Waiting' ? '等待调度' : '已跑 ' + fmtDur(t.elapsed));
-      h += '<div class="bs-task" data-rid="' + esc(t.id) + '" title="点击查看该任务的日志">'
-        + '<span class="bs-task-name">' + esc(t.name || t.app || '运行记录') + '</span>'
-        + '<span class="bs-task-meta">' + esc(meta) + '</span></div>';
-    });
+    var t = b.tasks[0];
+    var meta = (t.status === 'Waiting' ? '等待调度' : '已跑 ' + fmtDur(t.elapsed))
+             + (t.waited ? ' · 排队 ' + fmtDur(t.waited) : '');
+    cell = '<span class="bs-task-link" data-rid="' + esc(t.id) + '" title="点击查看该任务的日志">'
+         + esc(t.name || t.app || '运行记录') + '</span>'
+         + '<span class="bs-task-meta">' + esc(meta) + '</span>'
+         + (b.tasks.length > 1 ? '<span class="bs-task-meta">另有 ' + (b.tasks.length - 1) + ' 个在途</span>' : '');
   } else {
-    var idle = (b.idleMs == null) ? '暂无运行记录' : ('空闲 ' + fmtDur(b.idleMs));
-    h += '<div class="bs-idle">' + esc(idle)
-       + (b.lastName ? ' · 最近：' + esc(b.lastName) : '') + '</div>';
+    cell = '<span class="bs-dim">' + (b.lastName ? '最近：' + esc(b.lastName) : '暂无运行记录') + '</span>';
   }
   var w = b.week || {}, r24 = b.recent || {};
-  h += '<div class="bs-stats">'
-    + '<span>近24h <b>' + (r24.count || 0) + '</b> 次'
-      + (r24.failed ? ' · 失败 <b class="s-bad">' + r24.failed + '</b>' : '') + '</span>'
-    + '<span>近7天 <b>' + (w.count || 0) + '</b> 次 · 失败率 <b'
-      + ((w.failRate || 0) >= 0.2 ? ' class="s-bad"' : '') + '>'
-      + Math.round((w.failRate || 0) * 100) + '%</b></span>'
-    + '<span>平均排队 <b>' + fmtDur(w.avgWait) + '</b> · 平均运行 <b>' + fmtDur(w.avgRun) + '</b></span>'
-    + '</div></div>';
-  return h;
+  /* 空闲时长只在真空闲时展示：运行中/排队中的机器显示「距上次结束」会被误读成"它闲着呢" */
+  var idle = (b.state === 'idle' && b.idleMs != null) ? fmtDur(b.idleMs) : '—';
+  return '<tr>'
+    + '<td class="bs-robot"><span class="bs-dot" style="background:' + st.color + '"></span>'
+      + esc(b.robot) + '</td>'
+    + '<td><span class="bs-state" style="background:' + st.bg + ';color:' + st.color + '">'
+      + st.cn + '</span></td>'
+    + '<td class="bs-task">' + cell + '</td>'
+    + '<td class="bs-dim">' + esc(idle) + '</td>'
+    + '<td>' + (r24.count || 0)
+      + (r24.failed ? ' <span class="bs-bad">(' + r24.failed + ')</span>' : '') + '</td>'
+    + '<td>' + (w.count || 0) + '</td>'
+    + '<td' + ((w.failRate || 0) >= 0.2 ? ' class="bs-bad"' : '') + '>'
+      + Math.round((w.failRate || 0) * 100) + '%</td>'
+    + '<td class="bs-dim">' + fmtDur(w.avgWait) + '</td>'
+    + '<td class="bs-dim">' + fmtDur(w.avgRun) + '</td>'
+    + '</tr>';
 }
 
 /* ==================== 全局日志检索视图 ====================
@@ -2575,7 +2585,7 @@ function lsBind(){
   if (kw) kw.addEventListener('keydown', function(e){ if (e.key === 'Enter') lsSearch(); });
   var box = document.getElementById('lsResult');
   if (box) box.addEventListener('click', function(e){
-    var row = e.target.closest ? e.target.closest('.ls-hit[data-rid]') : null;
+    var row = e.target.closest ? e.target.closest('[data-rid][data-file]') : null;
     if (!row) return;
     var q = (LS_DONE && LS_DONE.q) || '';
     location.hash = '#/detail?id=' + encodeURIComponent(row.getAttribute('data-rid'))
@@ -2625,37 +2635,62 @@ function lsRender(){
     return;
   }
   var sc = d.scanned || {};
+  var kw = d.q || '';
+  /* 同一文件一组：组内共享同一条运行记录（rid）与文件名，点组头或任一行都跳该条记录日志 */
+  var groups = [], byKey = {};
+  d.hits.forEach(function(h){
+    var key = h.rid + '\u0000' + h.file;
+    var g = byKey[key];
+    if (!g){
+      g = byKey[key] = { rid: h.rid, file: h.file, robot: h.robot, name: h.name,
+                         start: h.start, hits: [] };
+      groups.push(g);
+    }
+    g.hits.push(h);
+  });
   var info = document.getElementById('lsInfo');
-  if (info) info.textContent = '命中 ' + d.hits.length + ' 处 · 扫描 ' + (sc.records || 0) + ' 条记录 / '
+  if (info) info.textContent = '命中 ' + d.hits.length + ' 处 · 分布在 ' + groups.length
+    + ' 个日志文件 · 扫描 ' + (sc.records || 0) + ' 条记录 / '
     + (sc.files || 0) + ' 个文件 / ' + (sc.lines || 0) + ' 行';
   var hint = document.getElementById('lsHint');
   if (hint) hint.textContent = '候选 ' + (d.candidates || 0) + ' 条记录（最近 ' + d.days
     + ' 天内且本机日志目录可访问），级别筛选「' + (LS_LVL_CN[d.lvl] || '全部行') + '」。'
     + (d.truncated ? '已扫满上限（扫描 ' + (sc.records || 0) + '/' + (d.candidates || 0)
         + ' 条记录）：请缩小机器人范围或时间窗，或改用「异常 + 警告」。' : '')
-    + ' 点命中行直达该条运行记录的日志，自动带上关键词与文件定位。';
-  var kw = d.q || '';
+    + ' 点组头或任一行直达该条运行记录的日志，自动带上关键词与文件定位。';
   if (!d.hits.length){
     box.innerHTML = '<div class="ls-empty">最近 ' + d.days + ' 天内没有匹配「' + esc(kw) + '」的日志行。</div>';
     return;
   }
-  box.innerHTML = d.hits.map(function(h){ return lsHitHtml(h, kw); }).join('');
+  box.innerHTML = groups.map(function(g){ return lsGroupHtml(g, kw); }).join('');
 }
-function lsHitHtml(h, kw){
-  var lv = h.lvl === 1 ? ['错误', 'rgba(226,75,74,0.18)', '#E24B4A']
-         : h.lvl === 2 ? ['警告', 'rgba(239,159,39,0.18)', '#EF9F27'] : null;
-  var text = esc(h.text);
-  if (kw) text = text.replace(new RegExp(lsRegEsc(esc(kw)), 'gi'), function(m){ return '<mark>' + m + '</mark>'; });
-  return '<div class="ls-hit" data-rid="' + esc(h.rid) + '" data-file="' + esc(h.file)
+function lsLvTag(lvl){
+  if (lvl === 1) return ['错误', 'rgba(226,75,74,0.18)', '#E24B4A'];
+  if (lvl === 2) return ['警告', 'rgba(239,159,39,0.18)', '#EF9F27'];
+  return null;
+}
+function lsGroupHtml(g, kw){
+  var rows = g.hits.map(function(h){
+    var lv = lsLvTag(h.lvl);
+    var text = esc(h.text);
+    if (kw) text = text.replace(new RegExp(lsRegEsc(esc(kw)), 'gi'), function(m){ return '<mark>' + m + '</mark>'; });
+    return '<div class="ls-hitrow" data-rid="' + esc(g.rid) + '" data-file="' + esc(g.file)
+      + '" title="点击查看该条记录的完整日志">'
+      + '<span class="ls-lineno">第 ' + h.line + ' 行</span>'
+      + (lv ? '<span class="ls-lv" style="background:' + lv[1] + ';color:' + lv[2] + '">' + lv[0] + '</span>' : '')
+      + '<span class="ls-hit-text">' + text + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div class="ls-group">'
+    + '<div class="ls-group-head" data-rid="' + esc(g.rid) + '" data-file="' + esc(g.file)
     + '" title="点击查看该条记录的完整日志">'
-    + '<div class="ls-hit-top">'
-    +   '<span>' + fmtFull(h.start) + '</span>'
-    +   '<span>' + esc(h.robot) + '</span>'
-    +   '<span>' + esc(h.name) + '</span>'
-    +   '<span class="ls-file">' + esc(h.file) + ':' + h.line + '</span>'
-    +   (lv ? '<span class="ls-lv" style="background:' + lv[1] + ';color:' + lv[2] + '">' + lv[0] + '</span>' : '')
+    +   '<span class="ls-g-robot">' + esc(g.robot) + '</span>'
+    +   '<span class="ls-g-file">' + esc(g.file) + '</span>'
+    +   '<span class="ls-g-count">命中 ' + g.hits.length + ' 处</span>'
+    +   (g.start ? '<span class="ls-g-time">' + fmtFull(g.start) + '</span>' : '')
+    +   '<span class="ls-g-go">打开日志 →</span>'
     + '</div>'
-    + '<div class="ls-hit-text">' + text + '</div>'
+    + '<div class="ls-group-body">' + rows + '</div>'
     + '</div>';
 }
 
@@ -2744,14 +2779,14 @@ function cpRender(){
   var rt = document.getElementById('cpRobotTbl');
   if (rt){
     var rows = CP_DATA.perRobot || [];
-    rt.innerHTML = '<thead><tr><th>机器人</th><th class="num">应跑</th><th class="num">按时</th>'
-      + '<th class="num">漏跑</th><th class="num">命中率</th></tr></thead><tbody>'
+    rt.innerHTML = '<thead><tr><th>机器人</th><th>应跑</th><th>按时</th>'
+      + '<th>漏跑</th><th>命中率</th></tr></thead><tbody>'
       + (rows.length ? rows.map(function(b){
           return '<tr><td>' + esc(b.robot) + '</td>'
-            + '<td class="num">' + b.scheduled + '</td>'
-            + '<td class="num">' + b.hit + '</td>'
-            + '<td class="num' + (b.missed ? ' cp-missed' : '') + '">' + b.missed + '</td>'
-            + '<td class="num' + (b.rate < 0.95 ? ' cp-rate-bad' : '') + '">'
+            + '<td>' + b.scheduled + '</td>'
+            + '<td>' + b.hit + '</td>'
+            + '<td class="' + (b.missed ? 'cp-missed' : '') + '">' + b.missed + '</td>'
+            + '<td class="' + (b.rate < 0.95 ? 'cp-rate-bad' : '') + '">'
             + Math.round(b.rate * 100) + '%</td></tr>';
         }).join('')
         : '<tr><td colspan="5" class="pj-empty-sm" style="border:none;">无数据</td></tr>')
@@ -2773,17 +2808,17 @@ function cpRender(){
                 : (it.status === 'mismatch' && it.runApp) ? ' 实跑：' + esc(it.runApp) : '';
       return '<tr' + (it.runId ? ' data-rid="' + esc(it.runId) + '" title="点击查看该次运行的日志"' : '')
         + '>'
-        + '<td class="num">' + fmtFull(it.sched) + '</td>'
+        + '<td>' + fmtFull(it.sched) + '</td>'
         + '<td>' + esc(it.robot) + '</td>'
         + '<td class="cp-app" title="' + esc(it.app) + '">' + esc(it.app) + '</td>'
         + '<td>' + cpBadge(it.status) + '</td>'
-        + '<td class="num">' + (it.runStart ? fmtFull(it.runStart) : '—')
+        + '<td>' + (it.runStart ? fmtFull(it.runStart) : '—')
           + '<span class="hint">' + extra + '</span></td>'
         + '</tr>';
     }).join('')
     : '<tr><td colspan="5" class="pj-empty-sm" style="border:none;">该筛选条件下没有条目</td></tr>';
-  tbl.innerHTML = '<thead><tr><th class="num">计划时间</th><th>机器人</th><th>应用</th>'
-    + '<th>状态</th><th class="num">实际运行</th></tr></thead><tbody>' + body + '</tbody>';
+  tbl.innerHTML = '<thead><tr><th>计划时间</th><th>机器人</th><th>应用</th>'
+    + '<th>状态</th><th>实际运行</th></tr></thead><tbody>' + body + '</tbody>';
 }
 
 /* ==================== 启动 ==================== */

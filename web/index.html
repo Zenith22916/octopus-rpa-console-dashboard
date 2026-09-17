@@ -29,18 +29,21 @@
     </div>
 
     <nav class="navmenu" id="navMenu">
-      <div class="side-group">视图</div>
+      <div class="side-group">运行监控</div>
       <ul class="navmenu-list" id="navMenuList">
         <li data-hash="#/analysis">运行数据分析</li>
         <li data-hash="#/timeline">任务时间轴</li>
-        <li data-hash="#/schedule">触发器排期</li>
-        <li data-hash="#/projects">项目控制台</li>
-      </ul>
-      <div class="side-group split">运维</div>
-      <ul class="navmenu-list" id="navMenuList2">
         <li data-hash="#/botstatus">机器人状态</li>
+      </ul>
+      <div class="side-group split">问题排查</div>
+      <ul class="navmenu-list">
         <li data-hash="#/logsearch">日志检索</li>
         <li data-hash="#/compliance">触发器合规</li>
+      </ul>
+      <div class="side-group split">配置管理</div>
+      <ul class="navmenu-list">
+        <li data-hash="#/schedule">触发器排期</li>
+        <li data-hash="#/projects">项目控制台</li>
       </ul>
     </nav>
 
@@ -255,7 +258,7 @@
             <span class="datatime" id="bsInfo">—</span>
             <span class="hint bs-tip">状态由运行记录推断：有「运行中」记录即在跑，否则看是否有排队记录</span>
           </div>
-          <div class="scroll bs-scroll"><div class="bs-grid" id="bsGrid"></div></div>
+          <div class="scroll bs-scroll"><table id="bsTbl" class="bs-tbl"></table></div>
         </div>
       </div>
 

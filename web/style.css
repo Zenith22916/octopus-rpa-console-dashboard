@@ -1521,108 +1521,68 @@ tbody tr:hover {
   max-height: none;
 }
 
-.bs-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(288px, 1fr));
-  gap: 10px;
+.bs-tbl {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-.bs-card {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  background: #14171d;
-  border: 1px solid #262a33;
-  border-radius: 10px;
-  padding: 10px 12px;
+/* 一个机器人一行：状态点 + 名称固定不折行，任务列吃掉剩余宽度 */
+.bs-tbl th,
+.bs-tbl td {
+  white-space: nowrap;
 }
 
-.bs-card.bs-running { border-color: rgba(239, 159, 39, .45); }
-.bs-card.bs-queued { border-color: rgba(55, 138, 221, .45); }
+.bs-tbl td.bs-robot {
+  font-weight: 500;
+  color: #e6e6e6;
+}
 
-.bs-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.bs-tbl td.bs-task {
+  white-space: normal;
+  max-width: 340px;
+  min-width: 180px;
+}
+
+.bs-dim {
+  color: #8b8f98;
+}
+
+.bs-bad {
+  color: #E24B4A;
 }
 
 .bs-dot {
-  flex: none;
+  display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-}
-
-.bs-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: #e6e6e6;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  margin-right: 7px;
+  vertical-align: 1px;
 }
 
 .bs-state {
-  flex: none;
+  display: inline-block;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 6px;
 }
 
-.bs-task {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  background: #0f1115;
-  border: 1px solid #262a33;
-  border-radius: 8px;
-  padding: 6px 9px;
+.bs-task-link {
+  color: #d6dae0;
   cursor: pointer;
+  border-bottom: 1px dashed #3a4150;
 }
 
-.bs-task:hover { background: #171b22; }
-
-.bs-task-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: #d6dae0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.bs-task-link:hover {
+  color: #fff;
+  border-bottom-color: #4a90d9;
 }
 
 .bs-task-meta {
-  flex: none;
+  color: #8b8f98;
   font-size: 11px;
-  color: #8b8f98;
-  white-space: nowrap;
+  margin-left: 6px;
 }
-
-.bs-idle {
-  font-size: 12px;
-  color: #8b8f98;
-  line-height: 1.5;
-}
-
-.bs-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 14px;
-  border-top: 1px solid #1f232b;
-  padding-top: 6px;
-  font-size: 11px;
-  color: #8b8f98;
-}
-
-.bs-stats b {
-  color: #c9cdd4;
-  font-weight: 500;
-}
-
-.bs-stats .s-bad { color: #E24B4A; }
 
 .bs-empty {
   padding: 24px;
@@ -1649,33 +1609,84 @@ tbody tr:hover {
 
 .ls-kw { width: 250px; }
 
-.ls-hit {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* 命中结果按「同一文件一组」：组头 = 机器人 + 文件名 + 命中数 + 记录时间，组内逐行列命中行 */
+.ls-group {
   background: #14171d;
   border: 1px solid #262a33;
-  border-radius: 8px;
-  padding: 7px 10px;
-  margin-bottom: 6px;
+  border-radius: 9px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.ls-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  background: #1b2028;
+  border-bottom: 1px solid #262a33;
+  font-size: 11px;
+  color: #8b8f98;
   cursor: pointer;
 }
 
-.ls-hit:hover {
-  background: #1b1f27;
-  border-color: #333a45;
+.ls-group-head:hover {
+  background: #212836;
 }
 
-.ls-hit-top {
+.ls-g-robot {
+  font-size: 12px;
+  color: #c9cdd4;
+}
+
+.ls-g-file {
+  font-family: ui-monospace, Consolas, monospace;
+  color: #7fb2e5;
+}
+
+.ls-g-count {
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(55, 138, 221, .18);
+  color: #85b7eb;
+}
+
+.ls-g-time {
+  margin-left: auto;
+}
+
+.ls-g-go {
+  color: #7fb2e5;
+}
+
+.ls-group-body {
+  padding: 3px 0;
+}
+
+.ls-hitrow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  flex-wrap: wrap;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.ls-hitrow:hover {
+  background: #1b1f27;
+}
+
+.ls-lineno {
+  flex: none;
+  width: 78px;
+  font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
-  color: #8b8f98;
+  color: #6f7480;
 }
 
 .ls-hit-text {
+  flex: 1;
+  min-width: 0;
   font-family: ui-monospace, Consolas, "Microsoft YaHei", monospace;
   font-size: 11.5px;
   line-height: 1.55;
@@ -1689,8 +1700,6 @@ tbody tr:hover {
   border-radius: 2px;
   padding: 0 1px;
 }
-
-.ls-file { color: #7fb2e5; }
 
 .ls-lv {
   flex: none;
@@ -1738,12 +1747,7 @@ tbody tr:hover {
   max-height: none;
 }
 
-.cp-tbl td.num,
-.cp-tbl th.num {
-  text-align: right;
-  white-space: nowrap;
-}
-
+/* 合规两张表全部左对齐（时间列不再单独右对齐） */
 .cp-tbl tbody tr[data-rid] { cursor: pointer; }
 
 .cp-tbl .cp-app {

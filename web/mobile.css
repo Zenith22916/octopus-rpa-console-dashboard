@@ -821,13 +821,14 @@
     max-height: 62vh;
   }
 
-  /* 机器人卡片：单列铺开，卡片之间留间距 */
-  .bs-grid {
-    display: block;
+  /* 机器人状态：一个机器人一行的宽表格，容器内横向滚动 */
+  #view-botstatus .bs-tbl {
+    width: max-content;
+    min-width: 100%;
   }
 
-  .bs-card {
-    margin-bottom: 8px;
+  .bs-tbl td.bs-task {
+    max-width: 180px;
   }
 
   #view-botstatus .panel > .toolbar h2,
@@ -860,6 +861,15 @@
 
   .ls-hit-text {
     font-size: 11px;
+  }
+
+  /* 分组头窄屏换行：时间不再靠 auto 外边距顶到右端，改为跟随换行 */
+  .ls-g-time {
+    margin-left: 0;
+  }
+
+  .ls-lineno {
+    width: 66px;
   }
 
   /* 触发器合规：左右两栏改上下堆叠 */
