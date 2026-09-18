@@ -402,7 +402,8 @@ function truncateLabel(name, maxW, fs){
   return cur + ell;
 }
 function effEnd(s){ return s.end == null ? state.end : s.end; }
-function layout(segs){
+function layout(segs, minVisibleMs){
+  minVisibleMs = minVisibleMs || 0;   // 屏幕上不足该时长的条视为看不见，不参与独立泳道分配
   var recs = [];
   var recOfSeg = {};
   var byRobot = {};
@@ -428,7 +429,14 @@ function layout(segs){
     var idxs = (byRobot[rb] || []).slice().sort(function(a,b){ return recs[a].start - recs[b].start; });
     var lanes = [];
     var laneOfRec = {};
+    // 先排“正常可见”的记录；太细（屏幕上不足约 2px）的条最后统一塞进第一条泳道，
+    // 避免它单独占一条泳道却因渲染不出而变成“空泳道”。（窗口越大阈值越大，缩放到足够大时它仍会正常占道）
+    var normals = [], tinies = [];
     idxs.forEach(function(ri){
+      var u = recs[ri];
+      (u.end - u.start < minVisibleMs ? tinies : normals).push(ri);
+    });
+    normals.forEach(function(ri){
       var u = recs[ri], st = u.start, en = u.end, lane = -1;
       for (var l = 0; l < lanes.length; l++){
         if (st >= lanes[l].end || en <= lanes[l].start){ lane = l; break; }
@@ -437,6 +445,10 @@ function layout(segs){
       else { if (st < lanes[lane].start) lanes[lane].start = st; if (en > lanes[lane].end) lanes[lane].end = en; }
       laneOfRec[ri] = lane;
     });
+    if (tinies.length){
+      if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
+      tinies.forEach(function(ri){ laneOfRec[ri] = 0; });
+    }
     if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
     var base = rowCursor;
     rowCursor += lanes.length;
@@ -466,7 +478,12 @@ function tlRender(){
   if (lgQueue) lgQueue.style.display = showQueue ? '' : 'none';
   robots = robotList(segs);
   var visible = segs.filter(function(s){ return effEnd(s) >= winStart && s.start <= nowW; });
-  var info = layout(visible);
+  // 可见下限：屏幕上不足约 2px 的条视为看不见（窗口越大阈值越大），用于抑制“细到不渲染却仍占泳道”的空泳道。
+  var cw = tlChart.getWidth ? tlChart.getWidth() : 0;
+  var gLeftPx = IS_MOBILE ? 76 : 100, gRightPx = IS_MOBILE ? 14 : 20;
+  var plotW = cw > 0 ? Math.max(50, cw - gLeftPx - gRightPx) : 900;
+  var minVisibleMs = state.span * (2 / plotW);
+  var info = layout(visible, minVisibleMs);
   var yLabels = layout.yLabels;
   var lastRows = layout.groupLastRows || [];
   var topGroupRow = lastRows.length ? Math.max.apply(null, lastRows) : -1;
@@ -493,7 +510,7 @@ function tlRender(){
         endRaw: s.end, execStart: s.r.execStart
       });
     }
-    if (s.kind === 'run' && s.r.name) {
+    if (s.kind === 'run' && s.r.name && (merge.max - merge.min) >= minVisibleMs) {
       textData.push({ value: [(merge.min + merge.max) / 2, li.row, s.r.name, merge.min, merge.max] });
     }
   });
