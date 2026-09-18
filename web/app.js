@@ -2009,7 +2009,15 @@ function scReload(){
 setInterval(scUpdateLines, 10000);
 
 /* ==================== 自动更新 ==================== */
+/* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */
+function swBusy(on){
+  var sw = document.querySelector('#autoCtl .switch');
+  if (sw) sw.classList.toggle('busy', !!on);
+}
 function refreshData(force, done){
+  // 只有自动更新（非 force）才转圈；「立刻更新」按钮自带「更新中…」文案，不重复提示
+  if (!force) swBusy(true);
+  var finish = function(ok){ if (!force) swBusy(false); if (done) done(ok); };
   fetch((force ? '/api/refresh?force=1' : '/api/refresh'), { method: 'POST', credentials: 'same-origin' }).then(function(r){
     if (r.status === 401){ location.href = '/login'; return; }
     return r.json();
@@ -2033,8 +2041,8 @@ function refreshData(force, done){
       warnEl.style.display = 'block';
       if (d && d.time) document.getElementById('dataTime').textContent = '数据获取：' + d.time + '（刷新失败）';
     }
-    if (done) done(okFlag);
-  }).catch(function(){ if (done) done(false); });
+    finish(okFlag);
+  }).catch(function(){ finish(false); });
 }
 document.getElementById('btnRefreshNow').addEventListener('click', function(){
   var btn = this;

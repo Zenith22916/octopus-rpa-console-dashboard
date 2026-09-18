@@ -273,6 +273,38 @@ a {
   background: #fff;
 }
 
+/* 自动更新进行中：在圆钮（::before 那个白圆）里转圈。
+   .switch.busy 由 app.js 在刷新请求发出时加上、结束时去掉。
+   位置用 left 跟随圆钮，不用 transform——transform 留给旋转动画，两者会打架。 */
+.switch .slider::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid rgba(17, 160, 90, .25);
+  border-top-color: #11a05a;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s;
+}
+
+.switch input:checked+.slider::after {
+  left: 24px;   /* 6px + 圆钮的 translateX(18px) */
+}
+
+.switch.busy .slider::after {
+  opacity: 1;
+  animation: swSpin .75s linear infinite;
+}
+
+@keyframes swSpin {
+  to { transform: rotate(360deg); }
+}
+
 select {
   background: #22262e;
   color: #e6e6e6;
