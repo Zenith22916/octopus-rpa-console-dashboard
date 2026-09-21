@@ -218,7 +218,7 @@ body {
 /* ---------------------------------------------- 左栏：品牌 + 导航 + 状态 */
 .sidebar {
   flex: none;
-  width: 214px;
+  width: 190px;
   display: flex;
   flex-direction: column;
   padding: 16px 12px 14px;

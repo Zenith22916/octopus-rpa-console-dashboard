@@ -686,8 +686,8 @@ tbody tr:hover {
 }
 
 .info-card {
-  flex: 0 0 400px;
-  max-width: 400px;
+  flex: 0 0 300px;
+  max-width: 300px;
   min-width: 0;
 }
 
