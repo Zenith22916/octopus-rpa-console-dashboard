@@ -339,10 +339,12 @@ window.addEventListener('resize', function () {
     if (curView === 'timeline' && tlReady) tlRender();
     if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
     if (curView === 'schedule' && scReady && RECORDS.length) scReload();
+    if (curView === 'botstatus' && bsReady) { bsResize(); bsChartsRender(); }
   }
   if (curView === 'timeline' && tlReady) tlChartResize();
   if (curView === 'analysis' && anReady) anResize();
   if (curView === 'schedule' && scReady) scResize();
+  if (curView === 'botstatus' && bsReady) bsResize();
 });
 
 /* ==================== 时间轴视图 ==================== */
@@ -2925,6 +2927,8 @@ function bsEmpty(msg) {
   if (info) info.textContent = '—';
   var m = document.getElementById('bsMetrics');
   if (m) m.innerHTML = '';
+  if (bsCharts.bars) bsCharts.bars.clear();
+  if (bsCharts.heat) bsCharts.heat.clear();
 }
 function bsRender() {
   var tbl = document.getElementById('bsTbl');
@@ -2942,6 +2946,7 @@ function bsRender() {
   var info = document.getElementById('bsInfo');
   if (info) info.textContent = fmtFull(BS_DATA.now);
   bsMetrics(s);
+  bsChartsRender();        // 两张图与表格同一份数据，跟着一起刷新
   var list = BS_DATA.bots || [];
   if (bsFilter === '__BUSY__') list = list.filter(function (b) { return b.state !== 'idle'; });
   else if (bsFilter === '__IDLE__') list = list.filter(function (b) { return b.state === 'idle'; });
@@ -2952,6 +2957,127 @@ function bsRender() {
     return;
   }
   tbl.innerHTML = head + '<tbody>' + list.map(bsRow).join('') + '</tbody>';
+}
+/* ==================== 机器人状态页的两张图 ====================
+   状态表只有几行、下方大片留白，补两张图把竖向空间用起来：
+   右上「近 7 天运行量」看谁跑得多、失败多少；下方「近 24 小时机器人 × 小时」
+   看负载在时间上的分布（哪个时段哪台机在忙）。数据都从内存里的运行记录现算。 */
+var bsCharts = {};
+function bsChartsRender() {
+  var elBars = document.getElementById('bsBars'), elHeat = document.getElementById('bsHeat');
+  if (!elBars || !elHeat) return;
+  var bots = (BS_DATA && BS_DATA.bots) ? BS_DATA.bots.map(function (b) { return b.robot; }) : [];
+  if (!bots.length) {
+    if (bsCharts.bars) bsCharts.bars.clear();
+    if (bsCharts.heat) bsCharts.heat.clear();
+    return;
+  }
+  if (!bsCharts.bars) bsCharts.bars = echarts.init(elBars);
+  if (!bsCharts.heat) bsCharts.heat = echarts.init(elHeat);
+
+  var now = Date.now(), DAY = 86400000, HOUR = 3600000;
+  var idxOf = {};
+  bots.forEach(function (b, i) { idxOf[b] = i; });
+
+  // 近 7 天：每台机器人的成功 / 失败条数
+  var ok = bots.map(function () { return 0; });
+  var bad = bots.map(function () { return 0; });
+  // 近 24 小时：整点对齐共 24 格（最后一格是当前小时）
+  var h0 = new Date(now).setMinutes(0, 0, 0) - 23 * HOUR;
+  var heat = bots.map(function () { return new Array(24).fill(0); });
+  var hourLabels = [];
+  for (var i = 0; i < 24; i++) hourLabels.push(pad(new Date(h0 + i * HOUR).getHours()) + ':00');
+
+  RECORDS.forEach(function (r) {
+    var bi = idxOf[r.robot];
+    if (bi == null) return;
+    if (r.start >= now - 7 * DAY) { (r.status === 'Failed' ? bad : ok)[bi]++; }
+    if (r.start >= h0) {
+      var hi = Math.floor((r.start - h0) / HOUR);
+      if (hi >= 0 && hi < 24) heat[bi][hi]++;
+    }
+  });
+
+  /* 近 7 天运行量：堆叠横条（成功 + 失败），最右端标总数 */
+  bsCharts.bars.setOption({
+    backgroundColor: 'transparent',
+    animation: false,
+    tooltip: tipOpt({
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: function (ps) {
+        var i = ps && ps.length ? ps[0].dataIndex : 0;
+        return '<b>' + esc(bots[i]) + '</b><br/>成功 ' + ok[i] + '<br/>失败 ' + bad[i]
+          + '<br/>合计 ' + (ok[i] + bad[i]);
+      }
+    }),
+    grid: { left: 6, right: 30, top: 6, bottom: 4, containLabel: true },
+    xAxis: {
+      type: 'value', minInterval: 1,
+      axisLabel: { color: '#8b8f98', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#20242c' } }
+    },
+    yAxis: {
+      type: 'category', data: bots, inverse: true,
+      axisLabel: { color: '#c9cdd4', fontSize: 11, width: 108, overflow: 'truncate' },
+      axisLine: { lineStyle: { color: '#333' } }
+    },
+    series: [
+      { name: '成功', type: 'bar', stack: 'r', barWidth: '54%', data: ok,
+        itemStyle: { color: 'rgba(29,158,117,.85)' } },
+      { name: '失败', type: 'bar', stack: 'r', data: bad,
+        itemStyle: { color: 'rgba(226,75,74,.9)' } },
+      /* 透明占位系列：把「合计」标在整条堆叠柱的右端（挂在某一侧系列上会标到柱子中间） */
+      { name: '合计', type: 'bar', stack: 'r', silent: true, data: bots.map(function () { return 0; }),
+        label: {
+          show: true, position: 'right', color: '#8b8f98', fontSize: 10,
+          formatter: function (p) { return ok[p.dataIndex] + bad[p.dataIndex]; }
+        } }
+    ]
+  });
+
+  var heatData = [], maxV = 1;
+  for (var bi2 = 0; bi2 < bots.length; bi2++) {
+    for (var hi2 = 0; hi2 < 24; hi2++) {
+      if (heat[bi2][hi2] > 0) {
+        heatData.push([hi2, bi2, heat[bi2][hi2]]);
+        if (heat[bi2][hi2] > maxV) maxV = heat[bi2][hi2];
+      }
+    }
+  }
+  bsCharts.heat.setOption({
+    backgroundColor: 'transparent',
+    animation: false,
+    tooltip: tipOpt({
+      formatter: function (p) {
+        return '<b>' + esc(bots[p.value[1]]) + '</b><br/>' + hourLabels[p.value[0]]
+          + ' ~ ' + hourLabels[(p.value[0] + 1) % 24] + '　' + p.value[2] + ' 条';
+      }
+    }),
+    grid: { left: 6, right: 12, top: 6, bottom: 22, containLabel: true },
+    xAxis: {
+      type: 'category', data: hourLabels, splitArea: { show: false },
+      axisLabel: { color: '#8b8f98', fontSize: 10, interval: 1 },
+      axisLine: { lineStyle: { color: '#333' } }
+    },
+    yAxis: {
+      type: 'category', data: bots, inverse: true, splitArea: { show: false },
+      axisLabel: { color: '#c9cdd4', fontSize: 11, width: 108, overflow: 'truncate' },
+      axisLine: { lineStyle: { color: '#333' } }
+    },
+    visualMap: {
+      min: 0, max: maxV, show: false,
+      inRange: { color: ['#1e4e7d', '#378ADD', '#e0a13c', '#e05c52'] }
+    },
+    series: [{
+      type: 'heatmap', data: heatData,
+      itemStyle: { borderColor: 'rgba(10,13,18,.85)', borderWidth: 2, borderRadius: 4 },
+      emphasis: { itemStyle: { borderColor: '#fff', borderWidth: 1 } }
+    }]
+  }, true);
+}
+function bsResize() {
+  if (bsCharts.bars) bsCharts.bars.resize();
+  if (bsCharts.heat) bsCharts.heat.resize();
 }
 /* 一个机器人一行：当前任务可点（跳该条记录日志），无在途任务则显示最近一次跑的应用 */
 function bsRow(b) {
