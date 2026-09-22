@@ -353,6 +353,27 @@
     min-height: 380px;
   }
 
+  /* 窗口指示条：加粗轨道、加大触控热区 */
+  .tl-card .tl-scroll {
+    height: 34px;
+    margin: 0 12px;
+    background: none;
+    border: none;
+  }
+
+  .tl-scroll-track {
+    left: 0;
+    right: 0;
+    height: 6px;
+    border-radius: 6px;
+  }
+
+  .tl-scroll-win {
+    height: 24px;
+    min-width: 46px;
+    border-radius: 12px;
+  }
+
   .tl-card .hint {
     display: flex;
     flex-wrap: wrap;

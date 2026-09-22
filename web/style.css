@@ -407,6 +407,33 @@ select:focus {
   padding: 8px 14px;
 }
 
+/* 时间轴窗口指示条（拖滑块或点轨道可平移，长度不可拖） */
+.tl-scroll {
+  position: relative;
+  flex: none;
+  height: 16px;
+  margin: 0;
+  background: #181b21;
+  border: 1px solid #262a33;
+  border-top: none;
+  border-bottom: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+}
+
+.tl-scroll-track {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 5px;
+  transform: translateY(-50%);
+  background: #2a2f38;
+  border-radius: 5px;
+}
+
 .filter-label {
   font-size: 13px;
   color: #8b8f98;

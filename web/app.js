@@ -353,6 +353,7 @@ var tlChart = null, chartEl = null;
 var tlLastData = null;      // 最近一次渲染的数据项：custom series 取不到附加字段时按 dataIndex 回查
 var tlPan = null;           // 图表拖动平移的拖拽状态（null = 没在拖）
 var tlPanMoved = false;     // 本次拖拽是否真的移动过：拖完那一下不该被当成点击
+var tlScrollTrackEl = null, tlScrollWinEl = null;   // 底部滚动条（只反映窗口，不负责缩放）
 function recomputeBounds() {
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -715,6 +716,7 @@ function tlRender() {
   document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
   document.getElementById('mRobots').textContent = robots.length;
   tlSpanInfoUpdate();
+  tlScrollSync();
   tlListRender(false);
 }
 /* ==================== 运行记录列表（时间轴卡片下方） ====================
@@ -784,13 +786,31 @@ function tlListBind() {
     if (tr) tlGotoRec(tr.getAttribute('data-rid'));
   });
 }
-/* 窗口信息（当前窗口长度 + 起止时刻）；平移改为图表区直接拖动后，这里只更新文字 */
+/* 窗口信息（当前窗口长度 + 起止时刻） */
 function tlSpanInfoUpdate() {
   var info = document.getElementById('tlSpanInfo');
   if (!info) return;
   var nowW = Math.min(state.end + state.offset, state.end);
   info.textContent = '窗口 ' + fmtSpanLabel(state.span) + '：' +
     fmtTime(nowW - state.span) + ' ~ ' + fmtTime(nowW);
+}
+/* 底部滚动条：只反映当前窗口在全部数据里的位置与占比（窗口越长滑块越宽）。
+   窗口长度只能靠「窗口」下拉或 Ctrl+滚轮改，这里不提供缩放把手。 */
+function tlScrollSync() {
+  if (!tlScrollTrackEl || !tlScrollWinEl) return;
+  var total = state.end - DATA_MIN;
+  if (!(total > 0)) { tlScrollWinEl.style.display = 'none'; return; }
+  tlScrollWinEl.style.display = 'block';
+  var tW = tlScrollTrackEl.clientWidth || 1;
+  var nowW = Math.min(state.end + state.offset, state.end);
+  /* 视觉下限：窗口再小也按 6 小时对应的宽度画，否则窄到点不中；
+     真实窗口大小不受影响，位置换算始终按 msPerPx 走，与这个宽度无关 */
+  var minW = 6 * 3600 * 1000 / total * tW;
+  var w = Math.max(minW, Math.min(tW, state.span / total * tW));
+  var frac = (nowW - DATA_MIN) / total;
+  var left = Math.max(0, Math.min(tW - w, frac * tW - w));
+  tlScrollWinEl.style.width = w + 'px';
+  tlScrollWinEl.style.left = left + 'px';
 }
 /* 滑块改了窗口大小后同步下拉：值不在预设里就让下拉留空（表示自定义窗口） */
 function syncSpanSelect() {
@@ -812,14 +832,14 @@ function tlInit() {
   if (!chartEl) return;
   if (tlChart) { try { tlChart.dispose(); } catch (e) { } }
   tlChart = echarts.init(chartEl);
+  var MIN_SPAN = 10 * 60 * 1000;                 // 窗口下限 10 分钟
+  var MAX_SPAN = 30 * 24 * 3600 * 1000;          // 窗口上限 30 天
+  /* 滚轮：默认平移（下=向未来、上=向过去）；按住 Ctrl/⌘ 变成以鼠标处为锚点缩放窗口 */
   chartEl.addEventListener('wheel', function (e) {
     e.preventDefault();
-    state.offset += e.deltaY * (state.span / 600);
-    var nowT = Date.now();
-    var offMin = DATA_MIN - nowT;
-    var offMax = 0;
-    state.offset = Math.min(offMax, Math.max(offMin, state.offset));
-    tlUpdateWindow();
+    if (e.ctrlKey || e.metaKey) return zoomAt(e);
+    var nowW = Math.min(state.end + state.offset, state.end);
+    panTo(nowW - state.span + e.deltaY * (state.span / 600));
   }, { passive: false });
   document.getElementById('selSpan').onchange = function () {
     state.span = parseInt(this.value, 10);
@@ -861,6 +881,19 @@ function tlInit() {
     state.focusId = null;
     tlUpdateWindow();
   }
+  /* Ctrl+滚轮缩放：以鼠标所指的时刻为锚点（缩放前后它尽量停在原地），
+     向上滚放大（窗口变短、看更细），向下滚缩小。 */
+  function zoomAt(e) {
+    var rect = chartEl.getBoundingClientRect();
+    var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+    var nowW = Math.min(state.end + state.offset, state.end);
+    var anchor = nowW - state.span + frac * state.span;
+    var span = state.span * (e.deltaY > 0 ? 1.15 : 1 / 1.15);
+    state.span = Math.max(MIN_SPAN, Math.min(MAX_SPAN, span));
+    syncSpanSelect();                        // 落到预设档位就对上下拉，否则留空
+    panTo(anchor - frac * state.span);
+  }
+
   var panRaf = 0;              // 一帧最多重算一次：拖动手感更稳，也不给渲染压力
   function panApply() {
     panRaf = 0;
@@ -892,6 +925,36 @@ function tlInit() {
   window.addEventListener('pointermove', panMove);
   window.addEventListener('pointerup', endPan);
   window.addEventListener('pointercancel', endPan);
+
+  /* 底部滚动条：拖滑块平移窗口，点轨道空白把窗口移过去。
+     滑块宽度只由 tlScrollSync 按当前窗口长度计算，不能拖两端改大小。 */
+  tlScrollTrackEl = document.getElementById('tlScrollTrack');
+  tlScrollWinEl = document.getElementById('tlScrollWin');
+  if (tlScrollTrackEl && tlScrollWinEl) {
+    var slider = null;
+    function sliderMsPerPx() {
+      return (state.end - DATA_MIN) / (tlScrollTrackEl.clientWidth || 1);
+    }
+    tlScrollWinEl.addEventListener('pointerdown', function (e) {
+      var nowW = Math.min(state.end + state.offset, state.end);
+      slider = { x: e.clientX, left: nowW - state.span };
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    window.addEventListener('pointermove', function (e) {
+      if (!slider) return;
+      panTo(slider.left + (e.clientX - slider.x) * sliderMsPerPx());
+    });
+    window.addEventListener('pointerup', function () { slider = null; });
+    window.addEventListener('pointercancel', function () { slider = null; });
+    tlScrollTrackEl.addEventListener('pointerdown', function (e) {
+      if (e.target !== tlScrollTrackEl) return;
+      var rect = tlScrollTrackEl.getBoundingClientRect();
+      var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+      var center = DATA_MIN + frac * (state.end - DATA_MIN);
+      panTo(center - state.span / 2);
+    });
+  }
 
   tlChart.on('click', function (params) {
     /* 刚拖完这一下不算点击（否则平移结束会误跳详情） */

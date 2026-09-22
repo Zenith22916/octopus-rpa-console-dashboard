@@ -735,6 +735,15 @@ body {
   cursor: grabbing !important;
 }
 
+/* 窗口位置指示条：贴在图表正下方（外层 margin 负责与图表左右对齐） */
+.tl-card .tl-scroll {
+  flex: none;
+  height: 20px;
+  margin: 0 14px;
+  background: none;
+  border: none;
+}
+
 /* 时间轴视图纵向分配：大卡片吃掉剩余高度，图例与记录列表固定在下方 */
 #view-timeline {
   display: flex;
@@ -804,6 +813,41 @@ body {
 #tlListTbl td.num {
   font-variant-numeric: tabular-nums;
   color: #9aa3b3;
+}
+
+/* 窗口指示条：轨道 = 全部数据范围，中间的区间块 = 当前窗口。
+   轨道左右贴满 .tl-scroll（外层的 margin 负责与图表对齐），
+   窗口块的 left/width 由 app.js 的 tlScrollSync 按同一坐标系换算，两者必须一致。
+   块宽只随窗口长度变化，两端没有缩放把手。 */
+.tl-scroll-track {
+  left: 0;
+  right: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .11), rgba(255, 255, 255, .05));
+  height: 4px;
+  border-radius: 4px;
+}
+
+.tl-scroll-win {
+  position: absolute;
+  top: 50%;
+  height: 14px;
+  min-width: 22px;
+  box-sizing: border-box;
+  transform: translateY(-50%);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .13);
+  border: 1px solid rgba(255, 255, 255, .3);
+  cursor: grab;
+  transition: background .2s, border-color .2s;
+}
+
+.tl-scroll-win:hover {
+  background: rgba(255, 255, 255, .21);
+  border-color: rgba(255, 255, 255, .48);
+}
+
+.tl-scroll-win:active {
+  cursor: grabbing;
 }
 
 /* #chart 的卡片外观已由 .tl-card 统一承担，这里不再单独画边框 */

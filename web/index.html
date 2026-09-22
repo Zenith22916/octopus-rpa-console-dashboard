@@ -118,8 +118,14 @@
             <span class="filter-label way-label">显示排队：</span>
             <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
           </div>
-          <!-- 直接在图区拖动平移时间轴（1:1 跟手），双击回到实时视图；窗口长度用下方「窗口」下拉 -->
-          <div id="chart" class="chart" title="按住拖动平移时间轴 · 双击回到实时视图"></div>
+          <!-- 直接在图区拖动平移时间轴（1:1 跟手），Ctrl+滚轮缩放窗口，双击回到实时视图 -->
+          <div id="chart" class="chart" title="按住拖动平移时间轴 · Ctrl+滚轮缩放窗口 · 双击回到实时视图"></div>
+          <!-- 窗口位置指示条：滑块宽度跟随窗口长度，拖滑块（或点轨道）可平移；长度不可拖 -->
+          <div class="tl-scroll" id="tlScroll">
+            <div class="tl-scroll-track" id="tlScrollTrack">
+              <div class="tl-scroll-win" id="tlScrollWin" title="拖动平移时间轴"></div>
+            </div>
+          </div>
           <div class="hint">
             <span class="tl-span-info" id="tlSpanInfo">—</span>
             <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
