@@ -72,6 +72,11 @@
         </div>
         <!-- 分析页指标：由 app.js 的 anMetrics() 填充，只在分析视图显示 -->
         <div class="metrics" id="anMetrics" style="display:none;"></div>
+        <!-- 以下四组同样只在对应视图显示，填充逻辑见 app.js 的各 Render -->
+        <div class="metrics" id="cpMetrics" style="display:none;"></div>
+        <div class="metrics" id="bsMetrics" style="display:none;"></div>
+        <div class="metrics" id="lsMetrics" style="display:none;"></div>
+        <div class="metrics" id="pjMetrics" style="display:none;"></div>
       </div>
       <div class="auto-bar">
         <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不受 1 分钟节流限制）">立刻更新</button>
@@ -291,7 +296,7 @@
 
       <!-- ==================== 触发器合规视图 ==================== -->
       <div id="view-compliance" class="view" style="display:none;">
-        <div class="metrics" id="cpMetrics"></div>
+        <!-- 指标卡已上移到标题栏 #headMetrics（cpMetrics），这里只留主体 -->
         <div class="cp-layout">
           <div class="panel cp-side">
             <h2>各机器人命中率</h2>

@@ -228,6 +228,12 @@ var VIEW_NAMES = ['timeline', 'analysis', 'detail', 'schedule', 'projects',
   'botstatus', 'logsearch', 'compliance'];
 var NAV_NAMES = ['timeline', 'analysis', 'schedule', 'projects',
   'botstatus', 'logsearch', 'compliance'];
+/* 标题栏指标卡：视图 -> 容器 id。每个视图一组，切视图时只显示对应那组 */
+var HEAD_METRIC_BOXES = [
+  ['timeline', 'tlMetrics'], ['analysis', 'anMetrics'], ['schedule', 'scMetrics'],
+  ['projects', 'pjMetrics'], ['botstatus', 'bsMetrics'],
+  ['logsearch', 'lsMetrics'], ['compliance', 'cpMetrics']
+];
 
 function showView(name) {
   curView = name;
@@ -238,12 +244,11 @@ function showView(name) {
   // 离开详情页时释放 Monaco 日志编辑器（模型与实例随详情重建，避免常驻占内存）
   if (name !== 'detail' && typeof lgReset === 'function') lgReset();
   if (NAV_NAMES.indexOf(name) >= 0) navSet(name);
-  // 标题栏指标卡按视图切换（时间轴 / 日程；分析页在页面内有自己的指标卡）
-  var tlM = document.getElementById('tlMetrics'), scM = document.getElementById('scMetrics');
-  if (tlM) tlM.style.display = (name === 'timeline') ? 'flex' : 'none';
-  if (scM) scM.style.display = (name === 'schedule') ? 'flex' : 'none';
-  var anM = document.getElementById('anMetrics');
-  if (anM) anM.style.display = (name === 'analysis') ? 'flex' : 'none';
+  // 标题栏指标卡按视图切换：每个视图一组，都放在标题栏的 #headMetrics 里
+  for (var vi = 0; vi < HEAD_METRIC_BOXES.length; vi++) {
+    var box = document.getElementById(HEAD_METRIC_BOXES[vi][1]);
+    if (box) box.style.display = (name === HEAD_METRIC_BOXES[vi][0]) ? 'flex' : 'none';
+  }
   // 自动更新开关：只在「数据靠自动刷新保持新鲜」的视图显示
   // （排期/项目/合规页的数据要走「立刻更新」全量抓，自动更新只抓运行记录）
   var autoCtl = document.getElementById('autoCtl');
@@ -2551,10 +2556,12 @@ function pjLoad(force) {
       if (pjCurrent) document.getElementById('pjGroup').value = pjCurrent.group || '';
     } else if (el) {
       el.innerHTML = '<div class="pj-loading">加载失败：' + esc((d && d.error) || '未知错误') + '</div>';
+      pjMetrics(null);
     }
     return pjItems;
   }).catch(function (e) {
     if (el) el.innerHTML = '<div class="pj-loading">加载失败：' + esc(e) + '</div>';
+    pjMetrics(null);
   }).then(function (v) { glHide(); return v; });
 }
 function pjSortFn() {
@@ -2575,9 +2582,24 @@ function pjColor(name) {
   if (PJ_NAME_COLORS[c]) return PJ_NAME_COLORS[c];
   return PJ_COLORS[name.charCodeAt(0) % PJ_COLORS.length];
 }
+function pjMetrics(items) {
+  /* 项目控制台：标题栏指标卡（项目总数 + 飞书配置组映射情况）；items 为空则清空 */
+  var m = document.getElementById('pjMetrics');
+  if (!m) return;
+  if (!items || !items.length) { m.innerHTML = ''; return; }
+  var mapped = 0, groups = {};
+  items.forEach(function (it) {
+    if (it.group) { mapped++; groups[it.group] = 1; }
+  });
+  m.innerHTML = anCard('项目总数', items.length, '#378ADD')
+    + anCard('已配映射', mapped, '#1D9E75')
+    + anCard('未配映射', items.length - mapped, '#888780')
+    + anCard('配置组数', Object.keys(groups).length, '#7F77DD');
+}
 function pjRenderList() {
   var el = document.getElementById('pjList');
   if (!el) return;
+  pjMetrics(pjItems);
   var arr = pjItems.slice().sort(pjSortFn());
   var foot = document.getElementById('pjFoot');
   if (foot) foot.textContent = '共 ' + pjItems.length + ' 个项目';
@@ -2885,10 +2907,24 @@ function bsLoad() {
   }).catch(function () { BS_DATA = null; return null; });
 }
 var BS_COLS = 9;
+function bsMetrics(s) {
+  /* 机器人状态：标题栏指标卡（原来是工具条里的一句长文字，扫一眼不如数字） */
+  var m = document.getElementById('bsMetrics');
+  if (!m) return;
+  m.innerHTML = anCard('机器人', s.robots || 0, '#378ADD')
+    + anCard('运行中', s.running || 0, '#EF9F27')
+    + anCard('排队中', s.queued || 0, '#7F77DD')
+    + anCard('空闲', s.idle || 0, '#888780')
+    + anCard('在途任务', s.tasks || 0, '#1D9E75');
+}
 function bsEmpty(msg) {
   var tbl = document.getElementById('bsTbl');
   if (tbl) tbl.innerHTML = '<tbody><tr><td colspan="' + BS_COLS + '" class="bs-empty">'
     + esc(msg) + '</td></tr></tbody>';
+  var info = document.getElementById('bsInfo');
+  if (info) info.textContent = '—';
+  var m = document.getElementById('bsMetrics');
+  if (m) m.innerHTML = '';
 }
 function bsRender() {
   var tbl = document.getElementById('bsTbl');
@@ -2902,10 +2938,10 @@ function bsRender() {
     var dt = document.getElementById('dataTime');
     if (dt) dt.textContent = BS_DATA.time;
   }
+  /* 原本这句统计文字上移成标题栏指标卡（数一眼就能扫），这里只留数据时刻 */
   var info = document.getElementById('bsInfo');
-  if (info) info.textContent = '共 ' + (s.robots || 0) + ' 台 · 运行中 ' + (s.running || 0)
-    + ' / 排队中 ' + (s.queued || 0) + ' / 空闲 ' + (s.idle || 0)
-    + ' · 在途任务 ' + (s.tasks || 0) + ' 个 · ' + fmtFull(BS_DATA.now);
+  if (info) info.textContent = fmtFull(BS_DATA.now);
+  bsMetrics(s);
   var list = BS_DATA.bots || [];
   if (bsFilter === '__BUSY__') list = list.filter(function (b) { return b.state !== 'idle'; });
   else if (bsFilter === '__IDLE__') list = list.filter(function (b) { return b.state === 'idle'; });
@@ -3018,12 +3054,25 @@ function lsSearch() {
       if (btn) { btn.disabled = false; btn.textContent = '检索'; }
     });
 }
+function lsMetrics(d, groups, sc) {
+  /* 日志检索：标题栏指标卡（命中量、覆盖面、扫描规模）；工具条只留扫描明细 */
+  var m = document.getElementById('lsMetrics');
+  if (!m) return;
+  m.innerHTML = anCard('命中行', (d.hits || []).length, '#D85A30')
+    + anCard('命中日志文件', groups.length, '#378ADD')
+    + anCard('候选记录', d.candidates || 0, '#7F77DD')
+    + anCard('扫描行数', (sc && sc.lines) || 0, '#888780');
+}
 function lsRender() {
   var box = document.getElementById('lsResult');
   var d = LS_DONE;
   if (!box || !d) return;
   if (!d.ok) {
     box.innerHTML = '<div class="ls-empty">' + esc(d.error || '检索失败') + '</div>';
+    var em = document.getElementById('lsMetrics');
+    if (em) em.innerHTML = '';
+    var ei = document.getElementById('lsInfo');
+    if (ei) ei.textContent = '—';
     return;
   }
   var sc = d.scanned || {};
@@ -3042,10 +3091,10 @@ function lsRender() {
     }
     g.hits.push(h);
   });
+  lsMetrics(d, groups, sc);
   var info = document.getElementById('lsInfo');
-  if (info) info.textContent = '命中 ' + d.hits.length + ' 处 · 分布在 ' + groups.length
-    + ' 个日志文件 · 扫描 ' + (sc.records || 0) + ' 条记录 / '
-    + (sc.files || 0) + ' 个文件 / ' + (sc.lines || 0) + ' 行';
+  if (info) info.textContent = '扫描 ' + (sc.records || 0) + ' 条记录 / '
+    + (sc.files || 0) + ' 个文件 · 最近 ' + d.days + ' 天';
   var hint = document.getElementById('lsHint');
   if (hint) hint.textContent = '候选 ' + (d.candidates || 0) + ' 条记录（最近 ' + d.days
     + ' 天内且本机日志目录可访问），级别筛选「' + (LS_LVL_CN[d.lvl] || '全部行') + '」。'
@@ -3129,6 +3178,17 @@ function cpLoad() {
     glHide();
   }).catch(function (e) { CP_DATA = null; cpEmpty(String(e)); glHide(); });
 }
+function cpMetrics(s) {
+  /* 触发器合规：标题栏指标卡（原先在页面内，现与其余视图统一放标题栏） */
+  var m = document.getElementById('cpMetrics');
+  if (!m) return;
+  m.innerHTML = anCard('应跑次数', s.scheduled, '#378ADD')
+    + anCard('按时', s.hit, '#1D9E75')
+    + anCard('应用不符', s.mismatch || 0, '#D85A30')
+    + anCard('漏跑', s.missed, '#E24B4A')
+    + anCard('命中率', Math.round((s.rate || 0) * 100) + '%',
+      (s.rate || 0) >= 0.95 ? '#1D9E75' : '#EF9F27');
+}
 function cpEmpty(msg) {
   var m = document.getElementById('cpMetrics');
   if (m) m.innerHTML = '';
@@ -3151,15 +3211,7 @@ function cpFillRobots() {
 function cpRender() {
   if (!CP_DATA) return;
   var s = CP_DATA.stats || {};
-  var m = document.getElementById('cpMetrics');
-  if (m) {
-    m.innerHTML = anCard('应跑次数', s.scheduled, '#378ADD')
-      + anCard('按时', s.hit, '#1D9E75')
-      + anCard('应用不符', s.mismatch || 0, '#D85A30')
-      + anCard('漏跑', s.missed, '#E24B4A')
-      + anCard('命中率', Math.round((s.rate || 0) * 100) + '%',
-        (s.rate || 0) >= 0.95 ? '#1D9E75' : '#EF9F27');
-  }
+  cpMetrics(s);
   var info = document.getElementById('cpInfo');
   if (info) info.textContent = '可判定 ' + (s.evaluated || 0) + ' 次 · 延迟 ' + (s.late || 0)
     + ' · 待定 ' + (s.pending || 0) + ' · 超出数据范围 ' + (s.unknown || 0);

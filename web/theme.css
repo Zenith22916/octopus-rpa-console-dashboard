@@ -768,7 +768,7 @@ body {
 /* --------------- 运行记录列表：点行让甘特图右边缘对齐该记录结束时间 --------------- */
 .tl-list-panel {
   flex: 0 0 auto;
-  height: 30%;
+  height: 40%;
   min-height: 142px;
   display: flex;
   flex-direction: column;
