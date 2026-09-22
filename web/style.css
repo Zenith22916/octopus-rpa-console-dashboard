@@ -1083,6 +1083,15 @@ tbody tr:hover {
   box-sizing: border-box;
 }
 
+/* 导出按钮：与同排下拉框对齐（同高、留出与「标签 + 下拉」一致的间隔）；
+   min-width 按「导出 Excel」定宽，避免点击后变「导出中…」时按钮宽度回缩跳动 */
+#scExport {
+  margin-left: 18px;
+  padding: 3px 12px;
+  min-width: 84px;
+  vertical-align: middle;
+}
+
 #c1 {
   flex: 1;
   min-height: 0;

@@ -9,6 +9,7 @@ RPA 数据聚合模块（前后端分离架构下的数据层）
   - load_records(out_dir)          → 运行记录列表（时间轴/分析共用，含日志目录解析）
   - resolve_log_dir(...)           → 根据机器人 + 开始时间 + 流程编号推算日志共享目录
   - build_schedule_payload(rows)   → 触发器日程表数据（周/月视图 + 统计）
+  - build_schedule_export(...)     → 按当前筛选条件整理排期导出数据（明细 + 触发器清单）
   - build_bot_status(records)      → 机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）
   - build_compliance(rows, records)→ 触发器排期 vs 实跑比对（命中 / 延迟 / 漏跑）
 
@@ -265,6 +266,155 @@ def build_schedule_payload(rows):
         "stats": stats,
         "year": year,
         "monthNum": month,
+    }
+
+
+# 排期导出用：星期与周期类型的中文名（与前端 WEEK_LABELS / 图表口径一致）
+WD_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+KIND_CN = {"daily": "每天", "weekly": "每周", "monthly": "每月"}
+# 排期页机器人筛选的三个虚拟值（前端 selRobot 的取值）
+ROBOT_LABELS = {"__ALL__": "全部机器人", "__SUXI__": "所有硕晞", "__BAOSHI__": "所有宝实"}
+STATUS_LABELS = {"enabled": "已启用", "disabled": "已停用", "__ALL__": "全部状态"}
+
+
+def sched_robot_match(name, flt):
+    """机器人筛选：__ALL__ 全部 / __SUXI__ 含「硕晞」/ __BAOSHI__ 含「宝实」/ 其余精确匹配。
+    口径与前端 scMatchRobot 保持一致，避免导出内容与页面图表对不上。"""
+    if not flt or flt == "__ALL__":
+        return True
+    if flt == "__SUXI__":
+        return "硕晞" in (name or "")
+    if flt == "__BAOSHI__":
+        return "宝实" in (name or "")
+    return (name or "") == flt
+
+
+def sched_status_match(enabled, status):
+    """状态筛选：enabled 已启用 / disabled 已停用 / __ALL__ 全部。"""
+    if not status or status == "__ALL__":
+        return True
+    return enabled if status == "enabled" else (not enabled)
+
+
+def bj_text(v):
+    """ISO 时间/时间戳 -> 北京时间「YYYY-MM-DD HH:MM」。解析失败返回空串。"""
+    ms = to_ms(v)
+    if ms is None:
+        return ""
+    return datetime.fromtimestamp(ms / 1000.0, BJT).strftime("%Y-%m-%d %H:%M")
+
+
+def parse_calendar(raw):
+    """calendar 字段（JSON 字符串）-> dict；空值或坏数据返回 None。"""
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        cal = json.loads(raw)
+    except Exception:
+        return None
+    return cal if isinstance(cal, dict) else None
+
+
+def describe_schedule(cal, trigger_type="", cron="", ndays=31):
+    """把 calendar 结构翻译成一句人话排期（导出用，页面上没有这一列）。"""
+    parsed = parse_points(cal)
+    if parsed is None:
+        if trigger_type == "Webhook":
+            return "Webhook 触发（无定时排期）"
+        if cron:
+            return "cron 表达式：%s" % cron
+        return "无定时排期"
+    kind, days, pts = parsed
+    times = "、".join("%02d:%02d" % (h, m) for h, m in pts) or "—"
+    if kind == "daily":
+        return "每天 %s" % times
+    if kind == "weekly":
+        return "每周%s %s" % ("、".join(WD_CN[d] for d in sorted(set(days))), times)
+    md = cal.get("monthlyData") or {}
+    ds = month_days_for(cal, ndays)
+    txt = ("每月 %s 日 %s" % ("、".join(str(d) for d in ds), times)) if ds else ("每月 %s" % times)
+    if md.get("lastDays"):
+        txt += "（含月末倒数第 %s 天）" % "、".join(str(n) for n in md["lastDays"])
+    return txt
+
+
+def kind_text(kind, trigger_type=""):
+    """周期类型中文名：每天 / 每周 / 每月 / Webhook。"""
+    if kind in KIND_CN:
+        return KIND_CN[kind]
+    return "Webhook" if trigger_type == "Webhook" else (trigger_type or "—")
+
+
+def build_schedule_export(rows, view="week", robot="__ALL__", status="enabled"):
+    """按排期页当前筛选条件整理导出数据，返回 dict。
+
+    view=week  → detail 展开到周一~周日（每天 / 每周 任务）
+    view=month → detail 展开到当月日期（每月 任务）
+
+    detail  与图表同口径的排期点，受「视图 + 机器人 + 状态」三重筛选；
+    triggers 命中机器人与状态筛选的全部触发器（不受视图影响，含 Webhook），
+            用来补上「月视图看不到每周任务」这类信息差。
+    """
+    today = datetime.now()
+    ndays = calendar.monthrange(today.year, today.month)[1]
+    week = view != "month"
+
+    detail, triggers = [], []
+    for r in rows:
+        rname = r.get("robot_name") or ""
+        if not sched_robot_match(rname, robot):
+            continue
+        enabled = is_enabled(r.get("enabled"))
+        if not sched_status_match(enabled, status):
+            continue
+        cal = parse_calendar(r.get("calendar"))
+        way = r.get("trigger_type") or ""
+        parsed = parse_points(cal)
+        kind = parsed[0] if parsed else ""
+        common = {
+            "robot": rname,
+            "app": r.get("app_name") or "",
+            "trigger": r.get("trigger_name") or "",
+            "way": way,
+            "kind": kind_text(kind, way),
+            "enabled": "已启用" if enabled else "已停用",
+            "update": bj_text(r.get("update_time")),
+            "tid": r.get("trigger_id") or "",
+        }
+        triggers.append(dict(common, plan=describe_schedule(cal, way, r.get("cron") or "", ndays)))
+        if parsed is None:
+            continue
+        _, days, pts = parsed
+        if week and kind in ("daily", "weekly"):
+            for wd in sorted(set(days)):
+                for h, m in pts:
+                    detail.append(dict(common, day=WD_CN[wd], day_key=wd, minute=h * 60 + m,
+                                       time="%02d:%02d" % (h, m)))
+        if (not week) and kind == "monthly":
+            for d in month_days_for(cal, ndays):
+                for h, m in pts:
+                    detail.append(dict(common, day="%d月%d日" % (today.month, d), day_key=d,
+                                       minute=h * 60 + m, time="%02d:%02d" % (h, m)))
+
+    detail.sort(key=lambda x: (x["robot"], x["day_key"], x["minute"], x["app"]))
+    for i, d in enumerate(detail, 1):
+        d["no"] = i
+    triggers.sort(key=lambda x: (x["robot"], x["app"], x["trigger"]))
+
+    robot_label = ROBOT_LABELS.get(robot) or robot
+    return {
+        "ok": True,
+        "view": "week" if week else "month",
+        "viewLabel": "每周视图" if week else "每月视图",
+        "robot": robot,
+        "robotLabel": robot_label,
+        "status": status,
+        "statusLabel": STATUS_LABELS.get(status) or status,
+        "detail": detail,
+        "triggers": triggers,
+        "monthNum": today.month,
+        "monthDays": ndays,
+        "generated": today.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 

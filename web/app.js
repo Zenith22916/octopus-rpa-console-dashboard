@@ -2126,6 +2126,38 @@ function scReload() {
   document.getElementById('sWebhook').textContent = SCHED.stats.webhook;
   scRender(scView, scFilter, scStatus);
 }
+/* 排期导出：按当前筛选条件请后端生成 xlsx，前端收 Blob 触发下载（不落盘、不跳页） */
+function scExport() {
+  var btn = document.getElementById('scExport');
+  if (!btn || btn.disabled) return;
+  var label = btn.textContent;
+  btn.disabled = true; btn.textContent = '导出中…';
+  var done = function () { btn.disabled = false; btn.textContent = label; };
+  var url = '/api/schedule/export?view=' + encodeURIComponent(scView)
+    + '&robot=' + encodeURIComponent(scFilter) + '&status=' + encodeURIComponent(scStatus);
+  fetch(url, { credentials: 'same-origin' }).then(function (res) {
+    if (res.status === 401) { location.href = '/login'; return null; }
+    var ct = res.headers.get('Content-Type') || '';
+    if (ct.indexOf('json') >= 0) {
+      // 筛选条件无数据 / 生成失败：后端返回 JSON 说明，这里转成提示
+      return res.json().then(function (d) { throw new Error((d && d.error) || '导出失败'); });
+    }
+    var name = '触发器排期.xlsx';
+    var m = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get('Content-Disposition') || '');
+    if (m) { try { name = decodeURIComponent(m[1]); } catch (e) { } }
+    return res.blob().then(function (b) { return { blob: b, name: name }; });
+  }).then(function (o) {
+    if (!o) return;
+    var href = URL.createObjectURL(o.blob);
+    var a = document.createElement('a');
+    a.href = href; a.download = o.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(href); }, 5000);
+  }).catch(function (e) {
+    alert('导出失败：' + (e && e.message ? e.message : e));
+  }).then(done);
+}
+document.getElementById('scExport').addEventListener('click', scExport);
 setInterval(scUpdateLines, 10000);
 
 /* ==================== 自动更新 ==================== */

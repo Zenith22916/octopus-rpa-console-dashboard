@@ -23,11 +23,12 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
 
-import dashboard  # 数据聚合层（load_records / build_schedule_payload）
-import octo_api    # 八爪鱼调度 API（详情页"重新运行"）
-import feishu_cfg  # 飞书多维表格配置中心读写（项目全览页）
+import dashboard    # 数据聚合层（load_records / build_schedule_payload / build_schedule_export）
+import octo_api     # 八爪鱼调度 API（详情页"重新运行"）
+import feishu_cfg   # 飞书多维表格配置中心读写（项目全览页）
+import xlsx_writer  # 排期导出：纯标准库拼 xlsx（build_xlsx）
 
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -374,6 +375,40 @@ def search_logs(records, kw, robot="", days=7, only_lvl=None,
             "candidates": len(cands)}
 
 
+def sheets_for_schedule(ex):
+    """把 build_schedule_export 的结果排成两张 Excel 表（列顺序、列宽、居中列都在这里定）。"""
+    head_note = "筛选：%s　机器人：%s　状态：%s　导出时间：%s" % (
+        ex["viewLabel"], ex["robotLabel"], ex["statusLabel"], ex["generated"])
+    detail = [[d["no"], d["robot"], d["app"], d["trigger"], d["way"], d["kind"],
+               d["day"], d["time"], d["enabled"], d["update"], d["tid"]]
+              for d in ex["detail"]]
+    summary = [[t["robot"], t["app"], t["trigger"], t["way"], t["kind"], t["plan"],
+                t["enabled"], t["update"], t["tid"]]
+               for t in ex["triggers"]]
+    return [
+        {
+            "name": "排期明细",
+            "title": "触发器排期明细（%s）" % ex["viewLabel"],
+            "note": head_note + "　共 %d 条排期点" % len(detail),
+            "headers": ["序号", "机器人", "应用", "触发器名", "触发方式", "周期类型",
+                        "排期日", "触发时间", "状态", "更新时间", "触发器ID"],
+            "widths": [6, 16, 34, 30, 10, 10, 12, 10, 9, 18, 26],
+            "center": [0, 5, 8],
+            "rows": detail,
+        },
+        {
+            "name": "触发器汇总",
+            "title": "触发器汇总（%s，不受视图限制）" % ex["robotLabel"],
+            "note": head_note + "　含 Webhook 与未排期触发器，共 %d 条" % len(summary),
+            "headers": ["机器人", "应用", "触发器名", "触发方式", "周期类型", "排期描述",
+                        "状态", "更新时间", "触发器ID"],
+            "widths": [16, 34, 30, 10, 10, 46, 9, 18, 26],
+            "center": [4, 6],
+            "rows": summary,
+        },
+    ]
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB, **kwargs)
@@ -406,6 +441,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path0 == "/api/run":
             self.handle_api_run()
+            return
+        if path0 == "/api/schedule/export":
+            self.handle_api_schedule_export()
             return
         if path0 == "/api/schedule":
             self.handle_api_schedule()
@@ -766,6 +804,56 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def handle_api_schedule_export(self):
+        """GET /api/schedule/export?view=&robot=&status=：按排期页当前筛选条件导出 xlsx。
+
+        xlsx 在内存里生成后直接下发（不落盘），浏览器据 Content-Disposition 触发下载。
+        两个工作表：排期明细（与图表同口径展开）+ 触发器汇总（含 Webhook 与排期描述）。
+        """
+        q = parse_qs(urlparse(self.path).query)
+        view = (q.get("view", ["week"])[0] or "week").lower()
+        view = "month" if view == "month" else "week"
+        robot = unquote(q.get("robot", ["__ALL__"])[0]) or "__ALL__"
+        status = (q.get("status", ["enabled"])[0] or "enabled").lower()
+        if status not in ("enabled", "disabled", "__all__"):
+            status = "enabled"
+        if status == "__all__":
+            status = "__ALL__"
+
+        path = os.path.join(DIR, "triggers_normalized.csv")
+        if not os.path.exists(path):
+            return self._send_json({"ok": False, "error": "缺少 triggers_normalized.csv"})
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                rows = list(csv.DictReader(f))
+            ex = dashboard.build_schedule_export(rows, view=view, robot=robot, status=status)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "排期导出数据整理失败：%s" % e})
+
+        try:
+            data = xlsx_writer.build_xlsx(sheets_for_schedule(ex))
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "Excel 生成失败：%s" % e})
+        if not ex["detail"] and not ex["triggers"]:
+            return self._send_json({"ok": False, "error": "当前筛选条件下没有排期数据"})
+
+        stem = "触发器排期_%s_%s_%s" % (ex["viewLabel"], ex["robotLabel"], ex["statusLabel"])
+        fname = "%s_%s.xlsx" % (stem, datetime.datetime.now().strftime("%Y-%m-%d"))
+        ascii_name = "schedule_%s_%s.xlsx" % (ex["view"], datetime.datetime.now().strftime("%Y%m%d"))
+        print("[导出] 排期 xlsx：%s（明细 %d 行 / 触发器 %d 条）"
+              % (fname, len(ex["detail"]), len(ex["triggers"])))
+        self.send_response(200)
+        self.send_header("Content-Type",
+                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        # 中文名走 RFC 5987 的 filename*；老浏览器回落到 ASCII 名
+        self.send_header("Content-Disposition",
+                         'attachment; filename="%s"; filename*=UTF-8\'\'%s'
+                         % (ascii_name, quote(fname, safe="")))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def handle_api_botstatus(self):
         """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。"""

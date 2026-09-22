@@ -71,6 +71,7 @@ crawler.py ──爬取──▶ output/*.csv（数据源）
 dashboard.py ──▶ 数据聚合模块（load_records / build_schedule_payload，不生成 HTML）
 octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行）
 feishu_cfg.py ─▶ 飞书多维表格配置中心读写
+xlsx_writer.py ─▶ 排期导出 xlsx（纯标准库拼 zip + XML，内存生成不落盘）
                         │
 local_server.py ──▶ 启动时/刷新/每日更新后载入内存
                         │
@@ -96,6 +97,7 @@ web/（纯前端，hash 路由八视图）
 | GET | `/api/runs` | 运行记录（时间轴、分析视图共用，来自内存缓存） |
 | GET | `/api/run?id=` | 单条记录详情（含日志目录解析） |
 | GET | `/api/schedule` | 触发器日程（周/月视图 + 统计） |
+| GET | `/api/schedule/export?view=&robot=&status=` | 按当前筛选导出 xlsx（内存生成，附件下载） |
 | GET | `/api/botstatus` | 各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近 24 小时/近 7 天负载） |
 | GET | `/api/compliance?days=&window=` | 触发器排期 vs 实跑比对（按时/延迟/应用不符/漏跑 + 各机器人命中率） |
 | GET | `/api/logsearch?q=&robot=&days=&lvl=` | 跨运行记录检索日志关键词（`lvl=err` 仅错误 / `warn` 错误+警告） |
@@ -214,6 +216,10 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 - 指标卡：触发器总数 / 已启用 / 已停用 / Webhook
 - 按应用配色（12 色），同色 = 同一应用；同一时刻多个应用分组堆叠，格内为应用短名，悬停看明细
 - 红色虚线 = 当前时刻与今天（10 秒刷新）
+- **导出 Excel**：按当前筛选（视图 + 机器人 + 状态）生成 xlsx 并触发下载，两张表——
+  - `排期明细`：与图表同口径展开的排期点（周视图按周几、月视图按日期），含触发器名/触发方式/周期类型/状态/更新时间
+  - `触发器汇总`：命中筛选的全部触发器（含 Webhook 与未排期项），比图表多一列「排期描述」（如「每周周一 08:00」）
+  - xlsx 由后端内存生成（不落盘），下载文件名带上视图/机器人/状态与日期
 
 ### 项目控制台（`#/projects`）
 
@@ -403,8 +409,9 @@ pip install "mcp<2" cryptography
 ```
 octopus-rpa-console-dashboard/
 ├── crawler.py              # 抓取触发器 + 运行记录
-├── dashboard.py            # 数据聚合模块（load_records / build_schedule_payload / build_bot_status / build_compliance）
-├── local_server.py         # 局域网 HTTP 服务器 + JSON API（端口 8000；含跨记录日志检索与行级别判定）
+├── dashboard.py            # 数据聚合模块（load_records / build_schedule_payload / build_schedule_export / build_bot_status / build_compliance）
+├── local_server.py         # 局域网 HTTP 服务器 + JSON API（端口 8000；含跨记录日志检索、排期导出）
+├── xlsx_writer.py          # 极简 XLSX 生成器（纯标准库拼 zip + XML，排期导出用，不依赖 openpyxl）
 ├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv）
 ├── octo_api.py             # 八爪鱼云端调度 API（登录/项目列表/触发运行）
 ├── feishu_cfg.py           # 飞书多维表格配置中心读写
