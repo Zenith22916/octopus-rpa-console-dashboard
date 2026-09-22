@@ -10,6 +10,7 @@ RPA 数据聚合模块（前后端分离架构下的数据层）
   - resolve_log_dir(...)           → 根据机器人 + 开始时间 + 流程编号推算日志共享目录
   - build_schedule_payload(rows)   → 触发器日程表数据（周/月视图 + 统计）
   - build_schedule_export(...)     → 按当前筛选条件整理排期导出数据（明细 + 触发器清单）
+  - build_schedule_calendar(ex)    → 把排期明细聚成日历网格（行=时刻×应用，列=周几/日期）
   - build_bot_status(records)      → 机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）
   - build_compliance(rows, records)→ 触发器排期 vs 实跑比对（命中 / 延迟 / 漏跑）
 
@@ -42,6 +43,8 @@ PALETTE = [
     "rgba(226,75,74,0.6)", "rgba(239,159,39,0.6)", "rgba(31,184,184,0.6)", "rgba(184,110,232,0.6)",
     "rgba(151,196,89,0.6)", "rgba(240,153,123,0.6)", "rgba(93,202,165,0.6)", "rgba(237,147,177,0.6)",
 ]
+# 已停用触发器的灰（页面与导出共用一个值）
+SCHED_GRAY = "rgba(95,94,90,0.6)"
 
 
 def to_ms(v):
@@ -224,7 +227,7 @@ def build_schedule_payload(rows):
         if parsed is None:
             continue
         kind, days, pts = parsed
-        color = PALETTE[list(app_order.keys()).index(r["app_name"]) % len(PALETTE)] if en else "rgba(95,94,90,0.6)"
+        color = PALETTE[list(app_order.keys()).index(r["app_name"]) % len(PALETTE)] if en else SCHED_GRAY
         short = app_short(r["app_name"])
         for (h, m) in pts:
             t = round(h + m / 60.0, 2)
@@ -359,6 +362,14 @@ def build_schedule_export(rows, view="week", robot="__ALL__", status="enabled"):
     ndays = calendar.monthrange(today.year, today.month)[1]
     week = view != "month"
 
+    # 应用配色：与网页图表同口径（按触发器数据里 app_name 首次出现顺序取 PALETTE），
+    # 日历表据此给每个应用上色，保证导出与页面看到的是同一套颜色
+    app_order = OrderedDict()
+    for r in rows:
+        app = r.get("app_name")
+        if app and app not in app_order:
+            app_order[app] = len(app_order)
+
     detail, triggers = [], []
     for r in rows:
         rname = r.get("robot_name") or ""
@@ -371,11 +382,16 @@ def build_schedule_export(rows, view="week", robot="__ALL__", status="enabled"):
         way = r.get("trigger_type") or ""
         parsed = parse_points(cal)
         kind = parsed[0] if parsed else ""
+        app = r.get("app_name") or ""
         common = {
             "robot": rname,
-            "app": r.get("app_name") or "",
-            "trigger": r.get("trigger_name") or "",
+            "app": app,
+            "app_no": app_order.get(app, 999),      # 应用出现顺序：日历表按它排堆叠行，与图表一致
+            "short": app_short(app),
+            "color": PALETTE[app_order[app] % len(PALETTE)] if (enabled and app in app_order)
+                     else SCHED_GRAY,
             "way": way,
+            "trigger": r.get("trigger_name") or "",
             "kind": kind_text(kind, way),
             "enabled": "已启用" if enabled else "已停用",
             "update": bj_text(r.get("update_time")),
@@ -416,6 +432,61 @@ def build_schedule_export(rows, view="week", robot="__ALL__", status="enabled"):
         "monthDays": ndays,
         "generated": today.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def build_schedule_calendar(ex):
+    """把导出明细聚合成日历网格（行 = 时刻 × 应用，列 = 周几或日期），供 Excel 日历表渲染。
+
+    与网页图表同口径：按「时刻 + 应用」聚合，同一应用跨机器人的排期并成一行，
+    颜色也沿用图表那套调色板。
+
+    与网页的一点差异：网页是取同一应用排期日的首尾列画一个矩形，会跨过中间没排期的
+    日子；这里只在**日期连续**时才并成一块，断开的另起一块，避免 Excel 色块横跨没排期的日期。
+
+    返回 {"colLabels": [...], "rows": [{time, app, short, color, enabled, runs}...]}，
+    runs 是列区间列表（闭区间），如 [[0, 2], [4, 4]]。
+    """
+    detail = ex.get("detail") or []
+    week = ex.get("view") != "month"
+    if week:
+        labels = list(WD_CN)
+        pos_of = {i: i for i in range(7)}
+    else:
+        days = sorted({d["day_key"] for d in detail})
+        labels = ["%d日" % d for d in days]
+        pos_of = {d: i for i, d in enumerate(days)}
+
+    merged = OrderedDict()      # (分钟, 应用) -> 聚合项
+    for d in detail:
+        if d["day_key"] not in pos_of:
+            continue
+        g = merged.get((d["minute"], d["app"]))
+        if g is None:
+            g = {"time": d["time"], "app": d["app"], "app_no": d.get("app_no", 999),
+                 "short": d.get("short") or d["app"], "color": d["color"],
+                 "enabled": d["enabled"] == "已启用", "days": set()}
+            merged[(d["minute"], d["app"])] = g
+        g["days"].add(d["day_key"])
+        # 同一应用既有启用又有停用时，按启用那套颜色显示（与网页一致）
+        if d["enabled"] == "已启用" and not g["enabled"]:
+            g["color"], g["enabled"] = d["color"], True
+
+    rows = []
+    for key in sorted(merged.keys(), key=lambda k: (k[0], merged[k]["app_no"], k[1])):
+        g = merged[key]
+        ds = sorted(g["days"])
+        runs, start, prev = [], ds[0], ds[0]
+        for x in ds[1:]:
+            if x == prev + 1:
+                prev = x
+            else:
+                runs.append([pos_of[start], pos_of[prev]])
+                start = prev = x
+        runs.append([pos_of[start], pos_of[prev]])
+        rows.append({"time": g["time"], "app": g["app"], "short": g["short"],
+                     "color": g["color"], "enabled": g["enabled"], "runs": runs})
+
+    return {"colLabels": labels, "rows": rows, "view": ex.get("view")}
 
 
 def build_bot_status(records):

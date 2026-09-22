@@ -375,38 +375,123 @@ def search_logs(records, kw, robot="", days=7, only_lvl=None,
             "candidates": len(cands)}
 
 
-def sheets_for_schedule(ex):
-    """把 build_schedule_export 的结果排成两张 Excel 表（列顺序、列宽、居中列都在这里定）。"""
-    head_note = "筛选：%s　机器人：%s　状态：%s　导出时间：%s" % (
+def _rgba_to_hex(rgba, bg=255):
+    """网页的 rgba(...) 半透明色 → Excel 实色（按 alpha 叠到底色上，默认白底）。"""
+    m = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)", rgba or "")
+    if not m:
+        return "D9D9D9"
+    a = float(m.group(4)) if m.group(4) else 1.0
+    return "".join("%02X" % round(int(m.group(i)) * a + bg * (1 - a)) for i in (1, 2, 3))
+
+
+def _sched_head_note(ex):
+    """三张表共用的筛选说明行。"""
+    return "筛选：%s　机器人：%s　状态：%s　导出时间：%s" % (
         ex["viewLabel"], ex["robotLabel"], ex["statusLabel"], ex["generated"])
+
+
+def sheet_for_schedule_calendar(ex):
+    """排期日历（第一张表）：行=时刻×应用，列=周几/日期，同应用的连续排期日合并成色块。
+
+    版式对齐页面图表：一个色块 = 同一应用在该时刻的排期日（跨机器人合并，颜色取图表调色板），
+    「时刻」列在同一时刻的多行之间纵向合并。空白格保留边框，整体就是一张日历。
+    """
+    cal = ex["calendar"]
+    labels = cal["colLabels"]
+    ncol = len(labels)
+    week = cal["view"] != "month"
+
+    # 每个应用色一个样式；「时刻」列用浅灰底把纵轴和日历格子区分开
+    styles = {"timecell": {"fill": "F2F2F2", "color": "404040", "bold": True,
+                           "align": "center", "border": True}}
+    color_style = {}
+    for r in cal["rows"]:
+        hx = _rgba_to_hex(r["color"])
+        if hx not in color_style:
+            name = "c%d" % len(color_style)
+            color_style[hx] = name
+            styles[name] = {"fill": hx, "color": "0B0E13", "align": "center",
+                            "border": True, "wrap": True}
+
+    body, merges = [], []
+    for i, r in enumerate(cal["rows"]):
+        style = color_style[_rgba_to_hex(r["color"])]
+        cells = [{"v": r["time"], "s": "timecell"}] + [None] * ncol
+        for a, b in r["runs"]:
+            for c in range(a, b + 1):
+                # 合并区每格都写样式，非首格留空值
+                cells[c + 1] = {"v": r["short"] if c == a else "", "s": style}
+            if b > a:
+                row_no = 4 + i
+                merges.append("%s%d:%s%d" % (xlsx_writer.col_letter(a + 1), row_no,
+                                             xlsx_writer.col_letter(b + 1), row_no))
+        body.append(cells)
+
+    i = 0
+    while i < len(cal["rows"]):     # 同一时刻的行纵向合并「时刻」列
+        j = i
+        while j + 1 < len(cal["rows"]) and cal["rows"][j + 1]["time"] == cal["rows"][i]["time"]:
+            j += 1
+        if j > i:
+            merges.append("A%d:A%d" % (4 + i, 4 + j))
+        i = j + 1
+
+    return {
+        "name": "排期日历",
+        "title": "触发器排期日历（%s）" % ex["viewLabel"],
+        "note": _sched_head_note(ex) + "　共 %d 个时刻 / %d 行应用排期"
+                "（色块=该应用在此刻的排期日，连续日期合并；灰色=已停用）"
+                % (len({r["time"] for r in cal["rows"]}), len(cal["rows"])),
+        "headers": ["时刻"] + labels,
+        # 列宽按最长应用短名（「广告计划Listing」11 字）定，放不下时靠自动换行折成两行
+        "widths": [10] + ([19] * ncol if week else [13] * ncol),
+        "styles": styles,
+        "rows": body,
+        "merges": merges,
+        "data_height": 30,
+        "filter": False,      # 日历靠合并色块表达，不要自动筛选
+    }
+
+
+def sheet_for_schedule_detail(ex):
+    """排期明细表：一行一个排期点（与图表同口径展开）。"""
     detail = [[d["no"], d["robot"], d["app"], d["trigger"], d["way"], d["kind"],
                d["day"], d["time"], d["enabled"], d["update"], d["tid"]]
               for d in ex["detail"]]
+    return {
+        "name": "排期明细",
+        "title": "触发器排期明细（%s）" % ex["viewLabel"],
+        "note": _sched_head_note(ex) + "　共 %d 条排期点" % len(detail),
+        "headers": ["序号", "机器人", "应用", "触发器名", "触发方式", "周期类型",
+                    "排期日", "触发时间", "状态", "更新时间", "触发器ID"],
+        "widths": [6, 16, 34, 30, 10, 10, 12, 10, 9, 18, 26],
+        "center": [0, 5, 8],
+        "rows": detail,
+    }
+
+
+def sheet_for_schedule_summary(ex):
+    """触发器汇总表：命中筛选的全部触发器（含 Webhook 与未排期项）。"""
     summary = [[t["robot"], t["app"], t["trigger"], t["way"], t["kind"], t["plan"],
                 t["enabled"], t["update"], t["tid"]]
                for t in ex["triggers"]]
-    return [
-        {
-            "name": "排期明细",
-            "title": "触发器排期明细（%s）" % ex["viewLabel"],
-            "note": head_note + "　共 %d 条排期点" % len(detail),
-            "headers": ["序号", "机器人", "应用", "触发器名", "触发方式", "周期类型",
-                        "排期日", "触发时间", "状态", "更新时间", "触发器ID"],
-            "widths": [6, 16, 34, 30, 10, 10, 12, 10, 9, 18, 26],
-            "center": [0, 5, 8],
-            "rows": detail,
-        },
-        {
-            "name": "触发器汇总",
-            "title": "触发器汇总（%s，不受视图限制）" % ex["robotLabel"],
-            "note": head_note + "　含 Webhook 与未排期触发器，共 %d 条" % len(summary),
-            "headers": ["机器人", "应用", "触发器名", "触发方式", "周期类型", "排期描述",
-                        "状态", "更新时间", "触发器ID"],
-            "widths": [16, 34, 30, 10, 10, 46, 9, 18, 26],
-            "center": [4, 6],
-            "rows": summary,
-        },
-    ]
+    return {
+        "name": "触发器汇总",
+        "title": "触发器汇总（%s，不受视图限制）" % ex["robotLabel"],
+        "note": _sched_head_note(ex) + "　含 Webhook 与未排期触发器，共 %d 条" % len(summary),
+        "headers": ["机器人", "应用", "触发器名", "触发方式", "周期类型", "排期描述",
+                    "状态", "更新时间", "触发器ID"],
+        "widths": [16, 34, 30, 10, 10, 46, 9, 18, 26],
+        "center": [4, 6],
+        "rows": summary,
+    }
+
+
+def sheets_for_schedule(ex):
+    """导出工作簿：日历（主表） + 排期明细 + 触发器汇总。"""
+    return [sheet_for_schedule_calendar(ex),
+            sheet_for_schedule_detail(ex),
+            sheet_for_schedule_summary(ex)]
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -809,7 +894,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """GET /api/schedule/export?view=&robot=&status=：按排期页当前筛选条件导出 xlsx。
 
         xlsx 在内存里生成后直接下发（不落盘），浏览器据 Content-Disposition 触发下载。
-        两个工作表：排期明细（与图表同口径展开）+ 触发器汇总（含 Webhook 与排期描述）。
+        三张工作表：排期日历（版式对齐页面图表，同行/列合并成色块）+ 排期明细 + 触发器汇总。
         """
         q = parse_qs(urlparse(self.path).query)
         view = (q.get("view", ["week"])[0] or "week").lower()
@@ -828,6 +913,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             with open(path, "r", encoding="utf-8-sig") as f:
                 rows = list(csv.DictReader(f))
             ex = dashboard.build_schedule_export(rows, view=view, robot=robot, status=status)
+            ex["calendar"] = dashboard.build_schedule_calendar(ex)
         except Exception as e:
             return self._send_json({"ok": False, "error": "排期导出数据整理失败：%s" % e})
 
