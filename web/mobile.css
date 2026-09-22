@@ -351,6 +351,10 @@
     flex: none;
     height: 58vh;
     min-height: 380px;
+    /* 转置后时间沿竖直方向，拖动平移就是竖向手势：这里不能让浏览器接管，
+       否则一拖就变成滚页面（桌面端是横向拖动，故留 pan-y）。
+       !important 是为了不依赖样式表加载顺序压过 theme.css 里的 pan-y */
+    touch-action: none !important;
   }
 
   /* 窗口指示条：加粗轨道、加大触控热区 */

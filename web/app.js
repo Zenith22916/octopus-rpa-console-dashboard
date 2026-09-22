@@ -507,11 +507,17 @@ function tlRender() {
   if (lgQueue) lgQueue.style.display = showQueue ? '' : 'none';
   robots = robotList(segs);
   var visible = segs.filter(function (s) { return effEnd(s) >= winStart && s.start <= nowW; });
+  /* 手机端（窄屏）把时间轴转置：时间沿竖直方向展开、机器人横向排开，块内文字逐字竖排。
+     下面所有绘制都按「时间方向 / 泳道方向」两个方向来算，两种布局共用一套代码。 */
+  var T = IS_MOBILE;
   // 可见下限：屏幕上不足约 2px 的条视为看不见（窗口越大阈值越大），用于抑制“细到不渲染却仍占泳道”的空泳道。
   var cw = tlChart.getWidth ? tlChart.getWidth() : 0;
-  var gLeftPx = IS_MOBILE ? 76 : 100, gRightPx = IS_MOBILE ? 14 : 20;
-  var plotW = cw > 0 ? Math.max(50, cw - gLeftPx - gRightPx) : 900;
-  var minVisibleMs = state.span * (2 / plotW);
+  var ch = tlChart.getHeight ? tlChart.getHeight() : 0;
+  var gLeftPx = T ? 46 : 100, gRightPx = T ? 10 : 20;
+  var gTopPx = T ? 14 : 20, gBotPx = T ? 58 : 30;
+  /* 时间方向上的可用像素长度：桌面取横向宽度，转置后取纵向高度 */
+  var plotLen = Math.max(50, (T ? ch - gTopPx - gBotPx : cw - gLeftPx - gRightPx) || 900);
+  var minVisibleMs = state.span * (2 / plotLen);
   var info = layout(visible, minVisibleMs);
   var yLabels = layout.yLabels;
   var lastRows = layout.groupLastRows || [];
@@ -549,6 +555,29 @@ function tlRender() {
   visible.forEach(function (s) { recIds[s.r.id] = 1; });
   var recCount = Object.keys(recIds).length;
   tlLastData = data;
+
+  /* ---- 两种布局共用的坐标工具（T = 转置时 x 轴是泳道、y 轴是时间） ---- */
+  // 时间 t + 泳道 row -> 屏幕坐标 [x, y]
+  function xy(api, t, row) { return api.coord(T ? [row, t] : [t, row]); }
+  // 两点在「时间方向」上的像素长度：桌面看横向、转置后看纵向
+  function lenOf(p0, p1) { return T ? Math.abs(p1[1] - p0[1]) : Math.abs(p1[0] - p0[0]); }
+  // 泳道方向的厚度（一条泳道有多厚）
+  function bandOf(api) { return T ? api.size([1, 0])[0] : api.size([0, 1])[1]; }
+  // 画一段块：p0/p1 为两端屏幕坐标，thick 为泳道方向厚度
+  function barOf(p0, p1, thick, style) {
+    var a0 = T ? Math.min(p0[1], p1[1]) : Math.min(p0[0], p1[0]);
+    var a1 = T ? Math.max(p0[1], p1[1]) : Math.max(p0[0], p1[0]);
+    var len = a1 - a0;
+    var c = T ? p0[0] : p0[1];                 // 泳道中心
+    var r = Math.min(3, len / 2, thick / 2);
+    return {
+      type: 'rect',
+      shape: T ? { x: c - thick / 2, y: a0, width: thick, height: len, r: r }
+        : { x: a0, y: c - thick / 2, width: len, height: thick, r: r },
+      style: style
+    };
+  }
+
   tlChart.setOption({
     backgroundColor: 'transparent',
     animation: false,
@@ -574,21 +603,40 @@ function tlRender() {
         return s;
       }
     }),
-    grid: { left: IS_MOBILE ? 76 : 100, right: IS_MOBILE ? 14 : 20, top: 20, bottom: 30 },
-    xAxis: {
+    grid: { left: gLeftPx, right: gRightPx, top: gTopPx, bottom: gBotPx },
+    /* 转置后 x 轴 = 机器人泳道（横向排开，标签斜排免得互相压），y 轴 = 时间（纵向） */
+    xAxis: T ? {
+      type: 'category', data: yLabels,
+      axisLabel: {
+        color: '#c9cdd4', fontSize: 10, rotate: 45, interval: 0,
+        width: 62, overflow: 'truncate'      // 斜排：旋转后横向投影约 44px，窄屏也不互相压
+      },
+      axisLine: { lineStyle: { color: '#333' } },
+      splitLine: { show: true, lineStyle: { color: '#20242c' } }
+    } : {
       type: 'time', min: nowW - state.span, max: nowW,
       axisLabel: {
-        color: '#8b8f98', fontSize: IS_MOBILE ? 10 : 11, hideOverlap: true,
+        color: '#8b8f98', fontSize: 11, hideOverlap: true,
         formatter: function (v) { return fmtTime(v); }
       },
       axisLine: { lineStyle: { color: '#333' } },
       splitLine: { show: true, lineStyle: { color: '#20242c' } }
     },
-    yAxis: {
+    yAxis: T ? {
+      /* inverse：默认 y 轴是「值大在上」，那时间就成了「现在在上、过去在下」，
+         与桌面从左到右的时间流向相反。反过来排，过去在上、现在在下，顺着看。 */
+      type: 'time', min: nowW - state.span, max: nowW, inverse: true,
+      axisLabel: {
+        color: '#8b8f98', fontSize: 10, hideOverlap: true,
+        formatter: function (v) { return fmtTime(v); }
+      },
+      axisLine: { lineStyle: { color: '#333' } },
+      splitLine: { show: true, lineStyle: { color: '#20242c' } }
+    } : {
       type: 'category', data: yLabels,
       axisLabel: {
-        color: '#c9cdd4', fontSize: IS_MOBILE ? 11 : 12,
-        width: IS_MOBILE ? 70 : 95, overflow: 'truncate'
+        color: '#c9cdd4', fontSize: 12,
+        width: 95, overflow: 'truncate'
       },
       axisLine: { lineStyle: { color: '#333' } },
       splitLine: { show: true, lineStyle: { color: '#20242c' } }
@@ -597,61 +645,40 @@ function tlRender() {
       type: 'custom', data: data, zlevel: 1,
       renderItem: function (params, api) {
         var row = api.value(2);
-        var p0 = api.coord([api.value(0), row]);
-        var p1 = api.coord([api.value(1), row]);
-        var y = p0[1];
-        var x0 = Math.min(p0[0], p1[0]);
-        var x1 = Math.max(p0[0], p1[0]);
-        var gLeft = api.coord([nowW - state.span, row])[0];
-        var gRight = api.coord([nowW, row])[0];
-        var x = Math.max(x0, gLeft);
-        var xEnd = Math.min(x1, gRight);
-        var w = xEnd - x;
-        var band = api.size([0, 1])[1];
+        var winA = nowW - state.span;
+        var vs = Math.max(api.value(0), winA);
+        var ve = Math.min(api.value(1), nowW);
+        if (ve <= vs) return null;
+        var band = bandOf(api);
         var children = [];
-        if (w >= 2) {
-          var bh = Math.max(10, band - 4);
-          var exec = api.value(6);
-          var hasWait = exec && exec > api.value(0);
-          if (hasWait && showQueue) {
-            var wxs = Math.max(api.coord([api.value(0), row])[0], gLeft);
-            var wxe = Math.min(api.coord([exec, row])[0], gRight);
-            var qw = wxe - wxs;
-            if (qw >= 2) {
-              children.push({
-                type: 'rect',
-                shape: {
-                  x: wxs, y: y - bh / 2, width: qw, height: bh,
-                  r: Math.min(3, qw / 2, bh / 2)
-                },
-                style: { fill: WAIT_FILL }
-              });
+        var bh = Math.max(10, band - 4);
+        var exec = api.value(6);
+        var hasWait = exec && exec > api.value(0);
+        if (hasWait && showQueue) {
+          var q0 = Math.max(api.value(0), winA), q1 = Math.min(exec, nowW);
+          if (q1 > q0) {
+            var pq0 = xy(api, q0, row), pq1 = xy(api, q1, row);
+            if (lenOf(pq0, pq1) >= 2) {
+              children.push(barOf(pq0, pq1, bh, { fill: WAIT_FILL }));
             }
           }
-          var rs = hasWait ? exec : api.value(0);
-          var rxs = Math.max(api.coord([rs, row])[0], gLeft);
-          var rxe = Math.min(api.coord([api.value(1), row])[0], gRight);
-          var rw = rxe - rxs;
-          if (rw >= 2) {
-            children.push({
-              type: 'rect',
-              shape: {
-                x: rxs, y: y - bh / 2, width: rw, height: bh,
-                r: Math.min(3, rw / 2, bh / 2)
-              },
-              /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
-                 不要在 renderItem 里读 params.data.status —— custom series
-                 不保证保留附加字段，取不到就会全部落到兜底色（全变绿） */
-              style: { fill: shadeGrad(api.value(5), 'v', .07, .09) }
-            });
+        }
+        var rs = hasWait ? exec : api.value(0);
+        var r0 = Math.max(rs, winA), r1 = Math.min(api.value(1), nowW);
+        if (r1 > r0) {
+          var pr0 = xy(api, r0, row), pr1 = xy(api, r1, row);
+          if (lenOf(pr0, pr1) >= 2) {
+            /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
+               不要在 renderItem 里读 params.data.status —— custom series
+               不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
+               渐变方向跟着块的长边：桌面横条用竖向，转置后的竖条用横向 */
+            children.push(barOf(pr0, pr1, bh, { fill: shadeGrad(api.value(5), T ? 'h' : 'v', .07, .09) }));
           }
-          children.push({
-            type: 'rect', shape: {
-              x: x, y: y - bh / 2, width: w, height: bh,
-              r: Math.min(3, w / 2, bh / 2)
-            },
-            style: { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' }
-          });
+        }
+        var pv0 = xy(api, vs, row), pv1 = xy(api, ve, row);
+        if (lenOf(pv0, pv1) >= 2) {
+          children.push(barOf(pv0, pv1, bh,
+            { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' }));
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
@@ -659,30 +686,46 @@ function tlRender() {
       markLine: {
         silent: true, symbol: 'none', lineStyle: { color: '#E24B4A', width: 2 },
         label: { show: true, formatter: '现在', color: '#E24B4A', fontSize: 10, position: 'insideEndTop' },
-        data: [{ xAxis: state.end }]
+        // 「现在」分界线：桌面为竖线，转置后时间在纵轴上，改用横线
+        data: [T ? { yAxis: state.end } : { xAxis: state.end }]
       }
     }, {
       type: 'custom', data: textData, zlevel: 2, silent: true,
       renderItem: function (params, api) {
         var row = api.value(1);
+        var raw = String(api.value(2) || '');
+        if (!raw) return null;
         var mStart = api.value(3);
         var mEnd = api.value(4) == null ? nowW : api.value(4);
         var vStart = Math.max(mStart, nowW - state.span);
         var vEnd = Math.min(mEnd, nowW);
         if (vEnd <= vStart) return null;
         var vc = (vStart + vEnd) / 2;
-        var cx = api.coord([vc, row])[0];
-        var y = api.coord([vc, row])[1];
-        var wTotal = Math.abs(api.coord([vEnd, row])[0] - api.coord([vStart, row])[0]);
-        // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
-        // 手机上绘图区只剩 200 多 px，20px 字号一个字都塞不下，缩到 12px 才看得见内容
-        var fs = IS_MOBILE ? 12 : TITLE_FS;
-        var label = truncateLabel(api.value(2), Math.max(2, wTotal - 4), fs);
+        var pc = xy(api, vc, row);
+        var avail = lenOf(xy(api, vStart, row), xy(api, vEnd, row));
+
+        if (T) {
+          /* 转置后块是竖长条：文字逐字竖排（每字一行、字正立，不是整体旋转 90°），
+             放不下按「能排几个字」截断 */
+          var per = 13;                                   // 每字占的高度
+          var maxChars = Math.floor(Math.max(6, avail - 4) / per);
+          if (maxChars < 2) return null;
+          var txt = raw.length > maxChars ? raw.slice(0, maxChars - 1) + '…' : raw;
+          return {
+            type: 'text', style: {
+              text: txt.split('').join('\n'), x: pc[0], y: pc[1],
+              textAlign: 'center', textVerticalAlign: 'middle', fill: '#10141a',
+              fontSize: 12, fontWeight: 500, fontFamily: FONT_STACK, lineHeight: per
+            }
+          };
+        }
+        // 桌面：数据块文字单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
+        var label = truncateLabel(raw, Math.max(2, avail - 4), TITLE_FS);
         if (!label || label.length < 8) return null;
         return {
           type: 'text', style: {
-            text: label, x: cx, y: y, textAlign: 'center',
-            textVerticalAlign: 'middle', fill: '#10141a', fontSize: fs,
+            text: label, x: pc[0], y: pc[1], textAlign: 'center',
+            textVerticalAlign: 'middle', fill: '#10141a', fontSize: TITLE_FS,
             fontWeight: 500, fontFamily: FONT_STACK
           }
         };
@@ -691,16 +734,21 @@ function tlRender() {
       type: 'custom', data: sepData, zlevel: 1, silent: true,
       renderItem: function (params, api) {
         var row = api.value(0);
-        var c0 = api.coord([nowW - state.span, row]);
-        var yc = c0[1];
-        var band = api.size([0, 1])[1];
-        var gLeft = api.coord([nowW - state.span, row])[0];
-        var gRight = api.coord([nowW, row])[0];
-        var ly = yc - band / 2;
-        return {
-          type: 'line', shape: { x1: gLeft, y1: ly, x2: gRight, y2: ly },
-          style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
-        };
+        var band = bandOf(api);
+        var c0 = xy(api, nowW - state.span, row);
+        var c1 = xy(api, nowW, row);
+        var lo = T ? Math.min(c0[1], c1[1]) : Math.min(c0[0], c1[0]);
+        var hi = T ? Math.max(c0[1], c1[1]) : Math.max(c0[0], c1[0]);
+        // 机器人分组之间的白色虚线：桌面画横线（每组的底边），转置后画竖线（每组的右边）
+        return T
+          ? {
+            type: 'line', shape: { x1: c0[0] + band / 2, y1: lo, x2: c0[0] + band / 2, y2: hi },
+            style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
+          }
+          : {
+            type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
+            style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
+          };
       }
     }]
   }, { lazyUpdate: true });
