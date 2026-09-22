@@ -2224,29 +2224,156 @@ document.getElementById('btnBack').addEventListener('click', function () {
   history.back();
   setTimeout(function () { if (location.hash === cur) location.hash = '#/timeline'; }, 300);
 });
-document.getElementById('btnRerun').addEventListener('click', function () {
-  var rec = DETAIL_REC;
-  if (!rec || !rec.fid) { alert('该记录缺少流程 ID，无法重新运行'); return; }
-  var name = rec.name || rec.fid;
-  if (!confirm('确认重新运行应用「' + name + '」？\n将立即触发一次执行。')) return;
-  fetch('/api/rerun', {
+/* ==================== 运行机器人选择弹窗 ==================== */
+/* 触发运行前先让用户明确选择在哪台机器人上跑（而不是盲目由平台分配）。
+   详情页「重新运行」与项目控制台「运行该应用」共用本弹窗。 */
+var RUN_CTX = null;        // {endpoint, flowId, name, onDone}
+var RUN_OFF_SHOWN = false; // 「离线/停用机器人」是否展开
+
+function runOpenDialog(ctx) {
+  if (!ctx.flowId) { alert('该记录缺少流程 ID，无法触发运行'); return; }
+  RUN_CTX = ctx;
+  RUN_OFF_SHOWN = false;
+  document.getElementById('runModalTitle').textContent = '选择执行机器人';
+  document.getElementById('runModalSub').innerHTML =
+    '将立即触发一次执行：「<b>' + esc(ctx.name) + '</b>」';
+  document.getElementById('runModalErr').textContent = '';
+  document.getElementById('runBotList').innerHTML =
+    '<div class="run-bot-empty">正在读取机器人列表…</div>';
+  document.getElementById('runModal').style.display = 'flex';
+  api('/api/bots?flow_id=' + encodeURIComponent(ctx.flowId)).then(function (d) {
+    if (!RUN_CTX || RUN_CTX.flowId !== ctx.flowId) return;   // 期间已关闭/切换
+    runRenderBots(d);
+  }).catch(function (e) {
+    document.getElementById('runBotList').innerHTML =
+      '<div class="run-bot-empty">机器人列表读取失败：' + esc(String(e)) +
+      '<br/>可直接「确认运行」，交由平台按历史记录分配。</div>';
+  });
+}
+
+function runBotMeta(b) {
+  var m = [];
+  if (b.machine) m.push('机器 ' + esc(b.machine));
+  m.push(b.connected === false ? '<span class="run-bot-bad">离线</span>' : '在线');
+  if (b.enabled === false) m.push('<span class="run-bot-bad">已停用</span>');
+  if (b.busy) m.push('<span class="run-bot-bad">有任务在跑</span>');
+  if (b.runs) {
+    var t = Date.parse(b.last_time);
+    m.push('本流程跑过 ' + b.runs + ' 次' + (isNaN(t) ? '' : ' · 最近 ' + fmtTime(t))
+      + (b.last_status ? '（' + (STATUS_CN[b.last_status] || b.last_status) + '）' : ''));
+  }
+  return m.join(' · ');
+}
+
+function runRenderBots(d) {
+  var items = (d && d.items) || [];
+  var auto = null;
+  var groups = [
+    { title: '本流程运行过的机器人', rows: [] },
+    { title: '在线可用的其他机器人', rows: [] },
+    { title: '离线 / 已停用机器人', rows: [] }
+  ];
+  items.forEach(function (b) {
+    if (b.recommended && !auto) auto = b;
+    groups[b.runs ? 0 : ((b.connected && b.enabled !== false) ? 1 : 2)].rows.push(b);
+  });
+  var pick = d && d.recommended ? d.recommended : '';
+  var html = '<label class="run-bot-item auto">'
+    + '<input type="radio" name="runBot" value=""' + (pick ? '' : ' checked') + '>'
+    + '<span class="run-bot-body"><span class="run-bot-name">不指定，由平台分配</span>'
+    + '<span class="run-bot-meta">' + (auto ? '将复用本流程最近运行的「' + esc(auto.name) + '」'
+      : '该流程无历史运行记录，可能分配到无权限的机器人') + '</span></span></label>';
+  groups.forEach(function (g, gi) {
+    if (!g.rows.length) return;
+    if (gi === 2) {   // 离线/停用机器人默认收起，避免刷屏
+      html += '<button type="button" class="run-bot-toggle" id="runBotToggle">'
+        + '显示 ' + g.rows.length + ' 台离线 / 已停用机器人 ▾</button>';
+      html += '<div class="run-bot-group-box" id="runBotOffBox" style="display:none;">';
+    }
+    html += '<div class="run-bot-group">' + g.title + '</div>';
+    g.rows.forEach(function (b) {
+      var off = (b.connected === false || b.enabled === false);
+      html += '<label class="run-bot-item' + (off ? ' off' : '') + '">'
+        + '<input type="radio" name="runBot" value="' + esc(b.bot_id) + '"'
+        + (b.bot_id === pick ? ' checked' : '') + '>'
+        + '<span class="run-bot-body"><span class="run-bot-name">' + esc(b.name || b.bot_id)
+        + (b.recommended ? '<i class="run-bot-tag">推荐</i>' : '') + '</span>'
+        + '<span class="run-bot-meta">' + runBotMeta(b) + '</span></span></label>';
+    });
+    if (gi === 2) html += '</div>';
+  });
+  var box = document.getElementById('runBotList');
+  box.innerHTML = html;
+  var tg = document.getElementById('runBotToggle');
+  if (tg) tg.addEventListener('click', function () {
+    RUN_OFF_SHOWN = !RUN_OFF_SHOWN;
+    document.getElementById('runBotOffBox').style.display = RUN_OFF_SHOWN ? '' : 'none';
+    tg.textContent = (RUN_OFF_SHOWN ? '收起这 ' + groups[2].rows.length + ' 台'
+      : '显示 ' + groups[2].rows.length + ' 台') + '离线 / 已停用机器人 '
+      + (RUN_OFF_SHOWN ? '▴' : '▾');
+  });
+}
+
+function runClose() {
+  RUN_CTX = null;
+  document.getElementById('runModal').style.display = 'none';
+}
+
+function runConfirm() {
+  if (!RUN_CTX) return;
+  var sel = document.querySelector('#runBotList input[name="runBot"]:checked');
+  var botId = sel ? sel.value : '';
+  var label = '不指定（平台分配）';
+  if (botId) {
+    var nm = sel.parentNode.querySelector('.run-bot-name');
+    label = (nm ? nm.textContent.replace('推荐', '') : botId);
+  }
+  var ctx = RUN_CTX;
+  document.getElementById('runModalErr').textContent = '';
+  glShow('正在触发运行…');
+  var body = { flow_id: ctx.flowId };
+  if (botId) body.bot_id = botId;
+  fetch(ctx.endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ flow_id: rec.fid })
+    body: JSON.stringify(body)
   })
     .then(function (r) { return r.json(); })
     .then(function (j) {
-      if (j.ok) {
-        var msg = '已触发重新运行，批次号：' + (j.flowProcessNo || '—');
-        if (j.botId) msg += '\n执行机器人：' + j.botId.replace(/^.*_/, '');
-        msg += '\n任务已进入队列，可返回时间轴查看实时状态。';
-        alert(msg);
-        if (typeof refreshData === 'function') refreshData();
+      glHide();
+      if (j && j.ok) {
+        runClose();
+        alert('已触发运行，批次号：' + (j.flowProcessNo || '—')
+          + '\n执行机器人：' + (j.botName || label)
+          + '\n任务已进入队列，可返回列表查看实时状态。');
+        if (typeof ctx.onDone === 'function') ctx.onDone(j);
       } else {
-        alert('重新运行失败：' + (j.message || j.error || '未知错误'));
+        document.getElementById('runModalErr').textContent =
+          '运行失败：' + ((j && (j.message || j.error)) || '未知错误');
       }
     })
-    .catch(function (e) { alert('请求失败：' + e); });
+    .catch(function (e) {
+      glHide();
+      document.getElementById('runModalErr').textContent = '请求失败：' + e;
+    });
+}
+
+document.getElementById('runCancel').addEventListener('click', runClose);
+document.getElementById('runConfirm').addEventListener('click', runConfirm);
+document.getElementById('runModal').addEventListener('click', function (e) {
+  if (e.target === this) runClose();   // 点遮罩空白处关闭
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && RUN_CTX) runClose();
+});
+
+document.getElementById('btnRerun').addEventListener('click', function () {
+  var rec = DETAIL_REC;
+  if (!rec) return;
+  runOpenDialog({
+    endpoint: '/api/rerun', flowId: rec.fid, name: rec.name || rec.fid,
+    onDone: function () { if (typeof refreshData === 'function') refreshData(); }
+  });
 });
 document.getElementById('btnToProjects').addEventListener('click', function () {
   var rec = DETAIL_REC;
@@ -2550,22 +2677,10 @@ function pjInit() {
   document.getElementById('pjRun').addEventListener('click', function () {
     var p = pjCurrent;
     if (!p) return;
-    if (!confirm('确认运行应用「' + p.name + '」？\n将立即触发一次执行。')) return;
-    fetch('/api/projects/run', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ flow_id: p.flow_id })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (j.ok) {
-          alert('已触发运行，批次号：' + (j.flowProcessNo || '—')
-            + (j.botId ? '\n执行机器人：' + j.botId.replace(/^.*_/, '') : '')
-            + '\n任务已进入队列，运行记录卡片将自动刷新。');
-          setTimeout(pjRunsLoad, 3000);
-        } else {
-          alert('运行失败：' + (j.message || j.error || '未知错误'));
-        }
-      }).catch(function (e) { alert('请求失败：' + e); });
+    runOpenDialog({
+      endpoint: '/api/projects/run', flowId: p.flow_id, name: p.name || p.flow_id,
+      onDone: function () { setTimeout(pjRunsLoad, 3000); }
+    });
   });
   document.getElementById('pjGroupSave').addEventListener('click', function () {
     var p = pjCurrent;

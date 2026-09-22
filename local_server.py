@@ -527,6 +527,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path0 == "/api/run":
             self.handle_api_run()
             return
+        if path0 == "/api/bots":
+            self.handle_api_bots()
+            return
         if path0 == "/api/schedule/export":
             self.handle_api_schedule_export()
             return
@@ -617,32 +620,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def handle_rerun(self):
-        """POST /api/rerun：手动触发应用重新运行。
-
-        请求体: {"flow_id": "...", "bot_id": "可选"}
-        成功返回 {"ok": true, "flowProcessNo": "批次号"}。
-        """
+    def _json_body(self):
+        """读取并解析请求体 JSON；缺失或解析失败返回 {}。"""
         try:
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            return json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception:
-            body = {}
+            return {}
+
+    def _run_flow(self, body):
+        """触发一次应用运行，返回 (响应体, HTTP 码)。
+
+        body: {"flow_id", "bot_id"?}；bot_id 为空时自动复用该流程历史成功运行的机器人。
+        """
         flow_id = str(body.get("flow_id") or "").strip()
         if not flow_id:
-            return self._send_json({"ok": False, "message": "缺少 flow_id"}, 400)
+            return {"ok": False, "message": "缺少 flow_id"}, 400
         try:
-            cfg_path = os.path.join(BASE, "config.json")
-            with open(cfg_path, "r", encoding="utf-8") as f:
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            result = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
-            pno = result.get("processNo", "") if isinstance(result, dict) else result
-            bot = result.get("botId") if isinstance(result, dict) else None
-            return self._send_json({"ok": True, "flowId": flow_id,
-                                    "flowProcessNo": str(pno),
-                                    "botId": bot})
+            r = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
+            pno = r.get("processNo", "") if isinstance(r, dict) else r
+            return {"ok": True, "flowId": flow_id, "flowProcessNo": str(pno),
+                    "botId": r.get("botId") if isinstance(r, dict) else None,
+                    "botName": r.get("botName") if isinstance(r, dict) else ""}, 200
         except Exception as e:
-            return self._send_json({"ok": False, "message": str(e)}, 502)
+            return {"ok": False, "message": str(e)}, 502
+
+    def handle_rerun(self):
+        """POST /api/rerun：详情页「重新运行」。请求体 {"flow_id", "bot_id"?}。"""
+        return self._send_json(*self._run_flow(self._json_body()))
+
+    def handle_api_bots(self):
+        """GET /api/bots?flow_id=：可选执行机器人清单（详情页/项目页「运行」弹窗）。
+
+        排序为「本流程跑过的 → 在线可用 → 离线/停用」，recommended 标记本流程最近一次
+        成功运行的机器人；离线/停用机器人仍返回，由前端置灰展示。
+        """
+        q = parse_qs(urlparse(self.path).query)
+        flow_id = unquote(q.get("flow_id", [""])[0]).strip()
+        try:
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            d = octo_api.list_bots(cfg, flow_id)
+            d["ok"] = True
+            return self._send_json(d)
+        except Exception as e:
+            return self._send_json({"ok": False, "message": str(e), "items": []}, 502)
 
     # ---- 项目全览：列表 / 配置读写 / 运行 ----
     def handle_api_projects(self):
@@ -730,28 +754,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send_json({"ok": False, "error": str(e)})
 
     def handle_projects_run(self):
-        """POST /api/projects/run：操作机器人运行该应用。
-
+        """POST /api/projects/run：项目控制台「运行该应用」。
         请求体 {"flow_id", "bot_id"?}；机器人未指定时自动复用该流程历史成功运行的机器人。
         """
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-        except Exception:
-            body = {}
-        flow_id = str(body.get("flow_id") or "").strip()
-        if not flow_id:
-            return self._send_json({"ok": False, "message": "缺少 flow_id"}, 400)
-        try:
-            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            result = octo_api.start_flow(cfg, flow_id, bot_id=body.get("bot_id") or None)
-            pno = result.get("processNo", "") if isinstance(result, dict) else result
-            return self._send_json({"ok": True, "flowId": flow_id,
-                                    "flowProcessNo": str(pno),
-                                    "botId": result.get("botId") if isinstance(result, dict) else None})
-        except Exception as e:
-            return self._send_json({"ok": False, "message": str(e)}, 502)
+        return self._send_json(*self._run_flow(self._json_body()))
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))

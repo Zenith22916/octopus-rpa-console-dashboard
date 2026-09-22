@@ -797,6 +797,15 @@
     padding-top: 4px;
   }
 
+  /* 运行机器人选择弹窗：列表高度压缩，按钮区吸底 */
+  .run-bot-list {
+    max-height: 42vh;
+  }
+
+  .run-bot-item {
+    padding: 8px;
+  }
+
   #toast {
     top: auto;
     bottom: 24px;

@@ -171,7 +171,7 @@
       <div id="view-detail" class="view" style="display:none;">
         <div class="topbar">
           <div class="title"><span id="ttl">运行记录详情</span></div>
-          <button class="back rerun" id="btnRerun">↻ 重新运行</button>
+          <button class="back rerun" id="btnRerun" title="选择执行机器人后触发一次运行">↻ 重新运行</button>
           <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
           <button class="back" id="btnBack">← 返回上一页</button>
         </div>
@@ -214,7 +214,7 @@
                     <button class="pj-tab active" data-tab="cfg">飞书配置</button>
                     <button class="pj-tab" data-tab="runs">运行记录</button>
                   </div>
-                  <button class="btn rerun" id="pjRun" title="立即触发一次执行（自动复用该项目历史成功运行的机器人）">▶ 运行该应用</button>
+                  <button class="btn rerun" id="pjRun" title="选择执行机器人后立即触发一次执行">▶ 运行该应用</button>
                 </div>
                 <span class="datatime" id="pjMeta"></span>
               </div>
@@ -359,6 +359,20 @@
     <div class="pj-modal-actions">
       <button class="btn" id="mCancel">取消</button>
       <button class="btn rerun" id="mSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 运行机器人选择弹窗（时间轴日志详情「重新运行」/ 项目控制台「运行该应用」共用） -->
+<div class="pj-modal-mask" id="runModal" style="display:none;">
+  <div class="pj-modal">
+    <h3 id="runModalTitle">选择执行机器人</h3>
+    <div class="hint" id="runModalSub"></div>
+    <div class="run-bot-list" id="runBotList"></div>
+    <div class="hint" id="runModalErr" style="color:#E24B4A;min-height:14px;"></div>
+    <div class="pj-modal-actions">
+      <button class="btn" id="runCancel">取消</button>
+      <button class="btn rerun" id="runConfirm">▶ 确认运行</button>
     </div>
   </div>
 </div>

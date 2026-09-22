@@ -12,9 +12,11 @@
 用法（库）：
     import octo_api
     octo_api.start_flow(cfg, "6a5de5cde5c53235fe851b64", bot_id="可选")
+    octo_api.list_bots(cfg, "6a5de5cde5c53235fe851b64")   # 可选机器人清单（含推荐）
 
 token 管理：优先缓存 output/octo_token.json -> refresh 续期 -> 账密重登。
 """
+import csv
 import json
 import os
 import time
@@ -181,27 +183,150 @@ def _authed_post(cfg, path, body):
     return code, resp
 
 
+def _recent_records(cfg, token, ent, page_size=50):
+    """拉取最近运行记录原始 items（接口按 startTime 倒序，最新在前）。
+
+    注意：接口单页上限 50 条，pageSize 传更大也只返回 50 条。
+    """
+    try:
+        req = urllib.request.Request(
+            BASE + "/desktop/bots/runningRecords?pageSize=%d&pageNo=1" % page_size,
+            headers={"Authorization": f"Bearer {token}", "EnterpriseId": ent,
+                     "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return []
+    return data.get("items") or []
+
+
 def _resolve_bot_for_flow(cfg, token, ent, flow_id):
-    """从运行记录里找该流程最近一次成功运行的机器人 botId。
+    """从运行记录里找该流程最近一次运行的机器人，返回 {"id","name"}。
 
     平台按登录账号自动分配机器人可能没有该流程的权限（会报「没有操作权限」），
     所以优先复用该流程历史成功运行用的机器人。找不到返回 None（交给平台分配）。
     """
-    try:
-        req = urllib.request.Request(BASE + "/desktop/bots/runningRecords?pageSize=50&pageNo=1",
-                                     headers={"Authorization": f"Bearer {token}",
-                                              "EnterpriseId": ent,
-                                              "User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception:
-        return None
-    for it in (data.get("items") or []):
+    for it in _recent_records(cfg, token, ent, 50):
         if it.get("flowId") == flow_id and it.get("status") in ("Finished", "Executing"):
             bid = it.get("botId")
             if bid:
-                return bid
+                return {"id": bid, "name": it.get("botName") or ""}
     return None
+
+
+def _bot_snapshots(cfg):
+    """读取 crawler 全量抓取时落盘的机器人清单（output/triggers_raw.json 的 bots）。
+
+    桌面 API 没有独立的机器人列表接口，机器人名/机器名/在线状态只存在这份快照里，
+    因此用它作为「完整清单」来源，运行记录只用来补 botId 与该流程的运行历史。
+    返回的每条 id 与运行记录的 botId 是同一个值。
+    """
+    out = cfg.get("out_dir") or "output"
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out, "triggers_raw.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f).get("bots") or []
+    except Exception:
+        return []
+
+
+def _flow_run_history(cfg, flow_id):
+    """统计该流程最近 7 天各机器人的运行情况，返回 {机器人名: {runs,last_time,last_status}}。
+
+    数据取本地归一化记录 output/runs_normalized.csv（crawler 每次刷新覆盖 7 天），
+    比接口单页 50 条完整，且不额外发请求。文件里只有机器人名、没有 botId，
+    故按名称与机器人清单对齐。
+    """
+    out = cfg.get("out_dir") or "output"
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out, "runs_normalized.csv")
+    hist = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                if not flow_id or (r.get("flow_id") or "") != flow_id:
+                    continue
+                name = r.get("bot_name") or ""
+                if not name:
+                    continue
+                st = r.get("start_time") or ""
+                h = hist.setdefault(name, {"runs": 0, "last_time": "", "last_status": ""})
+                h["runs"] += 1
+                if st > h["last_time"]:   # ISO 8601 同序字符串，可直接比较取最近
+                    h["last_time"] = st
+                    h["last_status"] = r.get("status") or ""
+    except Exception:
+        pass
+    return hist
+
+
+def list_bots(cfg, flow_id=""):
+    """机器人候选清单（详情页/项目页「运行」弹窗的机器人选择）。
+
+    返回 {"items": [{bot_id, name, machine, connected, enabled, status, busy,
+                     runs, last_time, last_status, recommended}], "recommended": bot_id}
+    排序：本流程跑过的（最近运行在前）→ 在线可用 → 离线/停用。
+    """
+    token = ensure_token(cfg)
+    ent = resolve_enterprise(cfg, token)
+    hist = _flow_run_history(cfg, flow_id) if flow_id else {}
+    underway = set()
+    try:
+        for it in list_underway(cfg).get("items") or []:
+            if it.get("botId"):
+                underway.add(it["botId"])
+    except Exception:
+        pass
+
+    items, order = {}, []
+
+    def put(bid, name=""):
+        if not bid:
+            return None
+        b = items.get(bid)
+        if b is None:
+            b = items[bid] = {"bot_id": bid, "name": name or "", "machine": "",
+                              "connected": None, "enabled": None, "status": "",
+                              "busy": False, "runs": 0, "last_time": "",
+                              "last_status": "", "recommended": False}
+            order.append(b)
+        elif name and not b["name"]:
+            b["name"] = name
+        return b
+
+    # 1) 机器人清单：机器名 / 在线 / 启用 / 最近执行状态
+    for s in _bot_snapshots(cfg):
+        b = put(s.get("id"), s.get("name") or "")
+        if b:
+            b["machine"] = s.get("machineName") or ""
+            b["connected"] = bool(s.get("isConnected"))
+            b["enabled"] = bool(s.get("isEnabled"))
+            b["status"] = s.get("executionStatus") or ""
+
+    # 2) 最近的运行记录：补齐清单里没有的机器人（按 botId ↔ botName 对齐）
+    for it in _recent_records(cfg, token, ent, 50):
+        put(it.get("botId"), it.get("botName") or "")
+
+    # 3) 绑定本流程的运行历史（按机器人名对齐）
+    for b in order:
+        h = hist.get(b["name"])
+        if h:
+            b["runs"] = h["runs"]
+            b["last_time"] = h["last_time"]
+            b["last_status"] = h["last_status"]
+        b["busy"] = b["bot_id"] in underway
+
+    # 4) 推荐机器人 = 本流程最近一次「成功」运行的机器人（与不指定时后端自动复用的一致）；
+    #    该流程没有成功记录时退化为最近一次运行过的机器人。
+    hist_bots = [b for b in order if b["runs"]]
+    fin = [b for b in hist_bots if b["last_status"] == "Finished"]
+    pick = max(fin or hist_bots, key=lambda b: b["last_time"]) if hist_bots else None
+    if pick:
+        pick["recommended"] = True
+
+    order.sort(key=lambda b: b["name"])
+    order.sort(key=lambda b: b["last_time"], reverse=True)
+    order.sort(key=lambda b: 0 if b["runs"] else (1 if (b["connected"] and b["enabled"] is not False) else 2))
+    return {"items": order, "recommended": pick["bot_id"] if pick else ""}
 
 
 def list_flows(cfg):
@@ -243,17 +368,20 @@ def list_flows(cfg):
 
 def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent",
                resolve_bot=True):
-    """手动触发应用运行。返回批次号 flowProcessNo。
+    """手动触发应用运行。返回 {"processNo","botId","botName"}。
 
     flow_id: 应用/流程 ID（仪表盘详情页 rec.fid）。
-    bot_id:  可选，显式指定机器人（建议传流程实际归属的机器人）。
+    bot_id:  可选，显式指定机器人（前端「选择执行机器人」弹窗选中项）。
     resolve_bot: 未传 bot_id 时，自动从该流程历史成功运行记录里找机器人，
                  避免平台按登录账号分配到无权限的机器人导致「没有操作权限」。
     """
     token = ensure_token(cfg)
     ent = resolve_enterprise(cfg, token)
+    bot_name = ""
     if not bot_id and resolve_bot:
-        bot_id = _resolve_bot_for_flow(cfg, token, ent, flow_id)
+        picked = _resolve_bot_for_flow(cfg, token, ent, flow_id)
+        if picked:
+            bot_id, bot_name = picked["id"], picked["name"]
     body = {"flowId": flow_id, "flowContentRetrievalMode": mode}
     if bot_id:
         body["specifiedBot"] = bot_id
@@ -264,7 +392,7 @@ def start_flow(cfg, flow_id, bot_id=None, params=None, mode="ByNewestContent",
         pno = resp.get("flowProcessNo") or resp.get("processNo") or resp
         if isinstance(pno, dict):
             pno = json.dumps(pno, ensure_ascii=False)
-        return {"processNo": pno, "botId": bot_id}
+        return {"processNo": pno, "botId": bot_id, "botName": bot_name}
     raise RuntimeError(f"启动失败({code}): {resp}")
 
 
