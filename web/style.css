@@ -1489,6 +1489,35 @@ tbody tr:hover {
 .pj-modal-row > input:focus, .pj-modal-row > select:focus, .pj-modal-row > textarea:focus,
 #mValWrap textarea:focus, #mValWrap input:focus { outline: none; border-color: #378ADD; }
 
+/* 弹窗内的主操作按钮（确认 / 保存 / 运行）：与详情页「重新运行」同色 */
+.btn.rerun { background: #1f6f43; color: #fff; border-color: #2e9e5c; }
+.btn.rerun:hover { background: #278a52; }
+
+/* 运行机器人选择弹窗 */
+#runModalSub { margin: -6px 0 12px; }
+.run-bot-list { max-height: min(52vh, 420px); overflow-y: auto; margin: 0 -4px;
+                padding: 0 4px; border-top: 1px solid #262a33; }
+.run-bot-empty { padding: 22px 4px; font-size: 12px; color: #6f7480; line-height: 1.8; }
+.run-bot-group { padding: 10px 2px 5px; font-size: 11px; color: #8b8f98; }
+.run-bot-item { display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px;
+                border: 1px solid #262a33; border-radius: 8px; margin-bottom: 6px;
+                cursor: pointer; }
+.run-bot-item:hover { background: #1d2129; border-color: #333a45; }
+.run-bot-item:has(input:checked) { border-color: #2e9e5c; background: rgba(46, 158, 92, 0.1); }
+.run-bot-item input[type="radio"] { margin: 3px 0 0; flex: none; accent-color: #2e9e5c; }
+.run-bot-item.off { opacity: 0.55; }
+.run-bot-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.run-bot-name { font-size: 13px; color: #e6e6e6; }
+.run-bot-meta { font-size: 11px; color: #8b8f98; line-height: 1.5; }
+.run-bot-tag { margin-left: 6px; padding: 1px 5px; border-radius: 4px; font-style: normal;
+               font-size: 10px; color: #2e9e5c; background: rgba(46, 158, 92, 0.15);
+               border: 1px solid rgba(46, 158, 92, 0.4); }
+.run-bot-bad { color: #e0a33a; }
+.run-bot-toggle { display: block; width: 100%; margin: 2px 0 6px; padding: 5px 8px;
+                  background: none; border: 1px dashed #333a45; border-radius: 6px;
+                  color: #8b8f98; font-size: 11px; font-family: inherit; cursor: pointer; }
+.run-bot-toggle:hover { color: #c9cdd4; border-color: #4a525f; }
+
 /* 全局加载遮罩 */
 .global-loading { position: fixed; inset: 0; z-index: 3000; align-items: center; justify-content: center;
                   background: rgba(5, 7, 10, 0.55); }
