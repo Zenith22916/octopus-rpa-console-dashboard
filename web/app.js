@@ -343,7 +343,7 @@ window.addEventListener('resize', function () {
 /* ==================== 时间轴视图 ==================== */
 var DEF_SPAN = 2 * 3600 * 1000;
 if (window.innerWidth < window.innerHeight) {
-  DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，配合底部滚动条浏览
+  DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，靠拖动平移浏览
 }
 var records = [];           // 时间轴工作副本（来自 RECORDS）
 var robots = [];
@@ -351,7 +351,8 @@ var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
 var tlLastData = null;      // 最近一次渲染的数据项：custom series 取不到附加字段时按 dataIndex 回查
-var tlScrollTrackEl = null, tlScrollWinEl = null;
+var tlPan = null;           // 图表拖动平移的拖拽状态（null = 没在拖）
+var tlPanMoved = false;     // 本次拖拽是否真的移动过：拖完那一下不该被当成点击
 function recomputeBounds() {
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -713,7 +714,7 @@ function tlRender() {
   document.getElementById('mManual').textContent = wayRecs.Manual;
   document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
   document.getElementById('mRobots').textContent = robots.length;
-  tlScrollSync();
+  tlSpanInfoUpdate();
   tlListRender(false);
 }
 /* ==================== 运行记录列表（时间轴卡片下方） ====================
@@ -783,23 +784,12 @@ function tlListBind() {
     if (tr) tlGotoRec(tr.getAttribute('data-rid'));
   });
 }
-function tlScrollSync() {
-  if (!tlScrollTrackEl || !tlScrollWinEl) return;
-  var total = state.end - DATA_MIN;
-  if (!(total > 0)) { tlScrollWinEl.style.display = 'none'; return; }
-  tlScrollWinEl.style.display = 'block';
-  var tW = tlScrollTrackEl.clientWidth || 1;
-  var nowW = Math.min(state.end + state.offset, state.end);
-  /* 视觉下限：窗口再小也按 6 小时对应的宽度画，否则窄到点不中；
-     真实窗口大小不受影响，拖动换算走 msPerPx（与这个宽度无关） */
-  var minW = 6 * 3600 * 1000 / total * tW;
-  var w = Math.max(minW, Math.min(tW, state.span / total * tW));
-  var frac = (nowW - DATA_MIN) / total;
-  var left = Math.max(0, Math.min(tW - w, frac * tW - w));
-  tlScrollWinEl.style.width = w + 'px';
-  tlScrollWinEl.style.left = left + 'px';
+/* 窗口信息（当前窗口长度 + 起止时刻）；平移改为图表区直接拖动后，这里只更新文字 */
+function tlSpanInfoUpdate() {
   var info = document.getElementById('tlSpanInfo');
-  if (info) info.textContent = '窗口 ' + fmtSpanLabel(state.span) + '：' +
+  if (!info) return;
+  var nowW = Math.min(state.end + state.offset, state.end);
+  info.textContent = '窗口 ' + fmtSpanLabel(state.span) + '：' +
     fmtTime(nowW - state.span) + ' ~ ' + fmtTime(nowW);
 }
 /* 滑块改了窗口大小后同步下拉：值不在预设里就让下拉留空（表示自定义窗口） */
@@ -854,75 +844,58 @@ function tlInit() {
   });
   tlListBind();                              // 列表点行 -> 甘特图对齐该记录的结束时间
   syncSpanSelect();                          // 下拉与当前窗口大小对齐（窄高窗口默认 6 小时）
-  /* 时间窗口滑块（PR 式）：拖两端改窗口大小、拖中间平移，轨道空白处点击把窗口移过去 */
-  tlScrollTrackEl = document.getElementById('tlScrollTrack');
-  tlScrollWinEl = document.getElementById('tlScrollWin');
-  if (tlScrollTrackEl && tlScrollWinEl) {
-    var MIN_SPAN = 10 * 60 * 1000;                 // 最小窗口 10 分钟
-    var MAX_SPAN = 30 * 24 * 3600 * 1000;          // 最大窗口 30 天
-    var drag = null;
 
-    function clampOffset(o) {
-      var nowT = Date.now();
-      return Math.max(DATA_MIN - nowT, Math.min(0, o));
-    }
-    function msPerPx() {
-      var total = (state.end - DATA_MIN) || 1;
-      var tW = tlScrollTrackEl.clientWidth || 1;
-      return total / tW;
-    }
-    /* 把窗口的绝对时间边界写回 state：不能越过「现在」，也不能越出数据范围 */
-    function applyWindow(L, R) {
-      var span = Math.max(MIN_SPAN, Math.min(MAX_SPAN, R - L));
-      R = L + span;
-      if (R > state.end) { R = state.end; L = R - span; }
-      if (L < DATA_MIN) { L = DATA_MIN; R = L + span; }
-      if (R > state.end) R = state.end;
-      state.span = Math.max(MIN_SPAN, R - L);
-      state.offset = clampOffset(R - state.end);
-      state.focusId = null;
-      syncSpanSelect();
-      tlUpdateWindow();
-    }
-    function startDrag(mode, e) {
-      var nowW = Math.min(state.end + state.offset, state.end);
-      drag = { mode: mode, x: e.clientX, L: nowW - state.span, R: nowW };
-      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { }
-      e.preventDefault();
-      e.stopPropagation();                          // 别让把手的事件再冒泡到窗口块
-    }
-    function moveDrag(e) {
-      if (!drag) return;
-      var dMs = (e.clientX - drag.x) * msPerPx();
-      if (drag.mode === 'move') applyWindow(drag.L + dMs, drag.R + dMs);
-      else if (drag.mode === 'left') applyWindow(drag.L + dMs, drag.R);
-      else applyWindow(drag.L, drag.R + dMs);
-    }
-    function endDrag() { drag = null; }
-    function bindGrip(el, mode) {
-      if (!el) return;
-      el.addEventListener('pointerdown', function (e) { startDrag(mode, e); });
-      el.addEventListener('pointermove', moveDrag);
-      el.addEventListener('pointerup', endDrag);
-      el.addEventListener('pointercancel', endDrag);
-    }
-    bindGrip(document.getElementById('tlGripL'), 'left');
-    bindGrip(document.getElementById('tlGripR'), 'right');
-
-    tlScrollWinEl.addEventListener('pointerdown', function (e) { startDrag('move', e); });
-    tlScrollWinEl.addEventListener('pointermove', moveDrag);
-    tlScrollWinEl.addEventListener('pointerup', endDrag);
-    tlScrollWinEl.addEventListener('pointercancel', endDrag);
-
-    tlScrollTrackEl.addEventListener('pointerdown', function (e) {
-      if (e.target !== tlScrollTrackEl) return;
-      var rect = tlScrollTrackEl.getBoundingClientRect();
-      var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-      var center = DATA_MIN + frac * (state.end - DATA_MIN);
-      applyWindow(center - state.span / 2, center + state.span / 2);
-    });
+  /* 图表区直接拖动平移（1:1 跟手）：整幅宽度正好对应整个时间窗口，所以拖动 N 像素
+     就平移 N 像素所代表的时间，内容贴着鼠标走；窗口长度由上方「窗口」下拉决定。
+     越界约束：不能拖到「现在」之后，也不能拖出最早数据之外。 */
+  /* 拖动只改窗口位置（窗口长度由上方下拉决定）：把窗口左边界放到 left，
+     并夹在「最早数据」与「右边缘贴住现在」之间——拖过头就在边界停住，不会弹回另一头。 */
+  function clampOffset(o) {
+    return Math.max(DATA_MIN - state.end, Math.min(0, o));
   }
+  function panTo(left) {
+    var hi = state.end - state.span;               // 右边缘贴「现在」时左边界的位置
+    if (hi < DATA_MIN) hi = DATA_MIN;              // 窗口比数据跨度还长：贴着最早数据
+    left = Math.max(DATA_MIN, Math.min(hi, left));
+    state.offset = clampOffset(left + state.span - state.end);
+    state.focusId = null;
+    tlUpdateWindow();
+  }
+  var panRaf = 0;              // 一帧最多重算一次：拖动手感更稳，也不给渲染压力
+  function panApply() {
+    panRaf = 0;
+    if (!tlPan) return;
+    var dMs = (tlPan.last - tlPan.x) * (state.span / (chartEl.clientWidth || 1));
+    panTo(tlPan.left - dMs);
+  }
+  /* 拖动事件挂在 window 上：不做指针捕获（捕获会把鼠标事件从 canvas 上截走，
+     ECharts 内部的 hover / click 判定会乱），移出图表范围也能继续拖、抬手即止 */
+  chartEl.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;                     // 只响应左键 / 单指
+    var nowW = Math.min(state.end + state.offset, state.end);
+    tlPan = { x: e.clientX, last: e.clientX, left: nowW - state.span };
+    tlPanMoved = false;
+    chartEl.classList.add('tl-pan');
+  });
+  function panMove(e) {
+    if (!tlPan) return;
+    tlPan.last = e.clientX;
+    if (Math.abs(e.clientX - tlPan.x) > 3) tlPanMoved = true;
+    if (panRaf) return;
+    panRaf = requestAnimationFrame(panApply);
+  }
+  function endPan() {
+    if (!tlPan) return;
+    tlPan = null;
+    chartEl.classList.remove('tl-pan');
+  }
+  window.addEventListener('pointermove', panMove);
+  window.addEventListener('pointerup', endPan);
+  window.addEventListener('pointercancel', endPan);
+
   tlChart.on('click', function (params) {
+    /* 刚拖完这一下不算点击（否则平移结束会误跳详情） */
+    if (tlPanMoved) { tlPanMoved = false; return; }
     /* 优先用 params.data.rid；custom series 不保证保留附加字段，
        取不到就按 dataIndex 回查 tlLastData（同一份数据，双保险） */
     if (!params || params.seriesIndex !== 0) return;

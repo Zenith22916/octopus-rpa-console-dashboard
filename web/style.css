@@ -407,55 +407,6 @@ select:focus {
   padding: 8px 14px;
 }
 
-/* 时间轴横向滚动条（移动端触屏可拖拽） */
-.tl-scroll {
-  position: relative;
-  flex: none;
-  height: 16px;
-  margin: 0;
-  background: #181b21;
-  border: 1px solid #262a33;
-  border-top: none;
-  border-bottom: none;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: none;
-  user-select: none;
-}
-
-.tl-scroll-track {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 50%;
-  height: 5px;
-  transform: translateY(-50%);
-  background: #2a2f38;
-  border-radius: 5px;
-}
-
-.tl-scroll-thumb {
-  position: absolute;
-  top: 50%;
-  height: 12px;
-  min-width: 36px;
-  transform: translateY(-50%);
-  background: #5f6b7d;
-  border-radius: 7px;
-  cursor: grab;
-  touch-action: none;
-  box-sizing: border-box;
-}
-
-.tl-scroll-thumb:hover {
-  background: #6e7c91;
-}
-
-.tl-scroll-thumb:active {
-  background: #378ADD;
-  cursor: grabbing;
-}
-
 .filter-label {
   font-size: 13px;
   color: #8b8f98;

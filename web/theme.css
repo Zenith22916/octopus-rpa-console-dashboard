@@ -719,13 +719,20 @@ body {
   box-shadow: none;
 }
 
-/* 时间窗口滑块：贴在图表正下方 */
-.tl-card .tl-scroll {
-  flex: none;
-  height: 20px;
-  margin: 0 14px;
-  background: none;
-  border: none;
+/* 图表区直接拖动平移：默认手型提示可抓取，拖动中握住。
+   canvas 由 ECharts 控制 cursor，这里强制继承，免得图元 cursor 把拖动手型盖掉。 */
+.tl-card #chart {
+  cursor: grab;
+  touch-action: pan-y;   /* 横拖交给拖动逻辑，竖滑仍可滚页面 */
+}
+
+.tl-card #chart canvas {
+  cursor: inherit !important;
+}
+
+.tl-card #chart.tl-pan,
+.tl-card #chart.tl-pan canvas {
+  cursor: grabbing !important;
 }
 
 /* 时间轴视图纵向分配：大卡片吃掉剩余高度，图例与记录列表固定在下方 */
@@ -798,61 +805,6 @@ body {
   font-variant-numeric: tabular-nums;
   color: #9aa3b3;
 }
-
-/* 时间窗口滑块：轨道 = 全部数据范围，中间的区间块 = 当前窗口。
-   轨道左右贴满 .tl-scroll（外层的 margin 负责与图表对齐），
-   窗口块的 left/width 由 app.js 按同一坐标系换算，两者必须一致。 */
-.tl-scroll-track {
-  left: 0;
-  right: 0;
-  background: linear-gradient(90deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .11), rgba(255, 255, 255, .05));
-  height: 4px;
-  border-radius: 4px;
-}
-
-.tl-scroll-win {
-  position: absolute;
-  top: 50%;
-  height: 14px;
-  min-width: 22px;
-  box-sizing: border-box;
-  transform: translateY(-50%);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, .13);
-  border: 1px solid rgba(255, 255, 255, .3);
-  cursor: grab;
-  transition: background .2s, border-color .2s;
-}
-
-.tl-scroll-win:hover {
-  background: rgba(255, 255, 255, .21);
-  border-color: rgba(255, 255, 255, .48);
-}
-
-.tl-scroll-win:active {
-  cursor: grabbing;
-}
-
-.tl-grip {
-  position: absolute;
-  top: 50%;
-  width: 7px;
-  height: 18px;
-  transform: translateY(-50%);
-  border-radius: 3px;
-  background: linear-gradient(180deg, #e9ecf1, #a7b0be);
-  box-shadow: 0 1px 4px -1px rgba(0, 0, 0, .55);
-  cursor: ew-resize;
-  touch-action: none;
-  transition: background .2s;
-}
-
-.tl-grip:hover {
-  background: linear-gradient(180deg, #ffffff, #c3cbd6);
-}
-
-.tl-grip-l { left: -3px; }
-.tl-grip-r { right: -3px; }
 
 /* #chart 的卡片外观已由 .tl-card 统一承担，这里不再单独画边框 */
 #chart {
