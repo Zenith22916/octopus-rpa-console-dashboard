@@ -2188,7 +2188,7 @@ function refreshData(force, done) {
         // 排期页仅在「立刻更新」（全量抓，含触发器）后重载；自动更新只抓运行记录，不影响排期
         loadSchedule().then(function () { scReload(); });
       }
-      if (d.time) document.getElementById('dataTime').textContent = + d.time;
+      if (d.time) document.getElementById('dataTime').textContent = d.time;
     } else if (warnEl) {
       warnEl.style.display = 'block';
       if (d && d.time) document.getElementById('dataTime').textContent = d.time + '（刷新失败）';
