@@ -354,6 +354,25 @@ var tlLastData = null;      // 最近一次渲染的数据项：custom series �
 var tlPan = null;           // 图表拖动平移的拖拽状态（null = 没在拖）
 var tlPanMoved = false;     // 本次拖拽是否真的移动过：拖完那一下不该被当成点击
 var tlScrollTrackEl = null, tlScrollWinEl = null;   // 底部滚动条（只反映窗口，不负责缩放）
+
+/* 时间轴的绘图区边距（tlRender 的 grid 与 1:1 拖动换算共用一处，避免两边对不上）。
+   桌面时间在横向：左右留白大；手机转置后时间在纵向：上下留白给刻度与机器人名字 */
+var TL_GRID = {
+  desk: { left: 100, right: 20, top: 20, bottom: 30 },
+  mob: { left: 46, right: 10, top: 14, bottom: 58 }
+};
+function tlGrid() { return IS_MOBILE ? TL_GRID.mob : TL_GRID.desk; }
+/* 时间方向的绘图区像素长度：桌面是横向宽度（拖 100px 就走 100px 的时间），
+   手机转置后是纵向高度。1:1 拖动与「可见下限」都以它为准 */
+function tlTimeLenPx() {
+  var g = tlGrid();
+  var len = IS_MOBILE
+    ? (chartEl ? chartEl.clientHeight || 0 : 0) - g.top - g.bottom
+    : (chartEl ? chartEl.clientWidth || 0 : 0) - g.left - g.right;
+  return Math.max(50, len || 900);
+}
+/* 指针在「时间方向」上的位置：桌面取横坐标，手机转置后取纵坐标 */
+function tlPointerPos(e) { return IS_MOBILE ? e.clientY : e.clientX; }
 function recomputeBounds() {
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -511,13 +530,7 @@ function tlRender() {
      下面所有绘制都按「时间方向 / 泳道方向」两个方向来算，两种布局共用一套代码。 */
   var T = IS_MOBILE;
   // 可见下限：屏幕上不足约 2px 的条视为看不见（窗口越大阈值越大），用于抑制“细到不渲染却仍占泳道”的空泳道。
-  var cw = tlChart.getWidth ? tlChart.getWidth() : 0;
-  var ch = tlChart.getHeight ? tlChart.getHeight() : 0;
-  var gLeftPx = T ? 46 : 100, gRightPx = T ? 10 : 20;
-  var gTopPx = T ? 14 : 20, gBotPx = T ? 58 : 30;
-  /* 时间方向上的可用像素长度：桌面取横向宽度，转置后取纵向高度 */
-  var plotLen = Math.max(50, (T ? ch - gTopPx - gBotPx : cw - gLeftPx - gRightPx) || 900);
-  var minVisibleMs = state.span * (2 / plotLen);
+  var minVisibleMs = state.span * (2 / tlTimeLenPx());
   var info = layout(visible, minVisibleMs);
   var yLabels = layout.yLabels;
   var lastRows = layout.groupLastRows || [];
@@ -603,7 +616,7 @@ function tlRender() {
         return s;
       }
     }),
-    grid: { left: gLeftPx, right: gRightPx, top: gTopPx, bottom: gBotPx },
+    grid: tlGrid(),
     /* 转置后 x 轴 = 机器人泳道（横向排开，标签斜排免得互相压），y 轴 = 时间（纵向） */
     xAxis: T ? {
       type: 'category', data: yLabels,
@@ -628,7 +641,12 @@ function tlRender() {
       type: 'time', min: nowW - state.span, max: nowW, inverse: true,
       axisLabel: {
         color: '#8b8f98', fontSize: 10, hideOverlap: true,
-        formatter: function (v) { return fmtTime(v); }
+        /* 横向的 «9-22 11:00» 放不进左侧那点宽度（日期会被裁掉），拆成两行竖着排 */
+        formatter: function (v) {
+          var d = new Date(v);
+          return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '\n' +
+            pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
       },
       axisLine: { lineStyle: { color: '#333' } },
       splitLine: { show: true, lineStyle: { color: '#20242c' } }
@@ -933,7 +951,12 @@ function tlInit() {
      向上滚放大（窗口变短、看更细），向下滚缩小。 */
   function zoomAt(e) {
     var rect = chartEl.getBoundingClientRect();
-    var frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
+    var g = tlGrid();
+    /* 锚点比例按「绘图区内」算（转置后锚点在纵向），不然边距会让锚点偏掉 */
+    var frac = IS_MOBILE
+      ? (e.clientY - rect.top - g.top) / Math.max(1, rect.height - g.top - g.bottom)
+      : (e.clientX - rect.left - g.left) / Math.max(1, rect.width - g.left - g.right);
+    frac = Math.max(0, Math.min(1, frac));
     var nowW = Math.min(state.end + state.offset, state.end);
     var anchor = nowW - state.span + frac * state.span;
     var span = state.span * (e.deltaY > 0 ? 1.15 : 1 / 1.15);
@@ -946,7 +969,9 @@ function tlInit() {
   function panApply() {
     panRaf = 0;
     if (!tlPan) return;
-    var dMs = (tlPan.last - tlPan.x) * (state.span / (chartEl.clientWidth || 1));
+    /* 1:1 跟手：整幅「时间长度」对应整个窗口。桌面拖横向（clientX，除数取宽），
+       手机转置后拖纵向（clientY，除数取高） */
+    var dMs = (tlPan.last - tlPan.start) * (state.span / tlTimeLenPx());
     panTo(tlPan.left - dMs);
   }
   /* 拖动事件挂在 window 上：不做指针捕获（捕获会把鼠标事件从 canvas 上截走，
@@ -954,14 +979,16 @@ function tlInit() {
   chartEl.addEventListener('pointerdown', function (e) {
     if (e.button !== 0) return;                     // 只响应左键 / 单指
     var nowW = Math.min(state.end + state.offset, state.end);
-    tlPan = { x: e.clientX, last: e.clientX, left: nowW - state.span };
+    var pos = tlPointerPos(e);                      // 按布局取向：桌面 clientX、手机 clientY
+    tlPan = { start: pos, last: pos, left: nowW - state.span };
     tlPanMoved = false;
     chartEl.classList.add('tl-pan');
   });
   function panMove(e) {
     if (!tlPan) return;
-    tlPan.last = e.clientX;
-    if (Math.abs(e.clientX - tlPan.x) > 3) tlPanMoved = true;
+    var pos = tlPointerPos(e);
+    tlPan.last = pos;
+    if (Math.abs(pos - tlPan.start) > 3) tlPanMoved = true;
     if (panRaf) return;
     panRaf = requestAnimationFrame(panApply);
   }
