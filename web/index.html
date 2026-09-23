@@ -248,33 +248,20 @@
 
       <!-- ==================== 机器人实时状态视图 ==================== -->
       <div id="view-botstatus" class="view" style="display:none;">
-        <div class="bs-layout">
-          <!-- 上排：状态表（左）+ 近 7 天运行量对比（右） -->
-          <div class="bs-top">
-            <div class="panel bs-panel">
-              <div class="toolbar">
-                <h2 style="margin:0;">机器人实时状态</h2>
-                <span class="filter-label">筛选：</span>
-                <select id="bsFilter">
-                  <option value="__ALL__" selected>全部</option>
-                  <option value="__BUSY__">仅忙（运行中/排队中）</option>
-                  <option value="__IDLE__">仅空闲</option>
-                </select>
-                <button class="btn" id="bsReload">刷新</button>
-                <span class="datatime" id="bsInfo">—</span>
-              </div>
-              <div class="scroll bs-scroll"><table id="bsTbl" class="bs-tbl"></table></div>
-            </div>
-            <div class="panel bs-chart-panel">
-              <h2>近 7 天运行量</h2>
-              <div id="bsBars" class="bs-chart"></div>
-            </div>
+        <div class="panel bs-panel">
+          <div class="toolbar">
+            <h2 style="margin:0;">机器人实时状态</h2>
+            <span class="filter-label">筛选：</span>
+            <select id="bsFilter">
+              <option value="__ALL__" selected>全部</option>
+              <option value="__BUSY__">仅忙（运行中/排队中）</option>
+              <option value="__IDLE__">仅空闲</option>
+            </select>
+            <button class="btn" id="bsReload">刷新</button>
+            <span class="datatime" id="bsInfo">—</span>
+            <span class="hint bs-tip">状态由运行记录推断：有「运行中」记录即在跑，否则看是否有排队记录</span>
           </div>
-          <!-- 下排：近 24 小时负载（机器人 × 小时） -->
-          <div class="panel bs-chart-panel bs-heat-panel">
-            <h2>近 24 小时负载（机器人 × 小时）</h2>
-            <div id="bsHeat" class="bs-chart"></div>
-          </div>
+          <div class="scroll bs-scroll"><table id="bsTbl" class="bs-tbl"></table></div>
         </div>
       </div>
 

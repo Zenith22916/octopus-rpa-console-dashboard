@@ -243,8 +243,7 @@
     font-size: 15px;
   }
 
-  /* 指标卡：一行横向滑动。手机屏放不下全部指标，与其折成两三行把标题栏
-     顶高，不如压成一行、手指左右划着看（划到头不会带动整页）。 */
+  /* 指标卡：每行两张。 */
   .main-bar #headMetrics {
     display: block;
     margin: 10px 0 0;
@@ -252,27 +251,21 @@
 
   #headMetrics .metrics {
     gap: 8px;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 2px;              /* 给卡片圆角/阴影留点余量，免得被裁 */
-    scrollbar-width: none;            /* Firefox：隐藏横向滚动条 */
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;   /* 划到两端不把整页一起拖走 */
   }
 
-  #headMetrics .metrics::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* 卡宽改由内容决定（不再两列拉伸），标签一律不折行 */
+  /* 关键点一：flex-basis 的百分比是按「内容盒」算的，而卡片自己还带
+     10px*2 内边距 + 1px*2 边框 —— 用 calc(50% - 4px) 时两张卡的实际外框
+     是 (167-4+22)*2 + gap 8 = 386 > 334，浏览器只能每张独占一行（这正是
+     手机端指标卡竖着排四行、白占半屏的原因）。所以必须配 box-sizing:
+     border-box，让基准宽度和 padding 处在同一坐标系里。
+     关键点二：再留 2px 余量（calc(50% - 6px)）避开亚像素舍入，多出的
+     空间由 flex-grow 补平，两张卡最终等宽。 */
   .main-bar #headMetrics .metric {
     box-sizing: border-box;
-    flex: 0 0 auto;
-    min-width: 92px;
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
     min-height: 52px;
     padding: 8px 10px;
-    white-space: nowrap;
   }
 
   .main-bar #headMetrics .metric .v {
@@ -829,23 +822,6 @@
   #view-botstatus .bs-panel,
   #view-logsearch .ls-panel {
     flex: none;
-  }
-
-  /* 机器人状态：两张图不再左右并排，改成纵向堆叠、各给固定高度 */
-  #view-botstatus .bs-layout,
-  #view-botstatus .bs-top {
-    display: block;
-    flex: none;
-  }
-
-  #view-botstatus .bs-top>.bs-chart-panel,
-  #view-botstatus .bs-heat-panel {
-    margin-top: 10px;
-  }
-
-  #view-botstatus .bs-chart {
-    flex: none;
-    height: 240px;
   }
 
   #view-botstatus .bs-scroll,
