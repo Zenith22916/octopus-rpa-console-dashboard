@@ -1070,10 +1070,126 @@ tbody tr:hover {
   vertical-align: middle;
 }
 
-#c1 {
+/* ---- 排期表（方案 B：行=时刻，列=周几/日期，格子内为应用标签） ---- */
+.sc-scroll {
   flex: 1;
   min-height: 0;
+  max-height: none;
+}
+
+.sc-tbl {
   width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.sc-tbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #1b1f27;
+  color: #8b8f98;
+  font-weight: 500;
+  font-size: 11.5px;
+  white-space: nowrap;
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid #2b3038;
+}
+
+/* 时刻列：粘住左侧，横向滚动时始终可见 */
+.sc-tbl th.sc-time-h,
+.sc-tbl td.sc-time {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #181b21;
+  width: 58px;
+  min-width: 58px;
+}
+
+.sc-tbl th.sc-time-h {
+  z-index: 3;
+}
+
+.sc-tbl td.sc-time {
+  color: #dfe3ea;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+  border-right: 1px solid #262a32;
+}
+
+.sc-tbl td.sc-cell {
+  min-width: 96px;
+  padding: 4px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid #21252d;
+}
+
+.sc-tbl tbody tr:hover td {
+  background: #1f232b;
+}
+
+.sc-tbl tbody tr:hover td.sc-time {
+  background: #232833;
+}
+
+.sc-dash {
+  color: #3a4049;
+}
+
+.sc-empty {
+  color: #8b8f98;
+  padding: 26px 10px;
+  text-align: center;
+}
+
+/* 应用标签：底色/文字色由 --c（后端调色板）驱动 */
+.sc-tag {
+  display: inline-block;
+  margin: 1px 3px 1px 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--c) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c) 42%, transparent);
+  color: var(--c);
+  transition: background .12s, border-color .12s, opacity .12s;
+}
+
+.sc-tag:hover {
+  background: color-mix(in srgb, var(--c) 42%, transparent);
+  border-color: var(--c);
+}
+
+.sc-tag.off {
+  --c: #6b7280;
+  opacity: .7;
+}
+
+/* 同一时刻同一应用跑在多台机器人上：右上角标数量 */
+.sc-tag .sc-mul {
+  font-style: normal;
+  opacity: .75;
+  margin-left: 3px;
+  font-size: 10px;
+}
+
+/* 悬停点亮同一应用的全部标签，其余淡出（替代原图表的 dispatchAction） */
+.sc-tbl.sc-has-hot .sc-tag {
+  opacity: .28;
+}
+
+.sc-tbl.sc-has-hot .sc-tag.hot {
+  opacity: 1;
+  background: color-mix(in srgb, var(--c) 52%, transparent);
+  border-color: var(--c);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent);
 }
 
 @media (min-width: 1101px) {

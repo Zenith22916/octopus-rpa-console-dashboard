@@ -231,7 +231,9 @@ def build_schedule_payload(rows):
         short = app_short(r["app_name"])
         for (h, m) in pts:
             t = round(h + m / 60.0, 2)
-            info = {"t": t, "app": r["app_name"], "short": short, "color": color, "enabled": en}
+            # hm：排期表格直接展示的「HH:MM」文本；fid：点击标签跳项目控制台用
+            info = {"t": t, "hm": "%02d:%02d" % (h, m), "fid": r.get("flow_id") or "",
+                    "app": r["app_name"], "short": short, "color": color, "enabled": en}
             if kind in ("daily", "weekly"):
                 for wd in days:
                     rb["week"].append({"wd": wd, **info})

@@ -108,25 +108,30 @@ function statusRGB(k, alpha) {
 function statusPieFill(k) {     // 饼图扇区
   return shadeGrad(statusRGB(k, 1), 'v', .1, .12);
 }
-/* 排期配色：直接用后端 PALETTE 给的颜色（v1 逻辑，恢复原状），
-   应用之间的辨识交给「悬停点亮同应用全部块」。 */
-/* 悬停高亮：鼠标所在的块 -> 找到同应用的全部块 -> dispatchAction 批量点亮。
-   dataIndex 回查走 scLastData（custom series 不保证保留附加字段，教训同时间轴） */
+/* 排期配色：直接用后端 PALETTE 给的颜色，应用之间的辨识交给「悬停点亮同应用全部标签」。 */
+/* 悬停高亮：鼠标所在的应用标签 -> 点亮全表同一应用的标签。
+   排期页已由 ECharts 甘特图改为真表格，这里用纯 DOM 类切换，不再走 dispatchAction。 */
 var scHotApp = null;
-var scLastData = null;
 function scHighlight(app) {
-  if (!scChart || !scLastData) return;
   if (app === scHotApp) return;
   scHotApp = app;
-  var idxs = [];
-  scLastData.forEach(function (it, i) { if (it && it.app === app) idxs.push(i); });
-  scChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
-  if (idxs.length) scChart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idxs });
+  var tbl = document.getElementById('scTbl');
+  if (!tbl) return;
+  tbl.classList.add('sc-has-hot');
+  var tags = tbl.querySelectorAll('.sc-tag');
+  for (var i = 0; i < tags.length; i++) {
+    if (tags[i].getAttribute('data-app') === app) tags[i].classList.add('hot');
+    else tags[i].classList.remove('hot');
+  }
 }
 function scUnhighlight() {
-  if (!scChart || scHotApp == null) return;
+  if (scHotApp == null) return;
   scHotApp = null;
-  scChart.dispatchAction({ type: 'downplay', seriesIndex: 0 });
+  var tbl = document.getElementById('scTbl');
+  if (!tbl) return;
+  tbl.classList.remove('sc-has-hot');
+  var tags = tbl.querySelectorAll('.sc-tag.hot');
+  for (var i = 0; i < tags.length; i++) tags[i].classList.remove('hot');
 }
 
 var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
@@ -315,6 +320,8 @@ function route() {
     }
   } else if (name === 'projects') {
     pjPendingFid = getParam('fid');   // 带 ?fid= 进入时选中对应项目（无则 null）
+    /* 带 ?tab=runs 进入（排期页点应用标签跳过来）：选中项目后直接打开「运行记录」tab */
+    pjPendingTab = getParam('tab');
     if (!pjReady) { pjInit(); pjReady = true; }
     else { pjLoad(); }
   } else if (name === 'botstatus') {
@@ -2000,9 +2007,13 @@ function lgReset() {
 }
 
 /* ==================== 日程视图 ==================== */
+/* 版式：真表格 —— 行 = 执行时刻，列 = 周几（每周视图）/ 当月有任务的日期（每月视图），
+   格子里直接列出该时刻要跑的应用标签。
+   取代原来的 ECharts 甘特图：行高固定不再互相压、应用名完整可读、
+   悬停点亮同应用全部标签、点击标签直达项目控制台该项目的运行记录。
+   筛选条件（视图 / 机器人 / 状态）与选项保持原样。 */
 var WEEK_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-var scChart = null, scEl = null;
-var lastRowInfo = [], lastTimes = [], scView = 'week', scFilter = '__ALL__', scStatus = 'enabled';
+var scView = 'week', scFilter = '__ALL__', scStatus = 'enabled';
 function scTimeText(t) {
   var hh = Math.floor(t), mm = Math.round((t - hh) * 60);
   return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
@@ -2013,6 +2024,7 @@ function scMatchRobot(r, filter) {
   if (filter === '__BAOSHI__') return r.indexOf('宝实') >= 0;
   return r === filter;
 }
+/* 当前筛选下的排期点；xi = 列下标（周几，或日期在 monthLabels 里的位置） */
 function scBuildPoints(view, robot, status) {
   var pts = [];
   var src = view === 'week' ? SCHED.week : SCHED.month;
@@ -2024,178 +2036,105 @@ function scBuildPoints(view, robot, status) {
       src[r][k].forEach(function (p) {
         if (status === 'enabled' && !p.enabled) return;
         if (status === 'disabled' && p.enabled) return;
-        pts.push({ x: xi, t: p.t, app: p.app, short: p.short, color: p.color, robot: r, enabled: p.enabled });
+        pts.push({ xi: xi, t: p.t, hm: p.hm || scTimeText(p.t), app: p.app, short: p.short,
+                   color: p.color, fid: p.fid || '', enabled: p.enabled, robot: r });
       });
     });
   });
   return pts;
 }
-function scTimeToY(t, rowInfo, times) {
-  if (!times.length) return null;
-  var n = times.length;
-  if (t >= times[0]) return rowInfo[0].center - (t - times[0]);
-  if (t <= times[n - 1]) return rowInfo[n - 1].center + (times[n - 1] - t);
-  var lo = 0, hi = n - 1;
-  while (hi - lo > 1) {
-    var mid = (lo + hi) >> 1;
-    if (times[mid] > t) lo = mid; else hi = mid;
-  }
-  var frac = (times[lo] - t) / (times[lo] - times[hi]);
-  return rowInfo[lo].center + frac * (rowInfo[hi].center - rowInfo[lo].center);
-}
-function scUpdateLines() {
-  if (curView !== 'schedule' || !scChart) return;
-  var now = new Date();
-  var t = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-  var y = scTimeToY(t, lastRowInfo, lastTimes);
-  var xIdx = scView === 'month'
-    ? SCHED.monthLabels.indexOf(now.getDate() + '日')
-    : (now.getDay() + 6) % 7;
-  var lineData = [];
-  if (y !== null) lineData.push({ yAxis: y, name: 'now' });
-  if (xIdx >= 0) lineData.push({ xAxis: xIdx });
-  if (!lineData.length) return;
-  scChart.setOption({
-    series: [{
-      markLine: {
-        silent: true, symbol: 'none',
-        lineStyle: { color: '#E24B4A', width: 2 },
-        label: {
-          formatter: function (p) { return p.data.name === 'now' ? scTimeText(t) : ''; },
-          color: '#E24B4A', fontSize: 11, position: 'insideEndTop'
-        },
-        data: lineData
-      }
-    }]
-  });
+/* 标签：同一格子内同应用只出一个，多机器人时在悬停提示里列出全部机器人 */
+function scTagHtml(it) {
+  var tip = it.app + '　·　' + it.robots.join('、') + (it.enabled ? '' : '（已停用）');
+  return '<span class="sc-tag' + (it.enabled ? '' : ' off') + '"'
+    + ' data-app="' + esc(it.app) + '"'
+    + (it.fid ? ' data-fid="' + esc(it.fid) + '"' : '')
+    + ' style="--c:' + it.color + '" title="' + esc(tip) + '">'
+    + esc(it.short || it.app)
+    + (it.robots.length > 1 ? '<i class="sc-mul">×' + it.robots.length + '</i>' : '')
+    + '</span>';
 }
 function scRender(view, filter, status) {
   scView = view;
-  var xLabels = view === 'week' ? WEEK_LABELS : SCHED.monthLabels;
   var isMonth = view === 'month';
+  var xLabels = isMonth ? (SCHED.monthLabels || []) : WEEK_LABELS;
   var pts = scBuildPoints(view, filter, status);
-  var merged = {};
+
+  /* 聚合成 cellMap[时刻][列] = [应用标签…] */
+  var cellMap = {};
   pts.forEach(function (p) {
-    var k = p.t + '_' + p.app;
-    if (!merged[k]) {
-      merged[k] = { t: p.t, app: p.app, short: p.short, color: p.color, xs: [], items: [], hasEnabled: p.enabled };
-    } else if (p.enabled && !merged[k].hasEnabled) {
-      merged[k].color = p.color;
-      merged[k].hasEnabled = true;
+    var row = cellMap[p.t] || (cellMap[p.t] = {});
+    var cell = row[p.xi] || (row[p.xi] = []);
+    var hit = null;
+    for (var i = 0; i < cell.length; i++) { if (cell[i].app === p.app) { hit = cell[i]; break; } }
+    if (hit) {
+      if (hit.robots.indexOf(p.robot) < 0) hit.robots.push(p.robot);
+      /* 同一应用既有启用又有停用排期时，按启用那套颜色显示（与原图表口径一致） */
+      if (p.enabled && !hit.enabled) { hit.enabled = true; hit.color = p.color; }
+      if (!hit.fid && p.fid) hit.fid = p.fid;
+    } else {
+      cell.push({ app: p.app, short: p.short, color: p.color, fid: p.fid,
+                  enabled: p.enabled, robots: [p.robot] });
     }
-    merged[k].xs.push(p.x);
-    merged[k].items.push({ x: p.x, robot: p.robot, enabled: p.enabled });
   });
-  var times = [];
-  Object.keys(merged).forEach(function (k) { if (times.indexOf(merged[k].t) < 0) times.push(merged[k].t); });
-  times.sort(function (a, b) { return b - a; });
-  var idx = {};
-  times.forEach(function (t, i) { idx[t] = i; });
-  var groups = {};
-  Object.keys(merged).forEach(function (k) {
-    var m = merged[k];
-    m.x0 = Math.min.apply(null, m.xs);
-    m.x1 = Math.max.apply(null, m.xs);
-    (groups[m.t] = groups[m.t] || []).push(m);
-  });
-  var rowInfo = [];
-  var rowInfo = [];
-  var acc = 0;
-  times.forEach(function (t, i) {
-    var n = groups[t].length;
-    var h = Math.max(1, n);
-    rowInfo.push({ t: t, center: acc + h / 2, h: h });
-    acc += h;
-  });
-  var yMax = acc;
-  lastRowInfo = rowInfo;
-  lastTimes = times;
-  var data = [];
-  Object.keys(groups).forEach(function (t) {
-    var arr = groups[t], n = arr.length;
-    arr.forEach(function (m, i) {
-      data.push({
-        value: [m.x0, m.x1, idx[m.t], i, n, m.color, m.short],
-        app: m.app, t: m.t, items: m.items,
-        tooltip: {
-          formatter: function () {
-            var labels = scView === 'month' ? SCHED.monthLabels : WEEK_LABELS;
-            var range = m.x0 === m.x1 ? labels[m.x0] : (labels[m.x0] + ' - ' + labels[m.x1]);
-            var robots = [];
-            m.items.forEach(function (it) {
-              var label = it.enabled ? it.robot : it.robot + '（停用）';
-              if (robots.indexOf(label) < 0) robots.push(label);
-            });
-            return '<b>' + m.app + '</b><br/>' + range + ' ' + scTimeText(m.t) + '<br/>' + robots.join('、');
-          }
-        }
-      });
-    });
-  });
-  scLastData = data;
-  scChart.setOption({
-    backgroundColor: 'transparent',
-    tooltip: tipOpt({ trigger: 'item' }),
-    grid: { left: IS_MOBILE ? 38 : 44, right: 16, top: 10, bottom: isMonth ? 46 : 34 },
-    xAxis: {
-      type: 'category', data: xLabels,
-      axisLabel: { color: '#8b8f98', interval: 0, rotate: isMonth ? 40 : 0, fontSize: IS_MOBILE ? 10 : 11 },
-      axisLine: { lineStyle: { color: '#333' } }
-    },
-    yAxis: {
-      type: 'value', min: 0, max: yMax, interval: 1,
-      axisLabel: {
-        color: '#8b8f98', fontSize: 11,
-        formatter: function (v) {
-          var best = null, bd = 1e9;
-          rowInfo.forEach(function (r) {
-            var d = Math.abs(r.center - v);
-            if (d < bd) { bd = d; best = r.t; }
-          });
-          return best !== null ? scTimeText(best) : '';
-        }
-      },
-      splitLine: { show: false },
-      axisLine: { lineStyle: { color: '#333' } }
-    },
-    series: [{
-      type: 'custom', data: data,
-      renderItem: function (params, api) {
-        var colW = api.size([1, 0])[0];
-        var unitPx = api.size([0, 1])[1];
-        var bh = Math.max(12, unitPx * 0.9);
-        var ri = rowInfo[api.value(2)];
-        var x0 = api.coord([api.value(0), ri.center])[0] - colW / 2;
-        var x1 = api.coord([api.value(1), ri.center])[0] + colW / 2;
-        var yBase = api.coord([api.value(0), ri.center])[1];
-        var off = (api.value(3) - (api.value(4) - 1) / 2) * unitPx;
-        var bw = Math.max(5, x1 - x0);
-        return {
-          type: 'rect',
-          shape: {
-            x: x0, y: yBase + off - bh / 2, width: bw, height: bh,
-            r: Math.min(5, bw / 2, bh / 2)
-          },
-          style: {
-            fill: api.value(5), stroke: 'rgba(255,255,255,.22)', lineWidth: 1,
-            text: api.value(6), textPosition: 'inside',
-            textFill: '#0b0e13', fontSize: IS_MOBILE ? 11 : 20, fontWeight: 500,
-            overflow: 'truncate', fontFamily: 'inherit'
-          }
-        };
-      },
-      /* 灰阶格子用描边 + 投影表达「高亮」；同项目的其余块由 mouseover 里的
-         dispatchAction 批量点亮（见 scInit 绑定），不在 renderItem 里做判断 */
-      emphasis: {
-        focus: 'none',
-        itemStyle: {
-          fill: 'rgba(230,240,250,.95)', stroke: '#ffffff', lineWidth: 2,
-          shadowBlur: 20, shadowColor: 'rgba(0,0,0,.75)'
-        }
+  var times = Object.keys(cellMap).map(Number).sort(function (a, b) { return a - b; });
+
+  var html = '<thead><tr><th class="sc-time-h">时刻</th>';
+  xLabels.forEach(function (l) { html += '<th>' + esc(l) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  if (!times.length) {
+    html += '<tr><td class="sc-empty" colspan="' + (xLabels.length + 1) + '">'
+      + '当前筛选条件下没有排期数据（可把「状态」切到「全部状态」试试）</td></tr>';
+  }
+  times.forEach(function (t) {
+    html += '<tr><td class="sc-time">' + scTimeText(t) + '</td>';
+    for (var i = 0; i < xLabels.length; i++) {
+      var cell = cellMap[t][i];
+      html += '<td class="sc-cell">';
+      if (cell && cell.length) {
+        cell.sort(function (a, b) { return a.app.localeCompare(b.app, 'zh'); });
+        cell.forEach(function (it) { html += scTagHtml(it); });
+      } else {
+        html += '<span class="sc-dash">·</span>';
       }
-    }]
-  }, true);
-  scUpdateLines();
+      html += '</td>';
+    }
+    html += '</tr>';
+  });
+  html += '</tbody>';
+
+  var tbl = document.getElementById('scTbl');
+  if (tbl) { tbl.innerHTML = html; tbl.classList.remove('sc-has-hot'); }
+  scHotApp = null;
+  var info = document.getElementById('scInfo');
+  if (info) {
+    info.textContent = times.length + ' 个时刻 · ' + pts.length + ' 个排期点'
+      + (isMonth ? '（' + xLabels.length + ' 天）' : '');
+  }
+}
+/* 标签点击 -> 项目控制台并打开该项目的「运行记录」tab；悬停 -> 点亮同应用全部标签。
+   表格元素常驻（只换 innerHTML），所以事件只绑一次。 */
+function scBind() {
+  var tbl = document.getElementById('scTbl');
+  if (!tbl) return;
+  tbl.addEventListener('click', function (e) {
+    var tag = e.target.closest ? e.target.closest('.sc-tag') : null;
+    if (!tag) return;
+    var fid = tag.getAttribute('data-fid');
+    if (!fid) {
+      alert('这条排期没有关联的项目 ID。\n请点右上角「立刻更新」重新抓取一次数据（新版会带上 flow_id）。');
+      return;
+    }
+    location.hash = '#/projects?fid=' + encodeURIComponent(fid) + '&tab=runs';
+  });
+  tbl.addEventListener('mouseover', function (e) {
+    var tag = e.target.closest ? e.target.closest('.sc-tag') : null;
+    if (tag) scHighlight(tag.getAttribute('data-app'));
+  });
+  tbl.addEventListener('mouseout', function (e) {
+    var tag = e.target.closest ? e.target.closest('.sc-tag') : null;
+    if (tag) scUnhighlight();
+  });
 }
 function scFillSelect(id, options, onChange) {
   var sel = document.getElementById(id);
@@ -2207,23 +2146,15 @@ function scFillSelect(id, options, onChange) {
   });
   sel.addEventListener('change', function () { onChange(sel.value); });
 }
-function scResize() { if (scChart) scChart.resize(); }
+/* 表格随容器自适应，不需要像图表那样 resize 重绘 */
+function scResize() { }
 function scInit() {
   if (!SCHED || !SCHED.ok) return;
   document.getElementById('sTotal').textContent = SCHED.stats.total;
   document.getElementById('sEnabled').textContent = SCHED.stats.enabled;
   document.getElementById('sDisabled').textContent = SCHED.stats.disabled;
   document.getElementById('sWebhook').textContent = SCHED.stats.webhook;
-  scEl = document.getElementById('c1');
-  if (scChart) { try { scChart.dispose(); } catch (e) { } }
-  scChart = echarts.init(scEl);
-  scChart.on('mouseover', function (params) {
-    if (!params || params.seriesIndex !== 0 || typeof params.dataIndex !== 'number') return;
-    var it = scLastData && scLastData[params.dataIndex];
-    if (it && it.app) scHighlight(it.app);
-  });
-  scChart.on('mouseout', scUnhighlight);
-  scChart.on('globalout', scUnhighlight);
+  scBind();
   scFillSelect('selView', [['week', '每周'], ['month', '每月']], function (v) { scRender(v, scFilter, scStatus); });
   scFillSelect('selRobot',
     [['__ALL__', '全部机器人'], ['__SUXI__', '所有硕晞'], ['__BAOSHI__', '所有宝实']]
@@ -2235,7 +2166,7 @@ function scInit() {
 }
 /* 排期数据更新后重载：刷新统计卡 + 按当前筛选状态重绘（不重建选择器，保留用户选择） */
 function scReload() {
-  if (!SCHED || !SCHED.ok || !scChart) return;
+  if (!SCHED || !SCHED.ok) return;
   document.getElementById('sTotal').textContent = SCHED.stats.total;
   document.getElementById('sEnabled').textContent = SCHED.stats.enabled;
   document.getElementById('sDisabled').textContent = SCHED.stats.disabled;
@@ -2274,7 +2205,6 @@ function scExport() {
   }).then(done);
 }
 document.getElementById('scExport').addEventListener('click', scExport);
-setInterval(scUpdateLines, 10000);
 
 /* ==================== 自动更新 ==================== */
 /* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */
@@ -2531,6 +2461,7 @@ var pjItems = [];          // 项目列表缓存
 var pjCurrent = null;      // 当前选中项目
 var pjCfgItems = [];       // 当前配置项
 var pjPendingFid = null;   // 待跳转选中的 flow_id（从详情页「项目配置」带 ?fid= 进入）
+var pjPendingTab = null;   // 待打开的 tab（排期页点应用标签带 ?tab=runs 进入）
 var pjReady = false;
 
 function pjFmtTime(s) {
@@ -2551,6 +2482,11 @@ function pjLoad(force) {
         var hasTarget = false;
         for (var i = 0; i < pjItems.length; i++) { if (pjItems[i].flow_id === pjPendingFid) hasTarget = true; }
         if (hasTarget) { pjSelect(pjPendingFid); }
+        else if (el) {
+          el.insertAdjacentHTML('afterbegin',
+            '<div class="pj-loading">未在云端项目列表中找到该项目（flowId: '
+            + esc(pjPendingFid) + '），可能已被删除或改名。</div>');
+        }
         pjPendingFid = null;
       }
       if (pjCurrent) document.getElementById('pjGroup').value = pjCurrent.group || '';
@@ -2632,8 +2568,11 @@ function pjSelect(fid) {
   document.getElementById('pjCfgHint').textContent = '配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置。';
   document.getElementById('pjCfgTbl').innerHTML = '';
   pjCfgItems = [];
-  pjSwitchTab('cfg');
-  if (pjCurrent.group) { pjCfgLoad(); }
+  /* 带 ?tab=runs 进入（排期页点标签跳转）：直接落在「运行记录」tab 上 */
+  var wantTab = pjPendingTab === 'runs' ? 'runs' : 'cfg';
+  pjPendingTab = null;
+  pjSwitchTab(wantTab);
+  if (wantTab === 'cfg' && pjCurrent.group) { pjCfgLoad(); }
 }
 function pjSwitchTab(name) {
   var tabs = document.querySelectorAll('.pj-tab');

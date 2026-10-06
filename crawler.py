@@ -292,6 +292,7 @@ def normalize_trigger(it):
     cron_text = (calendar.get("cronExpressionData") or {}).get("text") or ""
     return {
         "trigger_id": it.get("id") or "",
+        "flow_id": it.get("flowId") or "",
         "trigger_name": it.get("name") or "",
         "robot_name": it.get("executorName") or "(未指定机器人)",
         "app_name": it.get("flowName") or "",
@@ -428,7 +429,8 @@ def main():
     print(f"[+] 原始数据已保存: {args.out}/triggers_raw.json")
 
     # 归一化 CSV（支持按机器人前缀保留 + 关键词排除）
-    header = ["trigger_id", "trigger_name", "robot_name", "app_name",
+    # flow_id 用于排期页点击标签跳转项目控制台（对齐云端项目），故一并落盘
+    header = ["trigger_id", "flow_id", "trigger_name", "robot_name", "app_name",
               "trigger_type", "cron", "enabled", "calendar", "update_time"]
 
     def keep(t):
