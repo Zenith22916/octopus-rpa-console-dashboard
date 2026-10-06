@@ -265,8 +265,8 @@ def octo_list_triggers(enabled_only: bool = True) -> str:
 
 
 @mcp.tool()
-def octo_list_runs(days: int = 7, limit: int = 100) -> str:
-    """查看最近的流程运行记录（默认 7 天，最新的在前）。"""
+def octo_list_runs(limit: int = 100) -> str:
+    """查看最近的流程运行记录（全量抓取的数据源，最新的在前）。"""
     runs_file = CRAWLER_OUT / "runs_normalized.csv"
     if not runs_file.is_file():
         raise ValueError(f"未找到运行记录 {runs_file}，请先运行 crawler.py")

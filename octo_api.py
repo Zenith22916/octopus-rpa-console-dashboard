@@ -231,9 +231,9 @@ def _bot_snapshots(cfg):
 
 
 def _flow_run_history(cfg, flow_id):
-    """统计该流程最近 7 天各机器人的运行情况，返回 {机器人名: {runs,last_time,last_status}}。
+    """统计该流程各机器人的运行情况，返回 {机器人名: {runs,last_time,last_status}}。
 
-    数据取本地归一化记录 output/runs_normalized.csv（crawler 每次刷新覆盖 7 天），
+    数据取本地归一化记录 output/runs_normalized.csv（crawler 全量抓取，接口返回多少就多少），
     比接口单页 50 条完整，且不额外发请求。文件里只有机器人名、没有 botId，
     故按名称与机器人清单对齐。
     """

@@ -2654,7 +2654,7 @@ function pjRunsLoad() {
     var mine = RECORDS.filter(function (r) { return r.fid === p.flow_id; })
       .sort(function (a, b) { return (b.start || 0) - (a.start || 0); });
     document.getElementById('pjRunsInfo').textContent = mine.length
-      ? '最近 7 天共 ' + mine.length + ' 条运行记录，展示最近 ' + Math.min(mine.length, 20) + ' 条；点击某条查看日志详情。'
+      ? '共 ' + mine.length + ' 条运行记录（全量），展示最近 ' + Math.min(mine.length, 20) + ' 条；点击某条查看日志详情。'
       : '暂无运行记录（可点击标题右侧「运行该应用」触发一次）。';
     if (!mine.length) {
       el.innerHTML = '<div class="pj-empty-sm">暂无运行记录</div>';

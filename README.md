@@ -176,7 +176,7 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 
 ### 运行数据分析（`#/analysis`，默认主页）
 
-- 8 个概览指标卡：总运行数、成功率、失败数、运行中、平均排队、平均运行、最长单次、并发峰值（统计口径为最近 7 天）
+- 8 个概览指标卡：总运行数、成功率、失败数、运行中、平均排队、平均运行、最长单次、并发峰值（统计口径为全部已抓取记录，全量抓取后约 30 天）
 - 触发方式分布、状态分布 两个饼图
 - 星期 × 小时 热力图（找出运行高峰时段）
 - 各机器人平均排队时长条形图 + 机器人负载榜（记录数/失败/失败率/平均排队/平均运行，失败率 ≥20% 标红）
@@ -235,7 +235,7 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 - 左侧全项目列表（八爪鱼云端 flows），可按「修改时间 / 名称」排序、手动刷新；项目名首字带色块（宝蓝/硕绿/国橙/泇紫/财金等固定映射，其余按首字取色，X 固定灰）
 - 右侧详情：项目名、flowId、更新时间、负责人；标题行右侧 tab（飞书配置 / 运行记录）+「▶ 运行该应用」按钮
 - **运行控制**：「▶ 运行该应用」先弹窗选择执行机器人（默认选中该项目最近一次成功运行的机器人），也可选「不指定，由平台分配」；指定机器人可避免被平台分配到无权限机器人报「没有操作权限」
-- **运行记录 tab**：该项目最近 7 天的记录，最多展示 20 条（状态/机器人/触发方式/起止/时长），点击跳详情页看日志
+- **运行记录 tab**：该项目**全部**运行记录（全量抓取后不再截断到 7 天），最多展示 20 条（状态/机器人/触发方式/起止/时长），点击跳详情页看日志
 - **飞书配置 tab**：
   - 项目 ↔ 配置组映射（存配置中心 `group=project` 组，key=`p.<flowId>`），「保存映射」后自动加载
   - 配置表格含 key / value / type / desc，json 类型展示时自动排版；「编辑」或「＋ 新增配置」在弹窗中修改
@@ -331,7 +331,7 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 |---|---|---|
 | 网页自动更新 | 每 60 秒（可选） | 向 `/api/refresh` 请求；服务器 60 秒内去重直接返回内存最新数据 |
 | 立刻更新 | 手动 | `force=1` 跳过节流，立即爬取 |
-| 快速刷新 | 由上面两者触发 | `crawler.py --only-runs --days 7`，只刷最近 7 天运行记录 |
+| 快速刷新 | 由上面两者触发 | `crawler.py --only-runs`，**全量抓取**运行记录（接口返回多少抓多少，不限天数） |
 | 每日完整更新 | 每天 12:00 | 爬取触发器 + 运行记录、整理时刻表、刷新内存，并刷新「数据获取」时间 |
 
 - 刷新失败（如登录态过期且无法重新登录）会如实返回 `ok=false`，网页顶部红字提示「刷新失败，登录态可能已过期」，不会误报成功。
@@ -341,8 +341,9 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
 ## 手动执行
 
 ```bash
-python crawler.py --config config.json --out output                            # 全量抓取（触发器 + 运行记录）
-python crawler.py --config config.json --out output --only-runs --days 7       # 仅快速刷新运行记录
+python crawler.py --config config.json --out output                            # 全量抓取（触发器 + 运行记录全抓）
+python crawler.py --config config.json --out output --only-runs                # 仅刷新运行记录（全量）
+python crawler.py --config config.json --out output --only-runs --days 7       # 可选：只保留最近 7 天
 python organize.py --input output\triggers_normalized.csv --out output         # 整理时刻表
 python local_server.py                                                          # 仅启动服务器
 start_server.bat silent                                                         # 静默更新（日志写入 output\update_log.txt）

@@ -1155,7 +1155,7 @@ def run_update():
 
 
 def run_refresh(force=False):
-    """快速刷新：运行记录（最近 7 天，手动/定时/Webhook 全部触发方式），由网页 /api/refresh 触发。
+    """快速刷新：运行记录（全量抓取，手动/定时/Webhook 全部触发方式），由网页 /api/refresh 触发。
     force=True（标题栏"立刻更新"按钮）：不带 --only-runs，跑完整爬取，
     同时刷新触发器列表并重写 triggers_normalized.csv（触发器排期页的数据源）。
     数据进入内存缓存（reload_records），不再生成任何 HTML。成功仅打印一行时间戳；
@@ -1163,7 +1163,7 @@ def run_refresh(force=False):
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
-        cmd = [py, "crawler.py", "--config", "config.json", "--out", "output", "--days", "7"]
+        cmd = [py, "crawler.py", "--config", "config.json", "--out", "output"]
         if not force:
             cmd.append("--only-runs")
         try:
@@ -1179,9 +1179,9 @@ def run_refresh(force=False):
                         " ".join(cmd), (out + (r.stderr or ""))[-600:]))
                 return False
             if force:
-                print("[刷新] %s 运行记录 + 触发器排期已更新（最近 7 天，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
+                print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
             else:
-                print("[刷新] %s 运行记录已更新（最近 7 天，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
+                print("[刷新] %s 运行记录已更新（全量抓取，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
             stamp_data_time()   # 爬取成功：记录“数据获取”时间
             return True
         except Exception as e:

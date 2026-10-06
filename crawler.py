@@ -8,14 +8,15 @@
   - runs_normalized.csv：运行记录（机器人、应用、触发方式、状态、起止时间、排队/执行拆分）
 
 用法：
-    python crawler.py --config config.json --out output
-    python crawler.py --config config.json --out output --only-runs --days 7   # 仅快速刷新运行记录
+    python crawler.py --config config.json --out output                    # 全量（触发器 + 运行记录全抓）
+    python crawler.py --config config.json --out output --only-runs        # 仅快速刷新运行记录（全抓）
+    python crawler.py --config config.json --out output --only-runs --days 7   # 只要最近 7 天（可选裁剪）
 
 流程：
     1. 账号密码登录（identity.bazhuayu.com OIDC 链路），会话缓存到 output/session.json
     2. 获取账号下企业列表，选择企业（config 的 enterprise_id 可指定；默认选第一个非个人账号）
     3. 切换企业会话（GET /management/api/session?enterprise_id=xxx），后续请求带 EnterpriseId 头
-    4. 拉取运行记录（最近 N 天；--only-runs 时跳过触发器/机器人，仅刷新运行记录）
+    4. 拉取运行记录（默认全量抓取；--days N 可裁剪到最近 N 天）
     5. 完整流程：分页拉取全部触发器与机器人列表，归一化输出 CSV；机器人按 include/exclude 过滤
 
 鉴权备用方案：
@@ -327,8 +328,8 @@ def main():
     ap.add_argument("--out", default="output")
     ap.add_argument("--only-runs", action="store_true",
                     help="仅抓取运行记录（快速刷新用，跳过触发器/机器人）")
-    ap.add_argument("--days", type=int, default=7,
-                    help="运行记录只保留最近 N 天（默认 7）")
+    ap.add_argument("--days", type=int, default=0,
+                    help="运行记录只保留最近 N 天；0=全量抓取（默认，抓完接口返回的全部记录）")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -369,9 +370,14 @@ def main():
             return False
         return True
 
-    # 拉取运行记录：只保留最近 args.days 天、符合机器人过滤（保留手动/定时/Webhook 全部触发方式）
-    cut_off_ms = int(time.time() * 1000) - args.days * 86400000
-    print(f"[*] 拉取运行记录（最近 {args.days} 天）...")
+    # 拉取运行记录：默认全量抓取（翻完接口全部页）；--days N 时只保留最近 N 天。
+    # 保留手动/定时/Webhook 全部触发方式，仅按 include/exclude 过滤机器人。
+    if args.days and args.days > 0:
+        cut_off_ms = int(time.time() * 1000) - args.days * 86400000
+        print(f"[*] 拉取运行记录（最近 {args.days} 天）...")
+    else:
+        cut_off_ms = None
+        print("[*] 拉取运行记录（全量，不限天数）...")
     runs = fetch_all(session, API_RUNNING_RECORDS, cut_off_ms=cut_off_ms)
     print(f"[+] 运行记录共 {len(runs)} 条")
     keep_runs = [r for r in runs
