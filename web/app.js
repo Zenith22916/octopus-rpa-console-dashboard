@@ -1275,6 +1275,7 @@ function renderDetail() {
     + '<button class="chip" id="btnPrev" disabled>上一处</button>'
     + '<button class="chip" id="btnNext" disabled>下一处</button>'
     + '<button class="chip" id="btnOnlyErr" disabled>仅看异常</button>'
+    + '<button class="chip" id="btnCopyPath" disabled title="复制当前日志文件的完整共享路径">复制路径</button>'
     + '</div>'
     + '</div>'
     + '<div class="log-tabs" id="logTabs"></div>'
@@ -1765,6 +1766,7 @@ function lgStatUpdate() {
     ? ('共 <b>' + t.total + '</b> 处 · 错误 <b class="s-err">' + t.err + '</b> · 警告 <b class="s-warn">' + t.warn + '</b>')
     : '未发现异常';
   lgStatButtons();
+  logSyncCopyBtn();   // 日志读取失败/无目录等分支也会走到这里，顺手同步复制按钮
 }
 function lgStatButtons() {
   var nav = LOGM.kw ? LOGM.matches.length : (LOGM.fileMarks[LOGM.active] || []).length;
@@ -1830,6 +1832,7 @@ function logSetActive(fi) {
     }
   }
   logRenderTabs();
+  logSyncCopyBtn();    // 切文件：复制目标跟着变，同步按钮可用态与悬停提示
   lgStatButtons();
   lgApplyLink();
 }
@@ -1861,6 +1864,91 @@ function lgApplyLink() {
     lgStatButtons();
   }
   LG_LINK = null;
+}
+
+/* ---- 复制路径：把当前日志文件的完整共享路径（UNC）写进剪贴板 ----
+   排查时经常要把路径发给同事（对方粘贴到资源管理器地址栏即可打开），
+   路径来自局域网共享（\\SX-01\Logs\…），手抄易错，所以给个按钮。
+   目标跟随当前选中的日志文件标签，切文件即变。 */
+var LG_COPY = { timer: 0, flash: 0 };
+function lgDirPath() {
+  var d = (DETAIL_REC && DETAIL_REC.log) ? String(DETAIL_REC.log) : "";
+  return d.replace(/[\\/]+$/, "");
+}
+function lgActiveFilePath() {
+  var dir = lgDirPath();
+  if (!dir) return "";
+  var f = LOG_FILES[LOGM.active];
+  if (!f || !f.name) return dir;
+  return dir + (dir.charAt(dir.length - 1) === "\\" ? "" : "\\") + f.name;
+}
+/* 剪贴板：localhost 属安全上下文，走异步 API；局域网 http://IP:8000 不是安全上下文，
+   navigator.clipboard 直接不存在，必须回落到 textarea + execCommand。 */
+function lgLegacyCopy(text) {
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "readonly");
+    ta.style.cssText = "position:fixed;top:-1000px;left:0;opacity:0;";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    var ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
+function lgCopyPath() {
+  /* 正常情况下复制当前选中日志文件的完整路径；共享目录没连上、文件清单读不出来时，
+     退回复制记录里的日志目录（粘到资源管理器同样能打开），并在提示里说明。 */
+  var f = LOG_FILES[LOGM.active];
+  var isFile = !!(f && f.name);
+  var text = isFile ? lgActiveFilePath() : lgDirPath();
+  if (!text) { lgToast("该记录没有可复制的日志路径", false); return; }
+  var btn = document.getElementById("btnCopyPath");
+  /* 反馈只改颜色不改文案：按钮尺寸保持不变，工具条不会因为「已复制」三个字抖一下 */
+  var done = function () {
+    lgToast((isFile ? "已复制：" : "已复制日志目录：") + text);
+    if (!btn) return;
+    btn.classList.add("ok");
+    if (LG_COPY.flash) clearTimeout(LG_COPY.flash);
+    LG_COPY.flash = setTimeout(function () { btn.classList.remove("ok"); }, 1400);
+  };
+  var fail = function () { lgToast("复制失败，请手动选中路径复制", false); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(function () {
+      lgLegacyCopy(text) ? done() : fail();
+    });
+    return;
+  }
+  lgLegacyCopy(text) ? done() : fail();
+}
+/* 轻提示：index.html 里的 #toast 在时间轴视图内，详情页看不见，单独建一个 */
+function lgToast(msg, ok) {
+  var el = document.getElementById("lgToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "lgToast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.className = "show" + (ok === false ? " err" : "");
+  if (LG_COPY.timer) clearTimeout(LG_COPY.timer);
+  LG_COPY.timer = setTimeout(function () { el.className = ""; }, 2200);
+}
+/* 复制按钮可用态与悬停提示：只要记录里有日志目录就能点（目录没连上/文件没读完时退回复制目录） */
+function logSyncCopyBtn() {
+  var btn = document.getElementById("btnCopyPath");
+  if (!btn) return;
+  var f = LOG_FILES[LOGM.active];
+  var isFile = !!(f && f.name);
+  var path = isFile ? lgActiveFilePath() : lgDirPath();
+  var noShare = DETAIL_REC && DETAIL_REC.logOk === false;
+  btn.disabled = !path;
+  btn.title = !path ? "该记录没有可复制的日志路径"
+    : (isFile ? "复制当前日志文件的完整共享路径：\n" + path
+      : "复制该记录的日志目录（当前日志文件清单未读取到）：\n" + path)
+    + (noShare ? "\n（提示：该共享目录当前不可访问，可能未同步或未连接）" : "");
 }
 
 /* ---- 数据加载 ---- */
@@ -1899,6 +1987,7 @@ function loadLogs() {
     box.innerHTML = "";
     box.classList.remove("tip");
     logRenderTabs();
+    logSyncCopyBtn();    // 文件清单就绪：复制按钮拿到当前文件的完整共享路径
     logEditorCreate().then(function () {
       logRenderTabs();
       for (var i2 = 0; i2 < LOG_FILES.length; i2++) loadLogPage(i2, 0);
@@ -1939,6 +2028,7 @@ function loadLogPage(fi, offset) {
     if (LOGM.editor) logSyncModel(fi, offset, delta);
     lgStatUpdate();
     logRenderTabs();
+    logSyncCopyBtn();    // 文件加载状态变化后同步复制按钮
     lgApplyLink();       // 深链：文件模型就绪后自动定位关键词
   }).catch(function () {
     f.pending = false;
@@ -1981,6 +2071,9 @@ function lgInit() {
       if (e.key === "Enter") { lgGoTo(LOGM.cur + (e.shiftKey ? -1 : 1)); e.preventDefault(); }
     });
   }
+  /* 复制路径：把当前日志文件的完整共享路径写进剪贴板 */
+  b = document.getElementById("btnCopyPath");
+  if (b) b.addEventListener("click", lgCopyPath);
 }
 
 /* ---- 释放（详情重建 / 离开详情页时调用） ---- */
@@ -1995,13 +2088,17 @@ function lgReset() {
   LOG_FILES = [];
   var el = document.getElementById("logStat");
   if (el) { el.textContent = "—"; el.removeAttribute("title"); }
-  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind"], b, j;
+  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind", "btnCopyPath"], b, j;
   for (j = 0; j < ids.length; j++) {
     b = document.getElementById(ids[j]);
     if (b) { b.disabled = true; if (ids[j] === "btnOnlyErr") { b.className = "chip"; b.textContent = "仅看异常"; } }
   }
   var f = document.getElementById("logFind");
   if (f) f.value = "";
+  /* 复制按钮：清掉上一次的「已复制」高亮（LOG_FILES 已清空，可用态由 logSyncCopyBtn 接管） */
+  if (LG_COPY.flash) { clearTimeout(LG_COPY.flash); LG_COPY.flash = 0; }
+  var cp = document.getElementById("btnCopyPath");
+  if (cp) cp.classList.remove("ok");
   var box = document.getElementById("logbox");
   if (box) box.classList.remove("lg-only");
 }

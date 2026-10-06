@@ -875,6 +875,41 @@ tbody tr:hover {
   width: 150px;
 }
 
+/* 复制路径按钮：复制成功后的短暂反馈（染绿 1.4 秒，文案与尺寸都不变，见 app.js 的 lgCopyPath） */
+.chip.ok {
+  background: #1f6f43;
+  border-color: #2e9e5c;
+  color: #fff;
+}
+
+/* 详情页轻提示（index.html 里的 #toast 在时间轴视图内，详情页复用不了）。
+   走屏幕底部：提示里带完整 UNC 路径会折成两行，放顶部会压住详情页标题栏。 */
+#lgToast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  z-index: 10000;
+  background: #2a2f38;
+  color: #e6e6e6;
+  border: 1px solid #333a45;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease, transform .25s ease;
+  max-width: min(80vw, 760px);
+  text-align: center;
+  word-break: break-all;
+}
+
+#lgToast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Monaco 装饰：异常行高亮 / 行首色标 / 关键词匹配 */
 .lg-line-err {
   background: rgba(226, 75, 74, 0.13);

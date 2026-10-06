@@ -1296,6 +1296,29 @@ tbody tr:hover {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03), inset 0 24px 48px -36px rgba(0, 0, 0, .95);
 }
 
+/* 复制路径按钮的成功反馈：与「重新运行」同一套绿色，比 chip.on 更明确 */
+.chip.ok:not(:disabled) {
+  background: linear-gradient(180deg, #2ec57a, #12924f);
+  border-color: rgba(52, 209, 127, .5);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset, 0 12px 28px -14px rgba(52, 209, 127, .9);
+}
+
+/* 详情页轻提示：与 #toast 同款皮肤 */
+#lgToast {
+  background: linear-gradient(180deg, rgba(40, 46, 58, .98), rgba(23, 27, 35, .98));
+  color: var(--t-text);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 12px;
+  box-shadow: 0 24px 52px -22px rgba(0, 0, 0, 1), 0 0 0 1px rgba(255, 255, 255, .04) inset;
+  transition: opacity .3s var(--t-ease), transform .46s var(--t-spring);
+}
+
+#lgToast.err {
+  border-color: rgba(255, 107, 109, .5);
+  color: #ffc9ca;
+}
+
 /* ------------------------------------------------- 13. 弹窗 / 遮罩 / Toast */
 .pj-modal-mask {
   background: rgba(4, 6, 10, .72);
