@@ -2106,11 +2106,86 @@ function scRender(view, filter, status) {
   var tbl = document.getElementById('scTbl');
   if (tbl) { tbl.innerHTML = html; tbl.classList.remove('sc-has-hot'); }
   scHotApp = null;
+  scTodayCol = -1;          // 表格重建过，今天列的底色要重新标一次
+  scUpdateNowLine();
   var info = document.getElementById('scInfo');
   if (info) {
     info.textContent = times.length + ' 个时刻 · ' + pts.length + ' 个排期点'
       + (isMonth ? '（' + xLabels.length + ' 天）' : '');
   }
+}
+/* ---- 当前时刻标记：今天那一列加底色 + 一条当前时刻的红色虚线横线 ----
+   两者都在应用标签「下面」：列底色是 td 自己的 background（天然在内容之下）；
+   横线是覆盖层，z-index 低于 .sc-tag（见 style.css），所以不会压住标签文字。 */
+var scTodayCol = -1;        // 今天所在列下标（-1 = 当前视图里没有今天）
+/* 今天那一列加底色：每周视图取当天周几，每月视图取当天日期在 monthLabels 里的位置 */
+function scMarkToday() {
+  var tbl = document.getElementById('scTbl');
+  if (!tbl) return;
+  var idx = scView === 'month'
+    ? (SCHED.monthLabels || []).indexOf(new Date().getDate() + '日')
+    : (new Date().getDay() + 6) % 7;
+  if (idx === scTodayCol) return;      // 没变就不动 DOM
+  scTodayCol = idx;
+  var old = tbl.querySelectorAll('.sc-today');
+  for (var i = 0; i < old.length; i++) old[i].classList.remove('sc-today');
+  if (idx < 0) return;                 // 月视图里当月没有今天的排期列
+  var rows = tbl.rows;
+  for (var r = 0; r < rows.length; r++) {
+    var c = rows[r].cells[idx + 1];    // 第 0 列是「时刻」，列下标整体右移一格
+    if (c) c.classList.add('sc-today');
+  }
+}
+/* 横线的纵坐标：按「时刻」列的中心线做线性插值，落在两行之间时按时间比例取点 */
+function scUpdateNowLine() {
+  if (curView !== 'schedule') return;
+  var tbl = document.getElementById('scTbl');
+  var wrap = document.getElementById('scWrap');
+  var line = document.getElementById('scNowLine');
+  if (!tbl || !wrap || !line) return;
+  scMarkToday();
+
+  /* 收集各时刻行相对 wrap 的纵向位置（表头与「无数据」行不算） */
+  var marks = [], rows = tbl.rows;
+  var wrapTop = wrap.getBoundingClientRect().top;
+  for (var r = 1; r < rows.length; r++) {
+    var td = rows[r].cells[0];
+    if (!td || !td.classList.contains('sc-time')) continue;
+    var txt = (td.textContent || '').trim();
+    if (!/^\d{2}:\d{2}$/.test(txt)) continue;
+    var rect = td.getBoundingClientRect();
+    marks.push({
+      t: parseInt(txt.slice(0, 2), 10) + parseInt(txt.slice(3), 10) / 60,
+      top: rect.top - wrapTop, h: rect.height
+    });
+  }
+  var n = marks.length;
+  if (!n) { line.style.display = 'none'; return; }
+
+  var now = new Date();
+  var nt = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+  var y;
+  if (nt <= marks[0].t) {
+    y = marks[0].top;                                   // 早于首个时刻：贴第一行顶
+  } else if (nt >= marks[n - 1].t) {
+    y = marks[n - 1].top + marks[n - 1].h;              // 晚于末个时刻：贴最后一行底
+  } else {
+    for (var i = 0; i < n - 1; i++) {
+      if (nt >= marks[i].t && nt <= marks[i + 1].t) {
+        var span = marks[i + 1].t - marks[i].t;
+        var f = span > 0 ? (nt - marks[i].t) / span : 0;
+        var c0 = marks[i].top + marks[i].h / 2;
+        var c1 = marks[i + 1].top + marks[i + 1].h / 2;
+        y = c0 + f * (c1 - c0);
+        break;
+      }
+    }
+  }
+  if (y == null) { line.style.display = 'none'; return; }
+  line.style.display = '';
+  line.style.top = Math.round(y) + 'px';
+  var lab = line.firstChild;
+  if (lab) lab.textContent = scTimeText(nt);
 }
 /* 标签点击 -> 项目控制台并打开该项目的「运行记录」tab；悬停 -> 点亮同应用全部标签。
    表格元素常驻（只换 innerHTML），所以事件只绑一次。 */
@@ -2146,8 +2221,8 @@ function scFillSelect(id, options, onChange) {
   });
   sel.addEventListener('change', function () { onChange(sel.value); });
 }
-/* 表格随容器自适应，不需要像图表那样 resize 重绘 */
-function scResize() { }
+/* 窗口尺寸变化 / 横向滚动后，横线的像素位置要按新布局重算 */
+function scResize() { scUpdateNowLine(); }
 function scInit() {
   if (!SCHED || !SCHED.ok) return;
   document.getElementById('sTotal').textContent = SCHED.stats.total;
@@ -2205,6 +2280,8 @@ function scExport() {
   }).then(done);
 }
 document.getElementById('scExport').addEventListener('click', scExport);
+/* 当前时刻标记每 10 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
+setInterval(scUpdateNowLine, 10000);
 
 /* ==================== 自动更新 ==================== */
 /* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */

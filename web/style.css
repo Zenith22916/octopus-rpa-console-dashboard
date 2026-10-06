@@ -1077,6 +1077,13 @@ tbody tr:hover {
   max-height: none;
 }
 
+/* 表格的定位基准：只为「当前时刻横线」提供参照，本身不参与视觉 */
+.sc-wrap {
+  position: relative;
+  display: inline-block;
+  min-width: 100%;
+}
+
 .sc-tbl {
   width: 100%;
   border-collapse: separate;
@@ -1084,10 +1091,12 @@ tbody tr:hover {
   font-size: 12px;
 }
 
+/* 层级（从低到高）：横线 0 < 时刻列 1 < 应用标签 2 < 表头 4 < 表头时刻格 5
+   横线因此压在标签下面；表头最高，纵向滚动时内容不会透出来 */
 .sc-tbl thead th {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 4;
   background: #1b1f27;
   color: #8b8f98;
   font-weight: 500;
@@ -1110,7 +1119,7 @@ tbody tr:hover {
 }
 
 .sc-tbl th.sc-time-h {
-  z-index: 3;
+  z-index: 5;
 }
 
 .sc-tbl td.sc-time {
@@ -1136,6 +1145,48 @@ tbody tr:hover {
   background: #232833;
 }
 
+/* 今天那一列：淡红底色（td 自身的背景天然在标签下面）
+   悬停规则要单独提一遍，否则被上面那条 tr:hover 的优先级盖掉 */
+.sc-tbl td.sc-today {
+  background: rgba(226, 75, 74, .07);
+}
+
+.sc-tbl tbody tr:hover td.sc-today {
+  background: rgba(226, 75, 74, .14);
+}
+
+/* 表头的今天列用不透明色，避免纵向滚动时下方内容透出来 */
+.sc-tbl thead th.sc-today {
+  background: #2a1f24;
+  color: #e8a9a5;
+}
+
+/* 当前时刻横线：覆盖层，压在应用标签下面（z-index 0 < 标签的 2） */
+.sc-nowline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  height: 0;
+  border-top: 1px dashed rgba(226, 75, 74, .85);
+  pointer-events: none;   /* 不挡住标签的悬停与点击 */
+}
+
+/* 线尾的当前时刻标签，贴在右端上方 */
+.sc-nowline .sc-now-lab {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(226, 75, 74, .92);
+  color: #fff;
+  font-size: 10.5px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .sc-dash {
   color: #3a4049;
 }
@@ -1146,9 +1197,12 @@ tbody tr:hover {
   text-align: center;
 }
 
-/* 应用标签：底色/文字色由 --c（后端调色板）驱动 */
+/* 应用标签：底色/文字色由 --c（后端调色板）驱动
+   position+z-index 是为了压在当前时刻横线之上（横线是覆盖层，见 .sc-nowline） */
 .sc-tag {
   display: inline-block;
+  position: relative;
+  z-index: 2;
   margin: 1px 3px 1px 0;
   padding: 1px 6px;
   border-radius: 4px;

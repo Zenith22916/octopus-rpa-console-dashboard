@@ -502,6 +502,12 @@
     padding: 2px 6px;
   }
 
+  /* 当前时刻标签在窄屏上会顶到边缘，缩一号 */
+  .sc-nowline .sc-now-lab {
+    font-size: 10px;
+    line-height: 14px;
+  }
+
   /* 面板标题里的筛选控件换行排布，三组「标签 + 下拉」自动折行 */
   .panel h2 {
     display: flex;
