@@ -220,27 +220,67 @@ def read_log_dir(raw, full=False):
     return {"ok": True, "error": "", "logs": logs}
 
 
-def read_log_file_slice(raw, fn, offset, limit):
-    """分段读取单个 .log 文件内容（供详情页"加载更多"逐段拉取）。
-    严格校验文件落在允许目录内，杜绝目录穿越。"""
+def _resolve_log_file(raw, fn):
+    """校验日志目录与文件名，返回 (文件绝对路径, 错误信息)。
+    严格限制文件落在允许的日志根目录内，杜绝目录穿越。"""
     if not raw or not fn:
-        return {"ok": False, "error": "缺少目录或文件参数"}
+        return None, "缺少目录或文件参数"
     if not is_allowed(raw):
-        return {"ok": False, "error": "目录不在允许的日志根范围内"}
+        return None, "目录不在允许的日志根范围内"
     p = os.path.normpath(raw)
     if not os.path.isdir(p):
-        return {"ok": False, "error": "目录不存在或无法访问"}
+        return None, "目录不存在或无法访问"
     fp = os.path.normpath(os.path.join(p, fn))
     if fp != p and not fp.startswith(p + os.sep):
-        return {"ok": False, "error": "非法文件名"}
+        return None, "非法文件名"
     if not os.path.isfile(fp) or not fn.lower().endswith(".log"):
-        return {"ok": False, "error": "文件不存在或非日志文件"}
+        return None, "文件不存在或非日志文件"
+    return fp, ""
+
+
+def read_log_file_slice(raw, fn, offset, limit):
+    """分段读取单个 .log 文件内容（供详情页"加载更多"逐段拉取）。"""
+    fp, err = _resolve_log_file(raw, fn)
+    if err:
+        return {"ok": False, "error": err}
     try:
         size = os.path.getsize(fp)
         collected, has_more = read_log_slice(fp, offset, limit)
         return {"ok": True, "error": "", "name": fn, "size": size,
                 "offset": offset, "limit": limit,
                 "lines": len(collected), "hasMore": has_more,
+                "content": "\n".join(collected)}
+    except Exception as e:
+        return {"ok": False, "error": "读取失败：%s" % e}
+
+
+def read_log_refresh_slice(raw, fn, offset, limit):
+    """刷新当前日志文件（详情页「刷新」按钮）：从 offset 行起取一页，并额外返回
+    锚点行与当前总行数，供前端安全地做增量追加。
+
+    - anchor = 第 offset 行内容。前端拿它和「已加载的最后一行」比对：一致说明文件
+      只是在尾部追加，可以把新行接到模型末尾（滚动位置与搜索状态都不受影响）；
+      不一致说明文件被重写/轮转/变短，前端退回整段重载，避免新旧内容错接。
+    - total 必须扫完整个文件才能得到，而 read_log_file_slice 取满一页就停，
+      所以刷新单独走这个函数（不为此给每次翻页都加一遍全文件扫描）。"""
+    fp, err = _resolve_log_file(raw, fn)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        size = os.path.getsize(fp)
+        collected, anchor, total = [], None, 0
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                total += 1
+                if total <= offset:
+                    anchor = line.rstrip("\n")   # 逐行覆盖，循环结束时即第 offset 行
+                    continue
+                if len(collected) < limit:
+                    collected.append(line.rstrip("\n"))
+        return {"ok": True, "error": "", "name": fn, "size": size,
+                "offset": offset, "limit": limit, "total": total,
+                "anchor": anchor, "lines": len(collected),
+                "hasMore": total > offset + len(collected),
                 "content": "\n".join(collected)}
     except Exception as e:
         return {"ok": False, "error": "读取失败：%s" % e}
@@ -774,7 +814,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def handle_log_fetch(self):
         """详情页实时读取日志，支持分段获取：
         - 列表模式 ?dir=<目录>：返回该目录下所有 .log 文件的元数据（名称/大小/行数），不含内容；
-        - 分段模式 ?dir=<目录>&file=<文件名>&offset=<行号>&limit=<行数>：返回该文件某一页内容。
+        - 分段模式 ?dir=<目录>&file=<文件名>&offset=<行号>&limit=<行数>：返回该文件某一页内容；
+        - 刷新模式（在分段模式上加 &refresh=1）：额外返回 anchor（offset 行原文）与 total（当前总行数），
+          供前端判断文件是「尾部追加」还是「被重写」，只刷新文件内容而不重建页面。
         内容改为前端按需分段拉取，避免超长日志一次性返回导致浏览器卡死。"""
         q = parse_qs(urlparse(self.path).query)
         raw = unquote(q.get("dir", [""])[0])
@@ -792,7 +834,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 offset = 0
             if limit <= 0 or limit > MAX_PAGE:
                 limit = LOG_PAGE
-            payload = read_log_file_slice(raw, fn, offset, limit)
+            if q.get("refresh", ["0"])[0] == "1":
+                payload = read_log_refresh_slice(raw, fn, offset, limit)
+            else:
+                payload = read_log_file_slice(raw, fn, offset, limit)
         else:
             full = q.get("full", ["0"])[0] == "1"
             payload = read_log_dir(raw, full=full)

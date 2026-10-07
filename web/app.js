@@ -1268,7 +1268,10 @@ function renderDetail() {
     + (runMs != null ? fld("运行时长", fmtDur(runMs)) : "")
     + '</div></div>';
   var logCard = '<div class="card log-card">'
-    + '<div class="log-head"><h3>日志内容</h3>'
+    + '<div class="log-head"><div class="log-title"><h3>日志内容</h3>'
+    + '<button class="chip log-refresh" id="btnLogRefresh" disabled title="只重新读取日志文件内容：新内容增量追加，滚动位置与搜索状态都保留">'
+    + '<span class="lg-spin">↻</span> 刷新</button>'
+    + '</div>'
     + '<div class="log-tools">'
     + '<span class="stat" id="logStat">—</span>'
     + '<input class="find" id="logFind" type="search" placeholder="搜索关键词" disabled>'
@@ -1475,6 +1478,7 @@ var LOG_FOLD = {
   keepRows: 2.5,   // 折叠时保留的显示行宽度（预留断词提前量，实际显示约 3 行）
   minRows: 3,      // 估算超过 3 个显示行才折叠
   maps: [],        // per-file: { [行号]: {origText, previewText, estLines, folded, zoneId} }
+  zoneIds: [],     // 已挂到编辑器上的 view zone 句柄（整段重载时按此清理残留提示条）
   pendingTop: null // 最近一次按下鼠标时的 scrollTop（Monaco 行号点击会 reveal 到行尾，需提前记录）
 };
 
@@ -1593,9 +1597,9 @@ function lgFoldReattach(fi) {     // 重挂当前文件的折叠提示条 + 行�
   if (!ed || !monaco || !m || ed.getModel() !== m) return;
   var map = LOG_FOLD.maps[fi] || {};
   ed.changeViewZones(function (acc) {
+    lgFoldClearZones(acc);                 // 先清掉编辑器上残留的提示条（含整段重载后 maps 已丢句柄的）
     for (var k in map) {
       var rec = map[k];
-      if (rec.zoneId) { try { acc.removeZone(rec.zoneId); } catch (e) { } rec.zoneId = null; }
       if (!rec.folded) continue;
       (function (line, rec2) {
         var dom = document.createElement("div");
@@ -1606,10 +1610,26 @@ function lgFoldReattach(fi) {     // 重挂当前文件的折叠提示条 + 行�
           LOG_FOLD.pendingTop = null;
         });
         rec2.zoneId = acc.addZone({ afterLineNumber: line, heightInLines: 1, domNode: dom, suppressMouseDown: true });
+        LOG_FOLD.zoneIds.push(rec2.zoneId);
       })(+k, rec);
     }
   });
   lgFoldApplyDecos(fi);
+}
+
+/* 清空编辑器上的折叠提示条。整段重载会重建 maps（旧 zoneId 句柄随之丢失），
+   残留的提示条只能靠这里统一登记的 zoneIds 才能摘掉。 */
+function lgFoldClearZones(acc) {
+  var ids = LOG_FOLD.zoneIds || [];
+  for (var i = 0; i < ids.length; i++) {
+    try { acc.removeZone(ids[i]); } catch (e) { }
+  }
+  LOG_FOLD.zoneIds = [];
+  var maps = LOG_FOLD.maps || [];
+  for (var fi = 0; fi < maps.length; fi++) {
+    var map = maps[fi];
+    for (var k in map) map[k].zoneId = null;
+  }
 }
 
 function lgFoldApplyDecos(fi) {   // 行首箭头：▸ 已折叠 / ▾ 展开中，展开行加淡背景
@@ -1767,6 +1787,7 @@ function lgStatUpdate() {
     : '未发现异常';
   lgStatButtons();
   logSyncCopyBtn();   // 日志读取失败/无目录等分支也会走到这里，顺手同步复制按钮
+  lgRefreshSyncBtn(); // 同理：没有日志文件时刷新按钮保持不可点
 }
 function lgStatButtons() {
   var nav = LOGM.kw ? LOGM.matches.length : (LOGM.fileMarks[LOGM.active] || []).length;
@@ -1833,6 +1854,7 @@ function logSetActive(fi) {
   }
   logRenderTabs();
   logSyncCopyBtn();    // 切文件：复制目标跟着变，同步按钮可用态与悬停提示
+  lgRefreshSyncBtn();  // 刷新按钮同样只作用于当前选中的日志文件
   lgStatButtons();
   lgApplyLink();
 }
@@ -2029,11 +2051,140 @@ function loadLogPage(fi, offset) {
     lgStatUpdate();
     logRenderTabs();
     logSyncCopyBtn();    // 文件加载状态变化后同步复制按钮
+    lgRefreshSyncBtn();  // 文件就绪后刷新按钮才可点（只在文件页返回时生效）
     lgApplyLink();       // 深链：文件模型就绪后自动定位关键词
   }).catch(function () {
     f.pending = false;
     var b = document.getElementById("btnMore");
     if (b && b.tagName === "BUTTON") { b.disabled = false; b.textContent = "加载失败，点击重试"; }
+  });
+}
+
+/* ---- 刷新：只重读当前日志文件的内容 ----
+   看实时日志时不用退出重进详情页。做的是「重读文件」，不是「重建页面」：
+   - 以已加载行数为 offset 请求一页（&refresh=1），服务端额外返回 anchor（第 offset 行原文）
+     与 total（当前总行数）；
+   - anchor 与已加载的最后一行一致 → 文件只是尾部追加，把新行接到模型末尾，
+     Monaco 增量追加不会动滚动位置，搜索词/仅看异常/折叠状态全都保留；
+   - anchor 不一致 → 文件被重写或轮转，退回整段重载（避免新旧内容错接），并尽量还原视口位置。
+   注意：比对只覆盖第 offset 行，文件在已加载区间中间被改写是检测不到的（八爪鱼日志只会追加）。 */
+var LG_REFRESH = { busy: false };
+function lgRefreshBtn() { return document.getElementById("btnLogRefresh"); }
+function lgRefreshTarget() {
+  var f = LOG_FILES[LOGM.active];
+  return (f && f.name && !f.pending) ? f : null;
+}
+function lgRefreshSyncBtn() {
+  var b = lgRefreshBtn();
+  if (!b) return;
+  var f = lgRefreshTarget();
+  b.disabled = LG_REFRESH.busy || !f;
+  b.title = f
+    ? "只重新读取当前日志文件内容（" + f.name + "）：新内容增量追加，滚动位置与搜索状态都保留"
+    : "只重新读取当前日志文件内容";
+}
+/* 已加载内容的最后一行原文（取自 f.content，不受超长行折叠影响） */
+function lgLastLoadedLine(f) {
+  var s = f.content || "";
+  var i = s.lastIndexOf("\n");
+  return i < 0 ? s : s.slice(i + 1);
+}
+
+function lgRefreshFile() {
+  if (LG_REFRESH.busy) return;
+  var fi = LOGM.active;
+  var f = lgRefreshTarget();
+  if (!f) { lgToast("当前没有可刷新的日志文件", false); return; }
+  LG_REFRESH.busy = true;
+  lgRefreshSyncBtn();
+  var b = lgRefreshBtn();
+  if (b) b.classList.add("busy");
+  var offset = f.loaded || 0;
+  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log)
+    + "&file=" + encodeURIComponent(f.name)
+    + "&offset=" + offset + "&limit=" + LOG_PAGE + "&refresh=1";
+  fetch(url, { credentials: 'same-origin' }).then(function (r) {
+    if (r.status === 401) { location.href = '/login'; return null; }
+    return r.json();
+  }).then(function (d) {
+    LG_REFRESH.busy = false;
+    if (b) b.classList.remove("busy");
+    if (d === null) return;                                  // 401 已跳登录页
+    if (!d || !d.ok) {
+      lgRefreshSyncBtn();
+      lgToast("刷新失败：" + ((d && d.error) || "未知错误"), false);
+      return;
+    }
+    if (offset > 0 && d.anchor !== lgLastLoadedLine(f)) {
+      lgReloadFile(fi, "日志文件已被重写，已重新载入");       // 轮转/覆盖：整段重载
+      return;
+    }
+    var delta = d.content || "";
+    f.size = d.size || f.size;
+    f.total = d.total || f.total;
+    if (!delta) {                                            // 没有新行：只同步元数据
+      f.hasMore = !!d.hasMore;
+      lgRefreshSyncBtn(); logRenderTabs();
+      lgToast("已是最新（共 " + f.total + " 行）");
+      return;
+    }
+    f.content += (f.content ? "\n" : "") + delta;
+    var hadMore = f.hasMore;           // 刷新前是否还有没载入的行：决定提示说「新增」还是「载入」
+    f.loaded = offset + (d.lines || 0);
+    f.hasMore = !!d.hasMore;
+    logSyncModel(fi, offset, delta);   // 只往模型尾部追加，滚动位置与搜索状态都不动
+    if (LOGM.kw) logApplyHits();       // 有关键词时重算命中：新增行里的命中也要高亮、可跳转
+    lgStatUpdate();
+    logRenderTabs();
+    lgRefreshSyncBtn();
+    lgToast("已刷新：" + f.name + (hadMore ? " 载入 " : " 新增 ") + (d.lines || 0) + " 行（共 " + f.total + " 行）");
+  }).catch(function (e) {
+    LG_REFRESH.busy = false;
+    if (b) b.classList.remove("busy");
+    lgRefreshSyncBtn();
+    lgToast("刷新失败：" + (e && e.message ? e.message : e), false);
+  });
+}
+
+/* 整段重载当前文件（刷新时发现文件被重写/轮转，或加载失败重试） */
+function lgReloadFile(fi, tip) {
+  var f = LOG_FILES[fi];
+  if (!f || f.pending) return;
+  f.pending = true;
+  var ed = LOGM.editor;
+  var top = ed ? ed.getScrollTop() : 0;
+  var url = "/api/log?dir=" + encodeURIComponent(DETAIL_REC.log)
+    + "&file=" + encodeURIComponent(f.name) + "&offset=0&limit=" + LOG_PAGE + "&refresh=1";
+  fetch(url, { credentials: 'same-origin' }).then(function (r) {
+    if (r.status === 401) { location.href = '/login'; return null; }
+    return r.json();
+  }).then(function (d) {
+    f.pending = false;
+    if (d === null) return;
+    if (!d || !d.ok) {
+      lgRefreshSyncBtn();
+      lgToast("重新载入失败：" + ((d && d.error) || "未知错误"), false);
+      return;
+    }
+    f.content = d.content || "";
+    f.loaded = d.lines || 0;
+    f.total = d.total || f.loaded;
+    f.size = d.size || f.size;
+    f.hasMore = !!d.hasMore;
+    if (LOGM.editor) logSyncModel(fi, 0, f.content);
+    lgFoldReattach(fi);                // setValue 清空了折叠记录，残留的提示条要摘掉、新扫描的再挂上
+    logApplyHits();                    // 内容整体换过：命中列表与高亮重算
+    lgStatUpdate();
+    logRenderTabs();
+    lgRefreshSyncBtn();
+    if (ed && LOGM.editor && ed.getModel() === LOGM.models[fi]) {
+      ed.setScrollTop(top, window.monaco.editor.ScrollType.Immediate);   // 尽量停在原来的视口位置
+    }
+    if (tip) lgToast(tip);
+  }).catch(function (e) {
+    f.pending = false;
+    lgRefreshSyncBtn();
+    lgToast("重新载入失败：" + (e && e.message ? e.message : e), false);
   });
 }
 
@@ -2074,6 +2225,10 @@ function lgInit() {
   /* 复制路径：把当前日志文件的完整共享路径写进剪贴板 */
   b = document.getElementById("btnCopyPath");
   if (b) b.addEventListener("click", lgCopyPath);
+  /* 刷新：只重读当前日志文件内容（看实时日志不用退出重进详情页） */
+  b = lgRefreshBtn();
+  if (b) b.addEventListener("click", lgRefreshFile);
+  lgRefreshSyncBtn();
 }
 
 /* ---- 释放（详情重建 / 离开详情页时调用） ---- */
@@ -2083,16 +2238,19 @@ function lgReset() {
     if (LOGM.models[i]) { try { LOGM.models[i].dispose(); } catch (e) { } }
   }
   LOGM.models = []; LOGM.decos = []; LOGM.fileMarks = []; LOGM.matches = [];
-  LOG_FOLD.maps = [];
+  LOG_FOLD.maps = []; LOG_FOLD.zoneIds = []; LOG_FOLD.pendingTop = null;
   LOGM.cur = -1; LOGM.kw = ""; LOGM.only = false; LOGM.active = 0;
   LOG_FILES = [];
+  LG_REFRESH.busy = false;
   var el = document.getElementById("logStat");
   if (el) { el.textContent = "—"; el.removeAttribute("title"); }
-  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind", "btnCopyPath"], b, j;
+  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind", "btnCopyPath", "btnLogRefresh"], b, j;
   for (j = 0; j < ids.length; j++) {
     b = document.getElementById(ids[j]);
     if (b) { b.disabled = true; if (ids[j] === "btnOnlyErr") { b.className = "chip"; b.textContent = "仅看异常"; } }
   }
+  var rb = lgRefreshBtn();
+  if (rb) rb.classList.remove("busy");
   var f = document.getElementById("logFind");
   if (f) f.value = "";
   /* 复制按钮：清掉上一次的「已复制」高亮（LOG_FILES 已清空，可用态由 logSyncCopyBtn 接管） */

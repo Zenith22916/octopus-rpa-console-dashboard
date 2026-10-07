@@ -640,6 +640,12 @@
     white-space: nowrap;
   }
 
+  /* 刷新：同样不压缩，保证「↻ 刷新」四个字完整可点 */
+  #btnLogRefresh {
+    flex: none;
+    white-space: nowrap;
+  }
+
   #lgToast {
     top: auto;
     bottom: 24px;

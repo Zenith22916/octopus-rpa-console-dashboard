@@ -820,6 +820,39 @@ tbody tr:hover {
   margin: 0;
 }
 
+/* 标题 + 刷新按钮：刷新只作用于「日志内容」，所以挨着标题放，与右侧工具条分开 */
+.log-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.log-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+}
+
+.log-refresh .lg-spin {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* 刷新中：图标转圈 + 按钮变暗（请求结束由 lgRefreshFile 移除 busy） */
+.log-refresh.busy {
+  opacity: .7;
+}
+
+.log-refresh.busy .lg-spin {
+  animation: lgSpin .8s linear infinite;
+}
+
+@keyframes lgSpin {
+  to { transform: rotate(360deg); }
+}
+
 .log-tools {
   display: flex;
   align-items: center;
