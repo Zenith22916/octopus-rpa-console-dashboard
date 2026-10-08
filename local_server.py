@@ -37,8 +37,8 @@ WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 MONACO_ROOT = os.path.join(BASE, "assets", "monaco")         # Monaco Editor（日志高亮，离线自托管；URL /monaco/vs/... → assets/monaco/vs/...）
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
-REFRESH_INTERVAL = 60                # 网页触发刷新去重窗口（秒）：1 分钟内已爬过则跳过
-LAST_REFRESH = [0.0]                 # 上次实际爬取运行记录的时间戳（节流状态）
+REFRESH_INTERVAL = 60                # 后端自动抓取运行记录的间隔（秒）：常驻线程每分钟一次
+LAST_REFRESH = [0.0]                 # 上次成功抓取运行记录的时间戳（后台轮询/立刻更新共用）
 LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）；节流跳过不更新
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
 LOG_PAGE = 5000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
@@ -617,36 +617,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def handle_refresh(self):
-        """网页每分钟请求一次：若 60 秒内已爬取过则跳过，直接返回最新数据。
-        带 ?force=1（标题栏"立刻更新"按钮）时忽略 60 秒节流，立即爬取。
-        run_refresh 失败（如登录态过期且无法重新登录）时如实返回 ok=False，
-        客户端据此提示刷新失败，而不是误以为成功、一直显示陈旧数据。"""
+        """POST /api/refresh —— 标题栏「立刻更新」按钮。
+
+        force=1：立即全量爬取（运行记录 + 触发器排期），不受后台轮询节流影响，
+        跑完把新数据读进内存缓存并返回。失败（如登录态过期且无法重新登录）如实
+        返回 ok=False，前端据此提示刷新失败，而不是误以为成功、一直显示陈旧数据。
+
+        不带 force：只回读内存缓存，不触发任何抓取（抓取由后台 runs_poller 每分钟
+        自行完成；网页自动更新直接读 /api/runs，不再打扰后端）。
+        """
         q = parse_qs(urlparse(self.path).query)
         force = q.get("force", ["0"])[0].lower() in ("1", "true", "yes")
-        now = time.time()
-        skipped = False
-        ok = True
-        error = ""
-        if not force and now - LAST_REFRESH[0] < REFRESH_INTERVAL:
-            skipped = True
-        else:
-            ok = run_refresh(force=force)
-            if ok:
-                LAST_REFRESH[0] = time.time()
-            else:
+        ok, error = True, ""
+        if force:
+            ok = run_refresh(force=True)
+            if not ok:
                 error = "刷新失败，详见 output/update_log.txt"
-        records = reload_records()
         payload = {
             "ok": ok,
-            "skipped": skipped,
-            "count": len(records),
+            "count": len(RECORDS),
             "time": LAST_UPDATE_TIME[0] or now_text(),
             "error": error,
-            "records": records,
+            "records": RECORDS,
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1200,10 +1197,15 @@ def run_update():
 
 
 def run_refresh(force=False):
-    """快速刷新：运行记录（全量抓取，手动/定时/Webhook 全部触发方式），由网页 /api/refresh 触发。
+    """快速刷新：运行记录（全量抓取，手动/定时/Webhook 全部触发方式）。
     force=True（标题栏"立刻更新"按钮）：不带 --only-runs，跑完整爬取，
     同时刷新触发器列表并重写 triggers_normalized.csv（触发器排期页的数据源）。
-    数据进入内存缓存（reload_records），不再生成任何 HTML。成功仅打印一行时间戳；
+    force=False（后台 runs_poller 每分钟定时）：仅 --only-runs 抓运行记录。
+
+    登录态失效由 crawler 自身的 authenticate() 处理：缓存会话/配置 Cookie 失效时
+    自动回退到 config.json 的账号密码重新登录，登录成功后才继续抓。
+
+    成功后把结果读进内存缓存（reload_records）并刷新"数据获取"时间；
     失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
     with UPDATE_LOCK:
         py = sys.executable
@@ -1222,18 +1224,38 @@ def run_refresh(force=False):
                     f.write("[%s] 刷新失败: %s\n%s\n" % (
                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         " ".join(cmd), (out + (r.stderr or ""))[-600:]))
+                print("[刷新] %s 抓取失败（登录态可能已过期，下个周期会自动重试）"
+                      % datetime.datetime.now().strftime("%H:%M:%S"))
                 return False
+            reload_records()    # 抓取成功：立刻把新数据读进内存，前端 /api/runs 随即可见
+            stamp_data_time()   # 记录“数据获取”时间
+            LAST_REFRESH[0] = time.time()
             if force:
                 print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
             else:
                 print("[刷新] %s 运行记录已更新（全量抓取，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
-            stamp_data_time()   # 爬取成功：记录“数据获取”时间
             return True
         except Exception as e:
             with open(log, "a", encoding="utf-8") as f:
                 f.write("[%s] 刷新异常: %s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), e))
             print("[刷新] 异常:", e)
             return False
+
+
+def runs_poller():
+    """后台常驻抓取线程：每REFRESH_INTERVAL 秒抓一次运行记录（全量，只抓运行记录）。
+
+    与网页完全解耦：不管有没有人打开页面，后端都自己在跑。登录态失效时
+    crawler 的 authenticate() 会自动账号密码重登后继续抓；重登也失败则本轮跳过，
+    下一个周期再试（失败摘要写入 output/update_log.txt）。
+    首次抓取放在一个完整间隔之后，让服务先起来把内存缓存准备好。
+    """
+    while True:
+        time.sleep(REFRESH_INTERVAL)
+        try:
+            run_refresh(force=False)
+        except Exception as e:
+            print("[定时] 运行记录抓取异常:", e)
 
 
 def scheduler():
@@ -1260,6 +1282,7 @@ def main():
     _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
     print("[启动] 运行记录 %d 条已载入内存" % len(RECORDS))
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=runs_poller, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
         print("  RPA 日程仪表盘 - 局域网服务器已启动")
@@ -1272,7 +1295,8 @@ def main():
         else:
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
-        print("  运行记录刷新: 网页每分钟请求 /api/refresh 触发（%d 秒内去重）" % REFRESH_INTERVAL)
+        print("  运行记录刷新: 后端常驻线程每 %d 秒自动抓取一次（登录失效自动重登）" % REFRESH_INTERVAL)
+        print("  网页自动更新: 只读取后端内存中的数据，不会触发抓取")
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
         print("  无需 Windows 任务计划：数据更新由本后端进程自动完成")
         print("  更新日志:   output\\update_log.txt")

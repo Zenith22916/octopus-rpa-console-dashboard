@@ -293,7 +293,7 @@ function route() {
       loadRuns().then(function () { tlInit(); tlReady = true; });
     } else {
       tlResize();
-      if (prevView === 'detail') refreshData();   // 从日志详情页返回：自动更新在详情页停更了，补一次非强制刷新（只抓运行记录，不碰视口状态）
+      if (prevView === 'detail') refreshData();   // 从日志详情页返回：自动更新在详情页停更了，补拉一次后端内存里的最新数据
     }
   } else if (name === 'analysis') {
     if (!anReady) {
@@ -2548,26 +2548,34 @@ function refreshData(force, done) {
   // 只有自动更新（非 force）才转圈；「立刻更新」按钮自带「更新中…」文案，不重复提示
   if (!force) swBusy(true);
   var finish = function (ok) { if (!force) swBusy(false); if (done) done(ok); };
-  fetch((force ? '/api/refresh?force=1' : '/api/refresh'), { method: 'POST', credentials: 'same-origin' }).then(function (r) {
-    if (r.status === 401) { location.href = '/login'; return; }
-    return r.json();
-  }).then(function (d) {
+  /* 自动更新（!force）只读后端内存里的数据：GET /api/runs，不触发任何抓取。
+     抓取由后端常驻线程每分钟自己做，登录失效也会自动重登后重试；
+     所以这里不判断后端抓取状态，读到什么就显示什么（陈旧数据由标题栏
+     「数据获取时间」如实反映）。「立刻更新」（force=1）才走 POST 触发全量抓取。 */
+  var req = force
+    ? fetch('/api/refresh?force=1', { method: 'POST', credentials: 'same-origin' }).then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        return r.json();
+      })
+    : api('/api/runs');
+  return req.then(function (d) {
     var warnEl = document.getElementById('refreshWarn');
     var okFlag = false;
     if (d && d.ok && Array.isArray(d.records)) {
       okFlag = true;
-      if (warnEl) warnEl.style.display = 'none';
+      // 只有「立刻更新」会失败；自动更新读的是后端内存，失败时才提示
+      if (warnEl && force) warnEl.style.display = 'none';
       RECORDS = d.records;
       if (curView === 'timeline') { records = RECORDS.slice(); recomputeBounds(); tlRender(); }
       else if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
       else if (curView === 'botstatus') bsLoad().then(bsRender);
       else if (curView === 'compliance') cpLoad();
       else if (curView === 'schedule' && force) {
-        // 排期页仅在「立刻更新」（全量抓，含触发器）后重载；自动更新只抓运行记录，不影响排期
+        // 排期页仅在「立刻更新」（全量抓，含触发器）后重载；自动更新只读运行记录，不影响排期
         loadSchedule().then(function () { scReload(); });
       }
       if (d.time) document.getElementById('dataTime').textContent = d.time;
-    } else if (warnEl) {
+    } else if (warnEl && force) {
       warnEl.style.display = 'block';
       if (d && d.time) document.getElementById('dataTime').textContent = d.time + '（刷新失败）';
     }
@@ -2584,7 +2592,8 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
     setTimeout(function () { btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
-/* 自动更新：每 60s 拉一次运行记录（--only-runs，不含触发器排期），仅在依赖实跑数据的视图生效 */
+/* 自动更新：每 60s 拉一次后端内存里的运行记录（GET /api/runs，不触发抓取），
+   仅在依赖实跑数据的视图生效。抓取由后端常驻线程每分钟自行完成。 */
 function autoTick() {
   if (curView === 'timeline' || curView === 'analysis' || curView === 'botstatus') refreshData();
 }
@@ -2750,7 +2759,11 @@ document.getElementById('btnRerun').addEventListener('click', function () {
   if (!rec) return;
   runOpenDialog({
     endpoint: '/api/rerun', flowId: rec.fid, name: rec.name || rec.fid,
-    onDone: function () { if (typeof refreshData === 'function') refreshData(); }
+    onDone: function () {
+      /* 新运行要等后端下一轮抓取（约 1 分钟内）才会进内存；这里先把内存里的
+         数据重画一遍，不额外触发后端抓取。 */
+      if (typeof refreshData === 'function') refreshData();
+    }
   });
 });
 document.getElementById('btnToProjects').addEventListener('click', function () {
