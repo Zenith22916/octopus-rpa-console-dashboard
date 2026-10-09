@@ -135,7 +135,7 @@ Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者就�
 @echo off
 title RPA Dashboard Server
 cd /d "%~dp0"
-python local_server.py
+python core\local_server.py
 pause
 ```
 
@@ -429,16 +429,18 @@ pip install "mcp<2" cryptography
 
 ```
 octopus-rpa-console-dashboard/
-├── crawler.py              # 抓取触发器 + 运行记录
-├── dashboard.py            # 数据聚合模块（load_records / build_schedule_payload / build_schedule_export / build_schedule_calendar / build_bot_status / build_compliance）
-├── local_server.py         # 局域网 HTTP 服务器 + JSON API（端口 8000；含跨记录日志检索、排期导出）
-├── xlsx_writer.py          # 极简 XLSX 生成器（标准库拼 zip + XML：表格式/日历式、合并单元格、着色）
-├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv）
-├── octo_api.py             # 八爪鱼云端调度 API（登录/项目列表/机器人清单/触发运行）
-├── feishu_cfg.py           # 飞书多维表格配置中心读写
-├── start_server.bat        # 一键（Windows）：python local_server.py + pause
-├── start_server.sh         # 一键（Linux/macOS）：python3 local_server.py
-├── requirements.txt        # requests / openpyxl
+├── core/                   # 全部后端 Python 模块（相互裸名 import，__init__ 注入路径）
+│   ├── local_server.py     # 局域网 HTTP 服务器 + JSON API（端口 8000；含跨记录日志检索、排期导出）
+│   ├── crawler.py          # 抓取触发器 + 运行记录（全量写 CSV + 入库；--pages N 增量只入库）
+│   ├── dashboard.py        # 数据聚合模块（build_bot_status / build_schedule_payload / build_compliance）
+│   ├── db.py               # MySQL 持久层 + 查询层（rpa_runs 幂等 upsert 与按需查询）
+│   ├── octo_api.py         # 八爪鱼桌面 API（登录/项目列表/机器人清单/触发运行/运行记录+underway 轮询）
+│   ├── organize.py         # 按机器人整理时刻表（生成 md/xlsx/csv）
+│   ├── feishu_cfg.py       # 飞书多维表格配置中心读写
+│   └── xlsx_writer.py      # 极简 XLSX 生成器（标准库拼 zip + XML：表格式/日历式、合并单元格、着色）
+├── start_server.bat        # 一键（Windows）：python core\local_server.py + pause
+├── start_server.sh         # 一键（Linux/macOS）：python3 core/local_server.py
+├── requirements.txt        # requests / openpyxl / pymysql
 ├── config.example.json     # 配置模板
 ├── robot_logs.json         # 日志目录白名单（机器人 → 共享根目录）
 ├── octo_mcp/

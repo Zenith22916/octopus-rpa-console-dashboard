@@ -32,7 +32,7 @@ import xlsx_writer  # 排期导出：纯标准库拼 xlsx（build_xlsx）
 import db           # MySQL 持久层（运行记录入库，config.json -> mysql 段，未配置时静默跳过）
 
 PORT = 8000
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
 DIR = os.path.join(BASE, "output")
 WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html/app.js/style.css）
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
@@ -1245,8 +1245,8 @@ def run_update():
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
         commands = [
-            [py, "crawler.py", "--config", "config.json", "--out", "output"],
-            [py, "organize.py", "--input", os.path.join("output", "triggers_normalized.csv"), "--out", "output"],
+            [py, os.path.join("core", "crawler.py"), "--config", "config.json", "--out", "output"],
+            [py, os.path.join("core", "organize.py"), "--input", os.path.join("output", "triggers_normalized.csv"), "--out", "output"],
         ]
         with open(log, "a", encoding="utf-8") as f:
             f.write("\n[%s] ===== 每日自动更新开始 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -1276,7 +1276,7 @@ def run_refresh():
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
-        cmd = [py, "crawler.py", "--config", "config.json", "--out", "output"]
+        cmd = [py, os.path.join("core", "crawler.py"), "--config", "config.json", "--out", "output"]
         try:
             r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
                                errors="replace", timeout=600)

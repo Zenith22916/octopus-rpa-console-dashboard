@@ -24,7 +24,7 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根（core/ 的上级）
 CFG_FILE = os.path.join(BASE, "config.json")
 TABLE = "rpa_runs"
 

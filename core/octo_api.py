@@ -85,7 +85,7 @@ def resolve_enterprise(cfg, token, force=False):
 
 def _token_path(cfg):
     out = cfg.get("out_dir") or "output"
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), out, "octo_token.json")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), out, "octo_token.json")
 
 
 def _load_cached():
@@ -222,7 +222,7 @@ def _bot_snapshots(cfg):
     返回的每条 id 与运行记录的 botId 是同一个值。
     """
     out = cfg.get("out_dir") or "output"
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out, "triggers_raw.json")
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), out, "triggers_raw.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f).get("bots") or []
@@ -238,7 +238,7 @@ def _flow_run_history(cfg, flow_id):
     故按名称与机器人清单对齐。
     """
     out = cfg.get("out_dir") or "output"
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out, "runs_normalized.csv")
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), out, "runs_normalized.csv")
     hist = {}
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
@@ -456,7 +456,7 @@ def list_underway(cfg):
 
 if __name__ == "__main__":
     import sys
-    cfg = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    cfg = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                       "config.json"), encoding="utf-8"))
     if len(sys.argv) >= 3 and sys.argv[1] == "start":
         fid = sys.argv[2]

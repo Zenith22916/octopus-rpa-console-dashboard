@@ -35,7 +35,7 @@ for _s in (sys.stdout, sys.stderr):
 
 # 北京时间时区（触发器 update_time 为 UTC，展示统一转北京时间）
 BJT = timezone(timedelta(hours=8))
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根（core/ 的上级）
 
 # 深色背景下的 12 色配色（同应用同色，按出现顺序分配）——半透明底色（alpha 0.6）
 PALETTE = [
