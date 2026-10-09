@@ -144,21 +144,8 @@ def _db_records():
 
 
 def load_log_roots():
-    """从 robot_logs.json 读取允许的日志根目录（白名单，防止任意文件读取）。"""
-    roots = []
-    cfg = os.path.join(BASE, "robot_logs.json")
-    if os.path.exists(cfg):
-        try:
-            with open(cfg, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for k, v in data.items():
-                if k.startswith("_"):
-                    continue
-                if isinstance(v, str) and v:
-                    roots.append(v)
-        except Exception:
-            pass
-    return roots
+    """允许读取的日志根目录白名单（防任意文件读取）：来自 config.json -> robot_logs 段。"""
+    return list(dashboard.load_logmap().values())
 
 
 LOG_ROOTS = load_log_roots()

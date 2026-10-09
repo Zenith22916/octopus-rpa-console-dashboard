@@ -207,7 +207,7 @@ pause
     - 成功反馈只把按钮**染绿 1.4 秒**（不改文案、不改尺寸），完整路径以屏幕底部轻提示回显
     - 局域网访问（`http://<IP>:8000`）不是安全上下文、`navigator.clipboard` 不可用，自动回落到 `textarea + execCommand`；两种方式都失败时提示手动复制
     - 共享目录未连上 / 文件清单读不出来时，退回复制该记录的**日志目录**并在提示里说明（该场景仍能复制）
-- 日志来自**局域网共享 UNC 目录**（`robot_logs.json` 白名单）
+- 日志来自**局域网共享 UNC 目录**（`config.json` -> `robot_logs` 白名单）
 - **Monaco 只读日志查看器**（VSCode 编辑器内核，`assets/monaco/` 离线自托管）：
   - **按八爪鱼日志的固定格式逐段着色**（格式：`级别 时间戳 【子流程】第N行【指令】：内容`）：
     - 行首级别：错误红 / 警告橙 / 消息灰；时间戳灰蓝
@@ -269,7 +269,7 @@ pause
 - **命中结果按「同一文件一组」呈现**：组头为「机器人 + 文件名 + 命中 N 处 + 记录时间 + 打开日志 →」，
   组内逐行列命中行（行号 + 错误/警告标签 + 关键词居中截取的片段，超长行首尾加省略号、关键词高亮）
 - **点组头或组内任一行直达该条运行记录的日志**（跳 `#/detail?id=…&kw=…&file=…`，详情页加载完后自动切到对应文件、填入关键词并定位到第一处命中）
-- 只扫描**本机可访问**的日志目录（`robot_logs.json` 白名单内的 UNC 路径），白名单外一律不读
+- 只扫描**本机可访问**的日志目录（`config.json` -> `robot_logs` 白名单内的 UNC 路径），白名单外一律不读
 - **级别筛选在后端生效**：像「超时」这类词会命中大量 `超时[5338/180000]` 等待进度行（级别不算异常），
   不筛级别时 400 条上限会被噪声占满；选「异常 + 警告」/「仅错误」即可只看真正的报错行
 - **标题栏指标卡**：命中行 / 命中日志文件 / 候选记录 / 扫描行数（工具条只留「扫描 N 条记录 / N 个文件 · 最近 N 天」）
@@ -376,15 +376,16 @@ python local_server.py                                                          
 | `feishu.app_id / app_secret` | 飞书自建应用凭据（项目控制台读/写配置中心用） |
 | `feishu.app_token / table_id` | 飞书多维表格「rpa_config」配置中心表 |
 | `access_password` | 可选：仪表盘访问密码（启用 Cookie 鉴权，空则不启用） |
+| `robot_logs` | 机器人 → 局域网日志共享目录（UNC）白名单，详见下节 |
 
 > **登录态过期自动恢复**：令牌缓存到 `output/octo_token.json`，过期后 `octo_api.ensure_token` 会自动重新登录；爬虫侧会话过期会删除缓存并改用 `account` 的账号密码重登（因此请务必在 `config.json` 中填好账号密码，而不仅依赖 cookie）。
 
-### `robot_logs.json`
+### `robot_logs` 段
 
-机器人 → 局域网日志共享目录（UNC）白名单，详情页只在这些根目录内检索，防止任意文件读取：
+机器人 → 局域网日志共享目录（UNC）白名单，详情页只在这些根目录内检索，防止任意文件读取。键须与运行记录里的 `bot_name` 完全一致：
 
 ```json
-{
+"robot_logs": {
   "_说明": "键为机器人名，值为该机器人电脑共享出来的日志根目录 UNC 路径",
   "A🍩硕晞-01": "\\\\SX-01\\Logs",
   "B💎宝实-00": "\\\\BS-00\\Logs"
@@ -442,7 +443,6 @@ octopus-rpa-console-dashboard/
 ├── start_server.sh         # 一键（Linux/macOS）：python3 core/local_server.py
 ├── requirements.txt        # requests / openpyxl / pymysql
 ├── config.example.json     # 配置模板
-├── robot_logs.json         # 日志目录白名单（机器人 → 共享根目录）
 ├── octo_mcp/
 │   └── server.py           # MCP 服务器（流程文件读写/搜索/备份）
 ├── assets/

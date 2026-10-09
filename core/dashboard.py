@@ -118,17 +118,21 @@ def month_days_for(cal, ndays):
 
 
 def load_logmap():
-    """读取 robot_logs.json → {机器人: 共享日志根目录}。失败返回空 dict。"""
+    """读 config.json 的 robot_logs 段 → {机器人: 共享日志根目录}。失败返回空 dict。
+
+    段内下划线开头的键（如 _说明）为注释性字段，自动跳过。
+    """
     logmap = {}
-    cfg = os.path.join(BASE, "robot_logs.json")
+    cfg = os.path.join(BASE, "config.json")
     if os.path.exists(cfg):
         try:
             with open(cfg, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+                raw = (json.load(f) or {}).get("robot_logs") or {}
             for k, v in raw.items():
                 if k.startswith("_"):
                     continue
-                logmap[k] = v
+                if isinstance(v, str) and v:
+                    logmap[k] = v
         except Exception:
             pass
     return logmap

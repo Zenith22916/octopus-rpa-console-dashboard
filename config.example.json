@@ -22,5 +22,9 @@
     "user": "root",
     "password": "",
     "database": "octopus_rpa"
+  },
+  "robot_logs": {
+    "_说明": "机器人名 -> 该机共享日志根目录(UNC)。键须与运行记录里的 bot_name 完全一致。",
+    "A🍩硕晞-01": "\\\\SX-01\\Logs"
   }
 }
