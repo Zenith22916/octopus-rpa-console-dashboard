@@ -45,15 +45,16 @@ UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发�
 LOG_PAGE = 5000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
-RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
+# ---- 数据真相源：MySQL ----
+# 运行记录不再进内存：crawler 增量/全量抓到后直接 upsert 入库（db.upsert_raw_runs），
+# 前端各接口按需查库（db.fetch_records/fetch_run_by_pno），CSV 只是全量快照备份。
 
-# ---- underway 实时层（方案A，逆向自 OctopusRPA 桌面客户端抓包）----
-# 桌面客户端约每 8 秒 GET /desktop/bots/runningRecords/underway?start=0&take=500
-# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里同频轮询，为机器人状态页提供
-# 秒级在途数据：谁在跑/排队中实时可见，历史与终态仍由 runs_poller(60s) 负责。
-UNDERWAY = []                        # 最新一轮 underway items（API 原始 dict）
-UNDERWAY_TS = [0.0]                  # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
-UNDERWAY_INTERVAL = 8                # 轮询间隔（秒），对齐桌面客户端
+# ---- underway 实时层（逆向自 OctopusRPA 桌面客户端抓包）----
+# 桌面客户端以固定频率 GET /desktop/bots/runningRecords/underway?start=0&take=500
+# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里每 5 秒轮询一次，抓到的在途记录
+# 直接入库（end 为空），跑完由 runs_poller 写终态覆盖——库即最新状态，无内存态。
+UNDERWAY_INTERVAL = 5                # 轮询间隔（秒）
+LAST_UNDERWAY_TS = [0.0]             # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
 
 
 def now_text():
@@ -94,69 +95,52 @@ def load_feishu_cfg():
 FEISHU_CFG = load_feishu_cfg()       # 飞书多维表格配置中心凭据（项目全览页用）
 
 
-def reload_records():
-    """从 runs_normalized.csv 重载运行记录到内存（含日志目录解析）。
+def _db_records_from_rows(rows):
+    """db.fetch_records()/fetch_run_by_pno 的原始行 -> 前端/dashboard 同构记录。
 
-    重载成功后把记录幂等 upsert 进 MySQL（db.sync_runs，source="crawler"）：
-    启动 / 每分钟快速刷新 / 每日完整更新 / 手动"立刻更新"全部经过这里，
-    是唯一的 crawler 侧入库挂点；未配置 mysql 段时静默跳过。
-    """
-    global RECORDS
-    RECORDS = dashboard.load_records(DIR)
-    db.sync_runs(RECORDS, source="crawler")
-    return RECORDS
-
-
-def _underway_records():
-    """UNDERWAY（underway API 原始 items）-> 与 RECORDS 同构的记录列表。
-
-    在途记录 end 为空（跑完即从 underway 消失），字段映射与 load_records 一致；
-    日志目录按同规则推算，但在途时通常还未生成（logOk=False）。
+    日志目录按 robot_logs.json 映射推算（与原 load_records 同规则）。
     """
     logmap = None
     out = []
-    for it in UNDERWAY:
-        fid = it.get("flowId") or ""
-        pno = str(it.get("flowProcessNo") or "")
-        start = dashboard.to_ms(it.get("startTime"))
-        if not pno or start is None:
+    for r in rows:
+        fid = r.get("flow_id") or ""
+        pno = str(r.get("process_no") or "")
+        start = r.get("start_ms")
+        if not pno or not start:
             continue
-        robot = it.get("botName") or "(未指定机器人)"
+        robot = r.get("bot_name") or "(未指定机器人)"
         if logmap is None:
             logmap = dashboard.load_logmap()
+        iso_start = datetime.datetime.fromtimestamp(
+            start / 1000, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+00:00"
         log_path, log_ok = dashboard.resolve_log_dir(
-            robot, it.get("startTime"), pno, it.get("flowName"), logmap)
+            robot, iso_start, pno, r.get("flow_name"), logmap)
         out.append({
             "id": dashboard.file_safe_id(fid, pno),
             "fid": fid,
             "pno": pno,
             "robot": robot,
-            "name": it.get("flowName") or it.get("triggerName") or "运行记录",
-            "app": it.get("flowName") or "",
-            "trigger": it.get("triggerName") or "",
+            "name": r.get("flow_name") or r.get("trigger_name") or "运行记录",
+            "app": r.get("flow_name") or "",
+            "trigger": r.get("trigger_name") or "",
             "start": start,
-            "end": dashboard.to_ms(it.get("endTime")),
-            "status": it.get("status") or "",
-            "execStart": dashboard.to_ms(it.get("executionStartTime")),
-            "way": it.get("startWay") or "",
+            "end": r.get("end_ms"),
+            "status": r.get("status") or "",
+            "execStart": r.get("exec_start_ms"),
+            "way": r.get("start_way") or "",
             "log": log_path,
             "logOk": log_ok,
-            "live": True,          # 标记：来自 underway 实时轮询
         })
     return out
 
 
-def _merged_status_records():
-    """botstatus 合并视图：UNDERWAY 实时在途覆盖 RECORDS 中同一 process_no 的
-    记录（排队中 -> 运行中的状态跃迁 8 秒内可见），其余历史记录原样保留；
-    RECORDS 里 end 为空但 underway 已消失的（刚跑完、终态未入库）保留兜底，
-    等 60s 内 crawler 写入终态后自然消失。UNDERWAY 为空时直接返回 RECORDS。
+def _db_records():
+    """从 MySQL 查运行记录并组装成前端/dashboard 同构的记录列表。
+
+    数据库是唯一真相源：在途记录（end 为空）由 underway 轮询先行入库，
+    终态由 crawler 覆盖，同 process_no 永远只有一行、且是最新状态。
     """
-    live = _underway_records()
-    if not live:
-        return RECORDS
-    seen = {r["pno"] for r in live if r.get("pno")}
-    return live + [r for r in RECORDS if r.get("pno") not in seen]
+    return _db_records_from_rows(db.fetch_records())
 
 
 def load_log_roots():
@@ -687,25 +671,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """POST /api/refresh —— 标题栏「立刻更新」按钮。
 
         force=1：立即全量爬取（运行记录 + 触发器排期），不受后台轮询节流影响，
-        跑完把新数据读进内存缓存并返回。失败（如登录态过期且无法重新登录）如实
-        返回 ok=False，前端据此提示刷新失败，而不是误以为成功、一直显示陈旧数据。
+        跑完把抓取结果直接入库（MySQL 为唯一真相源）并返回。失败（如登录态过期
+        且无法重新登录）如实返回 ok=False，前端据此提示刷新失败。
 
-        不带 force：只回读内存缓存，不触发任何抓取（抓取由后台 runs_poller 每分钟
-        自行完成；网页自动更新直接读 /api/runs，不再打扰后端）。
+        不带 force：只返回当前库中数据，不触发任何抓取（抓取由后台线程自动完成）。
         """
         q = parse_qs(urlparse(self.path).query)
         force = q.get("force", ["0"])[0].lower() in ("1", "true", "yes")
         ok, error = True, ""
         if force:
-            ok = run_refresh(force=True)
+            ok = run_refresh()
             if not ok:
                 error = "刷新失败，详见 output/update_log.txt"
         payload = {
             "ok": ok,
-            "count": len(RECORDS),
+            "count": db.count_runs(),
             "time": LAST_UPDATE_TIME[0] or now_text(),
             "error": error,
-            "records": RECORDS,
+            "records": _db_records(),
         }
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
@@ -955,8 +938,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_runs(self):
-        """GET /api/runs：返回运行记录（时间轴/分析视图共用），数据来自内存缓存。"""
-        payload = {"ok": True, "records": RECORDS, "count": len(RECORDS),
+        """GET /api/runs：返回运行记录（时间轴/分析视图共用），按需查 MySQL。"""
+        records = _db_records()
+        payload = {"ok": True, "records": records, "count": len(records),
                    "time": LAST_UPDATE_TIME[0] or now_text()}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
@@ -967,15 +951,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_api_run(self):
-        """GET /api/run?id=<rid>：返回单条运行记录详情（含日志目录路径）。"""
+        """GET /api/run?id=<rid>：返回单条运行记录详情（含日志目录路径），查 MySQL。"""
         q = parse_qs(urlparse(self.path).query)
         rid = unquote(q.get("id", [""])[0])
         rec = None
-        if rid:
-            for r in RECORDS:
-                if r.get("id") == rid:
-                    rec = r
-                    break
+        if rid and "_" in rid:
+            # id = file_safe_id(flow_id, process_no)，id 尾段即 process_no
+            pno = rid.rsplit("_", 1)[-1]
+            row = db.fetch_run_by_pno(pno)
+            if row and row.get("flow_id") is not None:
+                candidates = _db_records_from_rows([row])
+                for r in candidates:
+                    if r["id"] == rid:
+                        rec = r
+                        break
         payload = {"ok": rec is not None, "rec": rec}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
@@ -1060,16 +1049,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。
 
         在途部分优先用 underway 实时轮询（桌面 API，~8s 一轮），
-        轮询未成功/失败时自动退化为 RECORDS（60s 粒度）。
+        在途记录（end 为空）来自 underway 轮询入库，终态由 60s 增量抓取覆盖。
         live: {ok, age, count} 告诉前端实时层状态（ok=False 显示"离线快照"）。
         """
         try:
-            payload = dashboard.build_bot_status(_merged_status_records())
+            records = _db_records()
+            payload = dashboard.build_bot_status(records)
             payload["time"] = LAST_UPDATE_TIME[0] or now_text()
             payload["live"] = {
-                "ok": bool(UNDERWAY_TS[0]),
-                "age": int(time.time() - UNDERWAY_TS[0]) if UNDERWAY_TS[0] else None,
-                "count": len(UNDERWAY),
+                "ok": bool(LAST_UNDERWAY_TS[0]),
+                "age": int(time.time() - LAST_UNDERWAY_TS[0]) if LAST_UNDERWAY_TS[0] else None,
+                "count": sum(1 for r in records if r.get("end") is None),
             }
         except Exception as e:
             payload = {"ok": False, "error": "机器人状态聚合失败：%s" % e}
@@ -1094,7 +1084,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             with open(path, "r", encoding="utf-8-sig") as f:
                 rows = list(csv.DictReader(f))
-            payload = dashboard.build_compliance(rows, RECORDS, days=days, window_min=window)
+            payload = dashboard.build_compliance(rows, _db_records(), days=days, window_min=window)
         except Exception as e:
             payload = {"ok": False, "error": "命中率聚合失败：%s" % e}
         self._send_json(payload)
@@ -1116,7 +1106,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         days = max(1, min(30, days))
         if len(kw) < 2:
             return self._send_json({"ok": False, "error": "关键词至少 2 个字符", "hits": []})
-        payload = search_logs(RECORDS, kw, robot=robot, days=days, only_lvl=only_lvl)
+        payload = search_logs(_db_records(), kw, robot=robot, days=days, only_lvl=only_lvl)
         payload["q"] = kw
         payload["days"] = days
         payload["lvl"] = lvl
@@ -1269,27 +1259,24 @@ def run_update():
                 except Exception as e:
                     f.write("!! 执行异常: %s\n" % e)
             f.write("[%s] ===== 每日自动更新结束 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        reload_records()   # 完整更新后刷新内存缓存
         stamp_data_time()  # 每日完整更新成功：刷新“数据获取”时间
 
 
-def run_refresh(force=False):
-    """快速刷新：运行记录（全量抓取，手动/定时/Webhook 全部触发方式）。
-    force=True（标题栏"立刻更新"按钮）：不带 --only-runs，跑完整爬取，
-    同时刷新触发器列表并重写 triggers_normalized.csv（触发器排期页的数据源）。
-    force=False（后台 runs_poller 每分钟定时）：仅 --only-runs 抓运行记录。
+def run_refresh():
+    """全量抓取：crawler 完整爬取（触发器 + 运行记录全量，写 CSV + 入库）。
+
+    只有两个入口：服务器启动时的 initial_full_fetch、标题栏「立刻更新」按钮。
+    日常 60 秒增量与 5 秒在途轮询走桌面 API（runs_poller/underway_poller），
+    不经过这里——网页版会话失效只影响触发器排期的刷新，不影响运行记录。
 
     登录态失效由 crawler 自身的 authenticate() 处理：缓存会话/配置 Cookie 失效时
     自动回退到 config.json 的账号密码重新登录，登录成功后才继续抓。
 
-    成功后把结果读进内存缓存（reload_records）并刷新"数据获取"时间；
-    失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
+    成功后刷新"数据获取"时间；失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
         cmd = [py, "crawler.py", "--config", "config.json", "--out", "output"]
-        if not force:
-            cmd.append("--only-runs")
         try:
             r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
                                errors="replace", timeout=600)
@@ -1301,16 +1288,12 @@ def run_refresh(force=False):
                     f.write("[%s] 刷新失败: %s\n%s\n" % (
                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         " ".join(cmd), (out + (r.stderr or ""))[-600:]))
-                print("[刷新] %s 抓取失败（登录态可能已过期，下个周期会自动重试）"
+                print("[刷新] %s 全量抓取失败（登录态可能已过期，下个周期会自动重试）"
                       % datetime.datetime.now().strftime("%H:%M:%S"))
                 return False
-            reload_records()    # 抓取成功：立刻把新数据读进内存，前端 /api/runs 随即可见
             stamp_data_time()   # 记录“数据获取”时间
             LAST_REFRESH[0] = time.time()
-            if force:
-                print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
-            else:
-                print("[刷新] %s 运行记录已更新（全量抓取，手动/定时/Webhook 全部）" % datetime.datetime.now().strftime("%H:%M:%S"))
+            print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
             return True
         except Exception as e:
             with open(log, "a", encoding="utf-8") as f:
@@ -1319,32 +1302,79 @@ def run_refresh(force=False):
             return False
 
 
-def runs_poller():
-    """后台常驻抓取线程：每REFRESH_INTERVAL 秒抓一次运行记录（全量，只抓运行记录）。
+def _robot_filters():
+    """config.json 的 include/exclude 机器人过滤规则（与 crawler 的 keep_name 同口径）。"""
+    try:
+        with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return ([str(k) for k in (cfg.get("include_robots") or [])],
+                [str(k) for k in (cfg.get("exclude_robots") or [])])
+    except Exception:
+        return [], []
 
-    与网页完全解耦：不管有没有人打开页面，后端都自己在跑。登录态失效时
-    crawler 的 authenticate() 会自动账号密码重登后继续抓；重登也失败则本轮跳过，
-    下一个周期再试（失败摘要写入 output/update_log.txt）。
-    首次抓取放在一个完整间隔之后，让服务先起来把内存缓存准备好。
+
+def _keep_name(name, include, exclude):
+    """机器人名过滤：与 crawler.keep_name 一致（空名不保留）。"""
+    if not name:
+        return False
+    if include and not any(name.startswith(p) for p in include):
+        return False
+    if any(k in name for k in exclude):
+        return False
+    return True
+
+
+def _raw_rows(items):
+    """桌面 API 记录 items（runningRecords / underway 同构）-> db 原始行，
+    应用 include/exclude 机器人过滤。source 由调用方在 upsert 时指定。"""
+    include, exclude = _robot_filters()
+    out = []
+    for it in items:
+        if not it.get("startWay") or not _keep_name(it.get("botName") or "", include, exclude):
+            continue
+        out.append({
+            "process_no": str(it.get("flowProcessNo") or ""),
+            "flow_id": it.get("flowId") or "",
+            "flow_name": it.get("flowName") or "",
+            "bot_name": it.get("botName") or "",
+            "trigger_name": it.get("triggerName") or "",
+            "start_way": it.get("startWay") or "",
+            "status": it.get("status") or "",
+            "start_time": it.get("startTime") or "",
+            "end_time": it.get("endTime") or "",
+            "execution_start_time": it.get("executionStartTime") or "",
+        })
+    return out
+
+
+def runs_poller():
+    """后台常驻线程：每 REFRESH_INTERVAL 秒直调桌面 API runningRecords（最新 20 条）。
+
+    旧数据不会变，只有新增记录需要入库：一次轻 GET 拿最新 20 条（全部状态，
+    含终态 endTime），upsert 进 MySQL（幂等），进程内完成、不起子进程。
+    Bearer token 自主续期，不依赖网页版 Cookie 会话；失败限频打印，下轮重试。
     """
-    fail = 0
-    time.sleep(5)   # 启动后 5 秒先抓一轮（一键脚本不再预跑 crawler，让数据尽快就绪），之后按固定间隔
     while True:
+        time.sleep(REFRESH_INTERVAL)
         try:
-            run_refresh(force=False)
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            items = octo_api.fetch_recent_records(cfg, take=20)
+            rows = _raw_rows(items)
+            db.upsert_raw_runs(rows, source="desktop")
+            stamp_data_time()
+            LAST_REFRESH[0] = time.time()
         except Exception as e:
             print("[定时] 运行记录抓取异常:", e)
-        time.sleep(REFRESH_INTERVAL)
 
 
 def underway_poller():
-    """后台轻量轮询线程：每 UNDERWAY_INTERVAL 秒调桌面 API underway（运行中记录）。
+    """后台轻量轮询线程：每 UNDERWAY_INTERVAL(5) 秒调桌面 API underway（运行中记录）。
 
-    与 runs_poller(60s 全量) 互补：这里只负责「谁在跑/排队中」的实时性，
-    响应只有几百字节。成功后更新 UNDERWAY 内存槽（botstatus 合并视图用），
-    并把在途记录先入库（source="underway"，终态由 crawler 覆盖）。
-    失败静默保留上一轮数据（状态页退化成 60s 粒度），限频打印避免刷屏；
-    连续失败不动用 ensure_token 的重登风暴——octo_api 内部 401 时会自行续期/重登。
+    与 runs_poller(60s) 互补：这里只负责「谁在跑/排队中」的秒级实时性，
+    响应只有几百字节。抓到的在途记录直接 upsert 入库（end 为空，source="underway"），
+    跑完由 runningRecords 轮询写终态覆盖——库即最新状态，无内存态。
+    失败静默跳过本轮，限频打印避免刷屏；octo_api 内部 401 时会自行续期/重登。
     """
     fail = 0
     time.sleep(5)   # 让主服务先起来（token 缓存/配置就绪）
@@ -1353,11 +1383,9 @@ def underway_poller():
             with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             items = octo_api.list_underway(cfg).get("items") or []
-            UNDERWAY.clear()
-            UNDERWAY.extend(items)
-            UNDERWAY_TS[0] = time.time()
+            db.upsert_raw_runs(_raw_rows(items), source="underway")
+            LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
-            db.sync_runs(_underway_records(), source="underway")
         except Exception as e:
             fail += 1
             if fail == 1 or fail % 60 == 0:
@@ -1385,10 +1413,19 @@ def main():
     except Exception:
         pass
     os.chdir(DIR)
-    reload_records()   # 启动时把运行记录读入内存缓存（/api/runs、/api/run 数据源）
-    _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
-    print("[启动] 运行记录 %d 条已载入内存" % len(RECORDS))
     db.init_db()       # MySQL 建库建表（幂等；未配置 config.json -> mysql 段时静默跳过）
+    _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
+    print("[启动] 运行记录 %d 条在库（MySQL 为唯一真相源）" % db.count_runs())
+
+    def initial_full_fetch():
+        """服务器启动时先全量抓一轮（触发器 + 运行记录全量，写 CSV + 入库），
+        保证重启后数据完整；与 runs_poller 通过 UPDATE_LOCK 串行。"""
+        try:
+            run_refresh()
+        except Exception as e:
+            print("[启动] 全量抓取异常:", e)
+
+    threading.Thread(target=initial_full_fetch, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=runs_poller, daemon=True).start()
     threading.Thread(target=underway_poller, daemon=True).start()
@@ -1404,8 +1441,9 @@ def main():
         else:
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
-        print("  运行记录刷新: 后端常驻线程每 %d 秒自动抓取一次（登录失效自动重登）" % REFRESH_INTERVAL)
-        print("  网页自动更新: 只读取后端内存中的数据，不会触发抓取")
+        print("  运行记录刷新: 每 %d 秒桌面 API 拉最新 20 条入库（启动时先全量一轮）" % REFRESH_INTERVAL)
+        print("  在途状态轮询: 每 %d 秒（桌面 API underway，谁在跑/排队中实时可见）" % UNDERWAY_INTERVAL)
+        print("  网页读取:     按需查询 MySQL（唯一真相源），不触发抓取")
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
         print("  无需 Windows 任务计划：数据更新由本后端进程自动完成")
         print("  更新日志:   output\\update_log.txt")

@@ -413,6 +413,30 @@ def query_run_state(cfg, process_no, flow_id=None):
     return None
 
 
+def fetch_recent_records(cfg, take=20):
+    """桌面 API 运行记录列表（全部状态，含终态，按 startTime 倒序）。
+
+    对应桌面客户端 GET /desktop/bots/runningRecords?startWay=&status=&search=&start=0&take=20
+    （HAR 2026-10-09 证实：take=20，Finished/Delivered/Executing 全状态，endTime 有值）。
+    60 秒增量轮询用：只取最新 take 条 upsert 入库，终态与在途一次拿全，
+    且不依赖网页版 Cookie 会话（Bearer token 自主续期）。
+    """
+    def _get(tk):
+        req = urllib.request.Request(
+            BASE + "/desktop/bots/runningRecords?startWay=&status=&search=&start=0&take=%d" % take,
+            headers={"Authorization": f"Bearer {tk}", "EnterpriseId": resolve_enterprise(cfg, tk),
+                     "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    try:
+        return _get(ensure_token(cfg)).get("items") or []
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            raise
+        return _get(ensure_token(cfg, force=True)).get("items") or []
+
+
 def list_underway(cfg):
     """运行中的记录（underway 轮询 / botstatus 实时在途数据源）。
 

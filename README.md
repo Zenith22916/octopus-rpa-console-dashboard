@@ -75,20 +75,20 @@ cp config.example.json config.json
 前后端分离（同项目目录），**数据零落盘**——`output/` 不再堆 HTML 文件：
 
 ```
-crawler.py ──爬取──▶ output/*.csv（数据源）
+crawler.py ──爬取──▶ output/*.csv（全量快照；同时直接 upsert 入库）
                         │
-dashboard.py ──▶ 数据聚合模块（load_records / build_schedule_payload，不生成 HTML）
-octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行 / underway 运行中记录轮询）
+dashboard.py ──▶ 数据聚合模块（build_bot_status / build_schedule_payload，不生成 HTML）
+octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行 / 运行记录+underway 轮询）
 feishu_cfg.py ─▶ 飞书多维表格配置中心读写
 xlsx_writer.py ─▶ xlsx 生成（纯标准库拼 zip + XML，支持合并单元格与单元格着色，内存生成不落盘）
-db.py ──▶ MySQL 持久层（运行记录幂等 upsert；config.json -> "mysql" 段，未配置时静默跳过）
+db.py ──▶ MySQL 持久层 + 查询层（rpa_runs 幂等 upsert 与按需查询；config.json -> "mysql" 段）
                         │
-local_server.py ──▶ 启动时/刷新/每日更新后载入内存
-    ├─ runs_poller      每 60s：crawler --only-runs 全量抓运行记录（历史 + 终态）
-    └─ underway_poller  每  8s：桌面 API underway 轮询"运行中"记录（与 OctopusRPA
-                        桌面客户端同机制、同参数 ?start=0&take=500，纯 REST 轮询；
-                        只管谁在跑/排队中的实时性，喂给 /api/botstatus 合并视图，
-                        在途记录同时先行入库，终态由 crawler 覆盖）
+local_server.py ──▶ MySQL 是唯一真相源：抓取直接入库，前端接口按需查库，无内存数据态
+    ├─ runs_poller      每 60s：桌面 API runningRecords 拉最新 20 条（全状态含终态）
+    │                   直接入库——不起子进程、不依赖网页版 Cookie 会话
+    ├─ underway_poller  每  5s：桌面 API underway 轮询"运行中"记录（?start=0&take=500，
+    │                   纯 REST 轮询；在途记录先行入库 end 为空，终态由上一行覆盖）
+    └─ 每日 12:00 / 启动 / 手动「立刻更新」：crawler 网页版全量（触发器排期唯一来源）
                         │
 web/（纯前端，hash 路由八视图）
     index.html + app.js + style.css + theme.css + mobile.css + theme.js + fonts/
@@ -109,12 +109,12 @@ web/（纯前端，hash 路由八视图）
 | GET | `/echarts.min.js` | 本地 ECharts（离线可用） |
 | GET | `/monaco/vs/...` | Monaco Editor 静态资源（日志高亮） |
 | GET / POST | `/login` | 登录页 / 提交访问密码（Cookie 30 天） |
-| GET | `/api/runs` | 运行记录（时间轴、分析视图共用，来自内存缓存） |
+| GET | `/api/runs` | 运行记录（时间轴、分析视图共用，按需查 MySQL） |
 | GET | `/api/run?id=` | 单条记录详情（含日志目录解析） |
 | GET | `/api/bots?flow_id=` | 可选执行机器人清单（本流程跑过的 / 在线可用 / 离线停用 + 历史与推荐） |
 | GET | `/api/schedule` | 触发器日程（周/月视图 + 统计） |
 | GET | `/api/schedule/export?view=&robot=&status=` | 按当前筛选导出 xlsx（日历 + 明细 + 汇总，内存生成附件下载） |
-| GET | `/api/botstatus` | 各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近 24 小时/近 7 天负载）。在途部分优先用 underway 实时轮询（~8s），未成功时退化 60s 内存快照；响应带 `live:{ok,age,count}` 实时层状态 |
+| GET | `/api/botstatus` | 各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近 24 小时/近 7 天负载）。在途记录由 underway 5 秒轮询先行入库，查库即最新；响应带 `live:{ok,age,count}` 实时层状态 |
 | GET | `/api/compliance?days=&window=` | 触发器排期 vs 实跑比对（按时/延迟/应用不符/漏跑 + 各机器人命中率） |
 | GET | `/api/logsearch?q=&robot=&days=&lvl=` | 跨运行记录检索日志关键词（`lvl=err` 仅错误 / `warn` 错误+警告） |
 | GET | `/api/log?dir=&file=&offset=&limit=&refresh=` | 日志目录文件列表 / 按行分段取内容（`refresh=1` 额外返回 `anchor`/`total`，供详情页「刷新」判断增量追加还是整段重载） |

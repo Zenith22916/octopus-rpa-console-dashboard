@@ -251,16 +251,18 @@ def switch_enterprise(session, ent):
     return ok
 
 
-def fetch_all(session, path, limit=50, cut_off_ms=None, time_field="startTime"):
+def fetch_all(session, path, limit=50, cut_off_ms=None, time_field="startTime", max_pages=0):
     """按 start/limit 偏移分页拉取记录。
     cut_off_ms 非空时：假定接口按 time_field 倒序返回（最新在前），
     遇到早于截止时间的记录即提前停止（后续只会更旧），用于快速抓取最近 N 天。
+    max_pages>0 时：最多翻 N 页就停（增量轻量模式，第 1 页是最新 50 条）。
     """
-    all_items, start = [], 0
+    all_items, start, pages = [], 0, 0
     while True:
         r = session.get(DEFAULT_BASE + path, params={"start": start, "limit": limit}, timeout=30)
         d = r.json()
         items = d.get("items", []) or []
+        pages += 1
         truncated = False
         for it in items:
             all_items.append(it)
@@ -272,6 +274,8 @@ def fetch_all(session, path, limit=50, cut_off_ms=None, time_field="startTime"):
         total = d.get("total", len(all_items))
         print(f"  已拉取 {len(all_items)}/{total}")
         if truncated or not items or len(all_items) >= total:
+            break
+        if max_pages and pages >= max_pages:
             break
         start += limit
     # 按 id 去重（接口可能重复返回）
@@ -331,6 +335,9 @@ def main():
                     help="仅抓取运行记录（快速刷新用，跳过触发器/机器人）")
     ap.add_argument("--days", type=int, default=0,
                     help="运行记录只保留最近 N 天；0=全量抓取（默认，抓完接口返回的全部记录）")
+    ap.add_argument("--pages", type=int, default=0,
+                    help="增量轻量模式：运行记录只抓最新 N 页（每页 50 条），"
+                         "直接写 MySQL 不落 CSV；0=全量（默认，写 CSV + 入库）")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -371,15 +378,20 @@ def main():
             return False
         return True
 
-    # 拉取运行记录：默认全量抓取（翻完接口全部页）；--days N 时只保留最近 N 天。
+    # 拉取运行记录：默认全量抓取（翻完接口全部页）；--days N 时只保留最近 N 天；
+    # --pages N 时只抓最新 N 页（增量轻量模式，直接写 MySQL 不落 CSV）。
     # 保留手动/定时/Webhook 全部触发方式，仅按 include/exclude 过滤机器人。
-    if args.days and args.days > 0:
+    if args.pages and args.pages > 0:
+        cut_off_ms = None
+        print(f"[*] 拉取运行记录（增量 {args.pages} 页，每页 50 条）...")
+    elif args.days and args.days > 0:
         cut_off_ms = int(time.time() * 1000) - args.days * 86400000
         print(f"[*] 拉取运行记录（最近 {args.days} 天）...")
     else:
         cut_off_ms = None
         print("[*] 拉取运行记录（全量，不限天数）...")
-    runs = fetch_all(session, API_RUNNING_RECORDS, cut_off_ms=cut_off_ms)
+    runs = fetch_all(session, API_RUNNING_RECORDS, cut_off_ms=cut_off_ms,
+                     max_pages=args.pages if args.pages > 0 else 0)
     print(f"[+] 运行记录共 {len(runs)} 条")
     keep_runs = [r for r in runs
                  if (r.get("startWay") or "") and keep_name(r.get("botName") or "")]
@@ -387,6 +399,19 @@ def main():
     way_dist = _W(r.get("startWay") for r in keep_runs)
     print(f"    保留 {len(keep_runs)} 条（已按 include/exclude 过滤机器人），触发方式: {dict(way_dist)}")
     run_rows = [normalize_run_record(r) for r in keep_runs]
+
+    # 入库：MySQL 是唯一真相源，无论增量还是全量都直接 upsert（幂等，在途->终态覆盖）
+    import db as _db
+    n_up = _db.upsert_raw_runs(run_rows, source="crawler")
+    print(f"[+] 运行记录已入库 MySQL: {n_up if isinstance(n_up, int) and n_up else 0} 条"
+          if n_up else "[!] 运行记录入库失败/未配置（详见上方 [mysql] 日志）")
+
+    # 增量模式到此为止：不写 CSV（runs_normalized.csv 保留最后一次全量快照，供
+    # /api/bots 历史统计与本地备份），避免用 50 条覆盖全量快照。
+    if args.pages and args.pages > 0:
+        print(f"[✓] 增量入库完成（{len(run_rows)} 条，CSV 未动）")
+        return
+
     run_header = ["flow_id", "process_no", "flow_name", "bot_name", "trigger_id",
                   "trigger_name", "start_way", "status", "start_time", "end_time",
                   "execution_start_time"]

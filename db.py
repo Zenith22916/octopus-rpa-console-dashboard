@@ -156,38 +156,40 @@ def init_db():
         return False
 
 
-def sync_runs(records, source="crawler"):
-    """运行记录批量 upsert。
+def upsert_raw_runs(rows, source="crawler"):
+    """运行记录批量 upsert（crawler 的原始行，时间为 ISO 8601 字符串）。
 
-    records：dashboard.load_records() 同构条目
-             （fid/pno/robot/name/app/trigger/status/start/end/execStart/way，时间为毫秒）。
+    rows：crawler.normalize_run_record() 输出的行
+          （flow_id/process_no/flow_name/bot_name/trigger_name/start_way/
+            status/start_time/end_time/execution_start_time）。
     幂等：同 process_no 以最后一次写入为准（在途 -> 终态覆盖）。
     """
     cfg = _cfg()
-    if not cfg or not records:
+    if not cfg or not rows:
         return False
-    rows, now = [], datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
-    for r in records:
-        pno = str(r.get("pno") or "")
-        start = r.get("start")
+    out, now = [], datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
+    for r in rows:
+        pno = str(r.get("process_no") or "")
+        start = iso_to_ms(r.get("start_time"))
         if not pno or not start:
             continue
-        rows.append((
-            pno, r.get("fid") or "", r.get("app") or r.get("name") or "",
-            r.get("robot") or "", r.get("trigger") or "", r.get("way") or "",
-            r.get("status") or "", int(start), _ms_to_dt(start),
-            r.get("end") or None, r.get("execStart") or None, source, now,
+        out.append((
+            pno, r.get("flow_id") or "", r.get("flow_name") or "",
+            r.get("bot_name") or "", r.get("trigger_name") or "", r.get("start_way") or "",
+            r.get("status") or "", start, _ms_to_dt(start),
+            iso_to_ms(r.get("end_time")), iso_to_ms(r.get("execution_start_time")),
+            source, now,
         ))
-    if not rows:
+    if not out:
         return False
     try:
         conn, _ = _connect(cfg)
         if conn is None:
             return False
         with conn.cursor() as cur:
-            cur.executemany(UPSERT_SQL(cfg), rows)
+            cur.executemany(UPSERT_SQL(cfg), out)
         conn.close()
-        return True
+        return len(out)
     except ImportError:
         _err("未安装 pymysql，入库跳过")
         return False
@@ -198,6 +200,80 @@ def sync_runs(records, source="crawler"):
 
 def UPSERT_SQL(cfg):
     return _UPSERT.format(db=cfg["database"], table=TABLE)
+
+
+_COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"
+
+
+def fetch_records():
+    """全表查询，按 start_ms 倒序（最新在前）。返回原始行 dict 列表（时间为毫秒）。"""
+    cfg = _cfg()
+    if not cfg:
+        return []
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return []
+        with conn.cursor(pymysql_ss()) as cur:
+            cur.execute("SELECT {cols} FROM `{db}`.`{table}`".format(
+                cols=_COLS, db=cfg["database"], table=TABLE))
+            cols = [c[0] for c in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        conn.close()
+        rows.sort(key=lambda r: r["start_ms"], reverse=True)
+        return rows
+    except Exception as e:
+        _err("查询失败：%s" % e)
+        return []
+
+
+def pymysql_ss():
+    """游标类（延迟导入，避免模块顶层依赖 pymysql）。"""
+    import pymysql.cursors
+    return pymysql.cursors.SSCursor
+
+
+def fetch_run_by_pno(pno):
+    """按 process_no 查单条。"""
+    pno = str(pno or "")
+    if not pno:
+        return None
+    cfg = _cfg()
+    if not cfg:
+        return None
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return None
+        with conn.cursor() as cur:
+            cur.execute("SELECT {cols} FROM `{db}`.`{table}` WHERE process_no=%s".format(
+                cols=_COLS, db=cfg["database"], table=TABLE), (pno,))
+            cols = [c[0] for c in cur.description]
+            row = cur.fetchone()
+        conn.close()
+        return dict(zip(cols, row)) if row else None
+    except Exception as e:
+        _err("查询失败：%s" % e)
+        return None
+
+
+def count_runs():
+    """表内总行数（/api/refresh、启动横幅用）。"""
+    cfg = _cfg()
+    if not cfg:
+        return 0
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM `{db}`.`{table}`".format(
+                db=cfg["database"], table=TABLE))
+            n = cur.fetchone()[0]
+        conn.close()
+        return int(n)
+    except Exception:
+        return 0
 
 
 def stats():
