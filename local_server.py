@@ -1327,12 +1327,14 @@ def runs_poller():
     下一个周期再试（失败摘要写入 output/update_log.txt）。
     首次抓取放在一个完整间隔之后，让服务先起来把内存缓存准备好。
     """
+    fail = 0
+    time.sleep(5)   # 启动后 5 秒先抓一轮（一键脚本不再预跑 crawler，让数据尽快就绪），之后按固定间隔
     while True:
-        time.sleep(REFRESH_INTERVAL)
         try:
             run_refresh(force=False)
         except Exception as e:
             print("[定时] 运行记录抓取异常:", e)
+        time.sleep(REFRESH_INTERVAL)
 
 
 def underway_poller():

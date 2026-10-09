@@ -129,45 +129,25 @@ web/（纯前端，hash 路由八视图）
 
 ## 一键启动
 
-Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者**功能一致**，都是四步：
-
-```
-1. 检查端口  8000 被占用则列出占用进程，确认后清空
-2. 抓取      crawler.py    触发器 + 运行记录 → output/triggers_normalized.csv / runs_normalized.csv
-3. 整理      organize.py   按机器人整理时刻表 → output/schedule_all.md / .xlsx / .csv
-4. 启动      local_server.py  → http://localhost:8000/
-```
-
-**端口处理**：发现占用会打印占用进程的 PID、进程名与命令行，问一句
-`Kill the process(es) above and continue? [y/N]`——回答 `N` 原样退出（不动任何进程）；回答 `Y`
-先温和结束（Linux `kill` / Windows `taskkill`），10 秒不退再强制结束，端口确认释放后才继续。
-
-- **占用者属于其他用户时自动提权**：普通用户跑 `ss -ltnp` 看不到别人进程的 PID（只会看到一个
-  「端口被占」却找不到人）。脚本遇到这种情况会自己再用 `sudo` 读一次（会问一次 sudo 密码），
-  确认后连结束信号也走 `sudo`；`sudo` 也读不到时才提示手工执行 `sudo fuser -k 8000/tcp`。
-  端口留在那里谁也不认，比直接猜着杀更安全。
+Windows 用 `start_server.bat`、Linux/macOS 用 `start_server.sh`，两者就是**一行 python 启动命令**：
 
 ```bat
-start_server.bat          :: Windows：双击也行
-start_server.bat -y       :: 端口被占用时不再询问，直接清空（计划任务用）
-start_server.bat silent   :: 只静默更新数据（日志 output\update_log.txt），不启动服务
-
-chmod +x start_server.sh  # Linux/macOS：只需一次
-./start_server.sh         # 端口被占用时会停下来问你
-./start_server.sh -y      # 不再询问，直接清空端口（cron / systemd 用）
-./start_server.sh silent  # 只静默更新数据，不启动服务
+@echo off
+title RPA Dashboard Server
+cd /d "%~dp0"
+python local_server.py
+pause
 ```
 
-- **两个脚本的输出全为 ASCII 英文**（注释也是）：cmd.exe 按 OEM/ANSI 代码页读 `.bat`，
-  Linux 终端 locale 不是 UTF-8 时同样如此——只要文件里有中文，提示就会变乱码。
-  改这两个脚本时请继续保持纯 ASCII。
-- 非交互场景（cron、systemd、计划任务、`< /dev/null`）**必须加 `-y`**：脚本检测到没有终端
-  可询问时会拒绝执行并给出提示，而不是默默杀掉进程。
-- `.sh` 必须是 LF 换行（从 Windows 传过去先 `sed -i 's/\r$//' start_server.sh`，否则报
-  `bad interpreter`）；端口号从 `local_server.py` 的 `PORT` 读，也可用环境变量 `PORT` 临时覆盖。
+- 数据更新全部由 `local_server.py` 内部完成：启动 5 秒后先抓一轮运行记录，之后每 60 秒自动抓；
+  underway 实时轮询每 8 秒；触发器排期每日 12:00 完整更新（含 organize）。无需任务计划。
+- **`pause` 别删**：Python 启动报错时窗口会停住显示错误，而不是一闪而过。
+- `python` 不在 PATH 时，把 bat 最后一行换成 python.exe 完整路径（或装 py launcher 用 `py -3`）。
+- 端口 8000 被占用时直接报 `OSError: [Errno 98/10048] address already in use`——
+  先关掉旧的 local_server 再启动；换端口改 `local_server.py` 的 `PORT` 一处即可。
+- `.sh` 用 `python3`、必须 LF 换行；`.bat` 必须 CRLF 且纯 ASCII（`.gitattributes` 已锁定）。
 - 服务器启动后**数据进内存**，网页通过 JSON API 动态渲染，详情页按需拉取。
 - 启动横幅会输出本机局域网 IP；关窗（或 Ctrl+C）即停止。
-- 换端口/换机器不用改脚本：`PORT` 只在 `local_server.py` 里定义一处。
 
 ## 标题栏（全局）
 
@@ -375,8 +355,7 @@ python crawler.py --config config.json --out output                            #
 python crawler.py --config config.json --out output --only-runs                # 仅刷新运行记录（全量）
 python crawler.py --config config.json --out output --only-runs --days 7       # 可选：只保留最近 7 天
 python organize.py --input output\triggers_normalized.csv --out output         # 整理时刻表
-python local_server.py                                                          # 仅启动服务器
-start_server.bat silent                                                         # 静默更新（日志写入 output\update_log.txt）
+python local_server.py                                                          # 启动服务器（数据更新由内部线程自动跑）
 ```
 
 > `dashboard.py` 已重构为数据聚合模块，直接执行只打印提示，不再生成任何 HTML。
@@ -457,8 +436,8 @@ octopus-rpa-console-dashboard/
 ├── organize.py             # 按机器人整理时刻表（生成 md/xlsx/csv）
 ├── octo_api.py             # 八爪鱼云端调度 API（登录/项目列表/机器人清单/触发运行）
 ├── feishu_cfg.py           # 飞书多维表格配置中心读写
-├── start_server.bat        # 一键（Windows）：检查端口 → 更新 → 启动服务器
-├── start_server.sh         # 一键（Linux/macOS）：同上，功能一致
+├── start_server.bat        # 一键（Windows）：python local_server.py + pause
+├── start_server.sh         # 一键（Linux/macOS）：python3 local_server.py
 ├── requirements.txt        # requests / openpyxl
 ├── config.example.json     # 配置模板
 ├── robot_logs.json         # 日志目录白名单（机器人 → 共享根目录）
