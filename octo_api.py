@@ -414,9 +414,13 @@ def query_run_state(cfg, process_no, flow_id=None):
 
 
 def list_underway(cfg):
-    """运行中的记录（调试用）。"""
+    """运行中的记录（underway 轮询 / botstatus 实时在途数据源）。
+
+    与桌面客户端同参 ?start=0&take=500（Fiddler 实测客户端约 8 秒轮询一次，
+    响应 {"items":[...],"total":N}，只含运行中/排队中的记录，跑完即消失）。
+    """
     token = ensure_token(cfg)
-    url = BASE + "/desktop/bots/runningRecords/underway"
+    url = BASE + "/desktop/bots/runningRecords/underway?start=0&take=500"
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
         "User-Agent": "Mozilla/5.0",

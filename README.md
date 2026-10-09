@@ -49,7 +49,7 @@
 
 ```bash
 # 1. 环境：Python 3.9+
-pip install -r requirements.txt          # requests（抓取）+ openpyxl（整理时刻表）
+pip install -r requirements.txt          # requests（抓取）+ openpyxl（整理时刻表）+ pymysql（MySQL，可选）
 
 # 2. 配置：复制模板并填入账号密码
 cp config.example.json config.json
@@ -61,6 +61,15 @@ cp config.example.json config.json
 
 > 首次运行若提示缺少 `requests`，两个一键脚本都会自动 `pip install`（找不到 Python 则报错退出）。
 
+**MySQL 持久化（可选）**：config.json 加 `mysql` 段即启用，运行记录幂等 upsert 进
+`rpa_runs` 表（主键 `process_no`；在途记录 8 秒先行入库，跑完的终态由 60 秒抓取覆盖；
+时间存毫秒时间戳 + 北京时间 `start_dt`），未配置/连接失败时静默跳过、不影响任何功能。
+建库建表在服务器启动时自动完成（也可手动 `python db.py init`，`python db.py stats` 查行数）：
+
+```json
+"mysql": { "host": "127.0.0.1", "port": 3306, "user": "root", "password": "", "database": "octopus_rpa" }
+```
+
 ## 架构
 
 前后端分离（同项目目录），**数据零落盘**——`output/` 不再堆 HTML 文件：
@@ -69,11 +78,17 @@ cp config.example.json config.json
 crawler.py ──爬取──▶ output/*.csv（数据源）
                         │
 dashboard.py ──▶ 数据聚合模块（load_records / build_schedule_payload，不生成 HTML）
-octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行）
+octo_api.py ──▶ 八爪鱼云端调度 API（项目列表 / 触发运行 / underway 运行中记录轮询）
 feishu_cfg.py ─▶ 飞书多维表格配置中心读写
 xlsx_writer.py ─▶ xlsx 生成（纯标准库拼 zip + XML，支持合并单元格与单元格着色，内存生成不落盘）
+db.py ──▶ MySQL 持久层（运行记录幂等 upsert；config.json -> "mysql" 段，未配置时静默跳过）
                         │
 local_server.py ──▶ 启动时/刷新/每日更新后载入内存
+    ├─ runs_poller      每 60s：crawler --only-runs 全量抓运行记录（历史 + 终态）
+    └─ underway_poller  每  8s：桌面 API underway 轮询"运行中"记录（与 OctopusRPA
+                        桌面客户端同机制、同参数 ?start=0&take=500，纯 REST 轮询；
+                        只管谁在跑/排队中的实时性，喂给 /api/botstatus 合并视图，
+                        在途记录同时先行入库，终态由 crawler 覆盖）
                         │
 web/（纯前端，hash 路由八视图）
     index.html + app.js + style.css + theme.css + mobile.css + theme.js + fonts/
@@ -99,7 +114,7 @@ web/（纯前端，hash 路由八视图）
 | GET | `/api/bots?flow_id=` | 可选执行机器人清单（本流程跑过的 / 在线可用 / 离线停用 + 历史与推荐） |
 | GET | `/api/schedule` | 触发器日程（周/月视图 + 统计） |
 | GET | `/api/schedule/export?view=&robot=&status=` | 按当前筛选导出 xlsx（日历 + 明细 + 汇总，内存生成附件下载） |
-| GET | `/api/botstatus` | 各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近 24 小时/近 7 天负载） |
+| GET | `/api/botstatus` | 各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近 24 小时/近 7 天负载）。在途部分优先用 underway 实时轮询（~8s），未成功时退化 60s 内存快照；响应带 `live:{ok,age,count}` 实时层状态 |
 | GET | `/api/compliance?days=&window=` | 触发器排期 vs 实跑比对（按时/延迟/应用不符/漏跑 + 各机器人命中率） |
 | GET | `/api/logsearch?q=&robot=&days=&lvl=` | 跨运行记录检索日志关键词（`lvl=err` 仅错误 / `warn` 错误+警告） |
 | GET | `/api/log?dir=&file=&offset=&limit=&refresh=` | 日志目录文件列表 / 按行分段取内容（`refresh=1` 额外返回 `anchor`/`total`，供详情页「刷新」判断增量追加还是整段重载） |
@@ -266,7 +281,7 @@ chmod +x start_server.sh  # Linux/macOS：只需一次
     无在途任务时显示「最近：<应用名>」
   - 近 7 天失败率 ≥20% 标红；近 24h 失败数用 `(N)` 追加在次数后
 - **标题栏指标卡**：机器人 / 运行中 / 排队中 / 空闲 / 在途任务（工具条里原来那句「共 N 台 · 运行中 …」的长文字已换成卡片，工具条只留数据时刻）
-- 筛选：全部 / 仅忙（运行中 + 排队中）/ 仅空闲；随「自动更新」每 60 秒刷新（每台机器人的状态由内存运行记录推算）
+- 筛选：全部 / 仅忙（运行中 + 排队中）/ 仅空闲；随「自动更新」每 10 秒刷新（直接拉 `/api/botstatus`，比其他视图的 60 秒快一档；后端每 8 秒轮询一次桌面 API underway）
 
 ### 日志检索（`#/logsearch`，问题排查）
 

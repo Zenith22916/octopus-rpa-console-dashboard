@@ -2595,8 +2595,16 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
 /* 自动更新：每 60s 拉一次后端内存里的运行记录（GET /api/runs，不触发抓取），
    仅在依赖实跑数据的视图生效。抓取由后端常驻线程每分钟自行完成。 */
 function autoTick() {
-  if (curView === 'timeline' || curView === 'analysis' || curView === 'botstatus') refreshData();
+  if (curView === 'timeline' || curView === 'analysis') refreshData();
 }
+/* 机器人状态页快刷：后端每 ~8s 轮询桌面 API underway（运行中记录，与
+   OctopusRPA 桌面客户端同机制），这里 10s 直接拉 /api/botstatus，
+   不经过 60s 的 refreshData 链路。勾选「自动更新」时生效。 */
+setInterval(function () {
+  if (curView === 'botstatus' && document.getElementById('chkAuto').checked) {
+    bsLoad().then(bsRender);
+  }
+}, 10000);
 document.getElementById('chkAuto').addEventListener('change', function () {
   if (this.checked) {
     autoTick();

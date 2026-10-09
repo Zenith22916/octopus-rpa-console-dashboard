@@ -48,6 +48,13 @@ if errorlevel 1 (
     )
 )
 
+rem Check optional pymysql (MySQL persistence, only needed when config.json has a "mysql" section)
+%PY% -c "import pymysql" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] pymysql not found, installing (optional, for MySQL persistence) ...
+    %PY% -m pip install pymysql -q
+)
+
 if /i "%MODE%"=="silent" goto silent
 
 set "PORT=8000"

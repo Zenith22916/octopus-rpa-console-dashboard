@@ -26,9 +26,10 @@ import time
 from urllib.parse import urlparse, parse_qs, unquote, quote
 
 import dashboard    # 数据聚合层（load_records / build_schedule_payload / build_schedule_export）
-import octo_api     # 八爪鱼调度 API（详情页"重新运行"）
+import octo_api     # 八爪鱼调度 API（详情页"重新运行" + underway 实时轮询）
 import feishu_cfg   # 飞书多维表格配置中心读写（项目全览页）
 import xlsx_writer  # 排期导出：纯标准库拼 xlsx（build_xlsx）
+import db           # MySQL 持久层（运行记录入库，config.json -> mysql 段，未配置时静默跳过）
 
 PORT = 8000
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +46,14 @@ LOG_PAGE = 5000                      # 日志分段获取：每页行数（前�
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
 RECORDS = []                         # 运行记录内存缓存（启动/刷新/每日更新后重载，前端 /api/runs 读取）
+
+# ---- underway 实时层（方案A，逆向自 OctopusRPA 桌面客户端抓包）----
+# 桌面客户端约每 8 秒 GET /desktop/bots/runningRecords/underway?start=0&take=500
+# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里同频轮询，为机器人状态页提供
+# 秒级在途数据：谁在跑/排队中实时可见，历史与终态仍由 runs_poller(60s) 负责。
+UNDERWAY = []                        # 最新一轮 underway items（API 原始 dict）
+UNDERWAY_TS = [0.0]                  # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
+UNDERWAY_INTERVAL = 8                # 轮询间隔（秒），对齐桌面客户端
 
 
 def now_text():
@@ -86,10 +95,68 @@ FEISHU_CFG = load_feishu_cfg()       # 飞书多维表格配置中心凭据（�
 
 
 def reload_records():
-    """从 runs_normalized.csv 重载运行记录到内存（含日志目录解析）。"""
+    """从 runs_normalized.csv 重载运行记录到内存（含日志目录解析）。
+
+    重载成功后把记录幂等 upsert 进 MySQL（db.sync_runs，source="crawler"）：
+    启动 / 每分钟快速刷新 / 每日完整更新 / 手动"立刻更新"全部经过这里，
+    是唯一的 crawler 侧入库挂点；未配置 mysql 段时静默跳过。
+    """
     global RECORDS
     RECORDS = dashboard.load_records(DIR)
+    db.sync_runs(RECORDS, source="crawler")
     return RECORDS
+
+
+def _underway_records():
+    """UNDERWAY（underway API 原始 items）-> 与 RECORDS 同构的记录列表。
+
+    在途记录 end 为空（跑完即从 underway 消失），字段映射与 load_records 一致；
+    日志目录按同规则推算，但在途时通常还未生成（logOk=False）。
+    """
+    logmap = None
+    out = []
+    for it in UNDERWAY:
+        fid = it.get("flowId") or ""
+        pno = str(it.get("flowProcessNo") or "")
+        start = dashboard.to_ms(it.get("startTime"))
+        if not pno or start is None:
+            continue
+        robot = it.get("botName") or "(未指定机器人)"
+        if logmap is None:
+            logmap = dashboard.load_logmap()
+        log_path, log_ok = dashboard.resolve_log_dir(
+            robot, it.get("startTime"), pno, it.get("flowName"), logmap)
+        out.append({
+            "id": dashboard.file_safe_id(fid, pno),
+            "fid": fid,
+            "pno": pno,
+            "robot": robot,
+            "name": it.get("flowName") or it.get("triggerName") or "运行记录",
+            "app": it.get("flowName") or "",
+            "trigger": it.get("triggerName") or "",
+            "start": start,
+            "end": dashboard.to_ms(it.get("endTime")),
+            "status": it.get("status") or "",
+            "execStart": dashboard.to_ms(it.get("executionStartTime")),
+            "way": it.get("startWay") or "",
+            "log": log_path,
+            "logOk": log_ok,
+            "live": True,          # 标记：来自 underway 实时轮询
+        })
+    return out
+
+
+def _merged_status_records():
+    """botstatus 合并视图：UNDERWAY 实时在途覆盖 RECORDS 中同一 process_no 的
+    记录（排队中 -> 运行中的状态跃迁 8 秒内可见），其余历史记录原样保留；
+    RECORDS 里 end 为空但 underway 已消失的（刚跑完、终态未入库）保留兜底，
+    等 60s 内 crawler 写入终态后自然消失。UNDERWAY 为空时直接返回 RECORDS。
+    """
+    live = _underway_records()
+    if not live:
+        return RECORDS
+    seen = {r["pno"] for r in live if r.get("pno")}
+    return live + [r for r in RECORDS if r.get("pno") not in seen]
 
 
 def load_log_roots():
@@ -990,10 +1057,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_botstatus(self):
-        """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。"""
+        """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。
+
+        在途部分优先用 underway 实时轮询（桌面 API，~8s 一轮），
+        轮询未成功/失败时自动退化为 RECORDS（60s 粒度）。
+        live: {ok, age, count} 告诉前端实时层状态（ok=False 显示"离线快照"）。
+        """
         try:
-            payload = dashboard.build_bot_status(RECORDS)
+            payload = dashboard.build_bot_status(_merged_status_records())
             payload["time"] = LAST_UPDATE_TIME[0] or now_text()
+            payload["live"] = {
+                "ok": bool(UNDERWAY_TS[0]),
+                "age": int(time.time() - UNDERWAY_TS[0]) if UNDERWAY_TS[0] else None,
+                "count": len(UNDERWAY),
+            }
         except Exception as e:
             payload = {"ok": False, "error": "机器人状态聚合失败：%s" % e}
         self._send_json(payload)
@@ -1258,6 +1335,34 @@ def runs_poller():
             print("[定时] 运行记录抓取异常:", e)
 
 
+def underway_poller():
+    """后台轻量轮询线程：每 UNDERWAY_INTERVAL 秒调桌面 API underway（运行中记录）。
+
+    与 runs_poller(60s 全量) 互补：这里只负责「谁在跑/排队中」的实时性，
+    响应只有几百字节。成功后更新 UNDERWAY 内存槽（botstatus 合并视图用），
+    并把在途记录先入库（source="underway"，终态由 crawler 覆盖）。
+    失败静默保留上一轮数据（状态页退化成 60s 粒度），限频打印避免刷屏；
+    连续失败不动用 ensure_token 的重登风暴——octo_api 内部 401 时会自行续期/重登。
+    """
+    fail = 0
+    time.sleep(5)   # 让主服务先起来（token 缓存/配置就绪）
+    while True:
+        try:
+            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            items = octo_api.list_underway(cfg).get("items") or []
+            UNDERWAY.clear()
+            UNDERWAY.extend(items)
+            UNDERWAY_TS[0] = time.time()
+            fail = 0
+            db.sync_runs(_underway_records(), source="underway")
+        except Exception as e:
+            fail += 1
+            if fail == 1 or fail % 60 == 0:
+                print("[underway] 轮询失败 x%d: %s" % (fail, e))
+        time.sleep(UNDERWAY_INTERVAL)
+
+
 def scheduler():
     """每天 UPDATE_HOUR:UPDATE_MINUTE 自动更新数据"""
     while True:
@@ -1281,8 +1386,10 @@ def main():
     reload_records()   # 启动时把运行记录读入内存缓存（/api/runs、/api/run 数据源）
     _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
     print("[启动] 运行记录 %d 条已载入内存" % len(RECORDS))
+    db.init_db()       # MySQL 建库建表（幂等；未配置 config.json -> mysql 段时静默跳过）
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=runs_poller, daemon=True).start()
+    threading.Thread(target=underway_poller, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
         print("  RPA 日程仪表盘 - 局域网服务器已启动")

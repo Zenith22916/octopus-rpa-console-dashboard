@@ -59,6 +59,12 @@ if ! "$PY" -c "import requests" >/dev/null 2>&1; then
   }
 fi
 
+# Optional pymysql (MySQL persistence, only needed when config.json has a "mysql" section)
+if ! "$PY" -c "import pymysql" >/dev/null 2>&1; then
+  echo "[INFO] pymysql missing, installing (optional, for MySQL persistence) ..."
+  "$PY" -m pip install -q pymysql || echo "[INFO] pymysql install skipped/failed - MySQL persistence disabled"
+fi
+
 # ---------------------------------------------------------------------- port
 # Read the port from local_server.py so it is defined in exactly one place
 PORT="${PORT:-$(sed -n 's/^PORT *= *\([0-9][0-9]*\).*/\1/p' local_server.py 2>/dev/null | head -1)}"
