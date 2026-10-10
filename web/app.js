@@ -314,7 +314,7 @@ function route() {
     } else {
       if (IS_MOBILE) { tlFeedObserve(); tlFeedTick(); }
       else tlResize();
-      if (prevView === 'detail') refreshData();   // 从日志详情页返回：自动更新在详情页停更了，补拉一次后端内存里的最新数据
+      if (prevView === 'detail') refreshData(false, null, 'range');   // 从日志详情页返回：自动更新在详情页停更了，按「总长」范围补拉一次
     }
   } else if (name === 'analysis') {
     if (!anReady) {
@@ -1341,6 +1341,7 @@ function tlInit() {
     state.focusId = null;
     recomputeBounds();
     tlUpdateWindow();
+    refreshData(false, null, 'range');   // 总长变了：补拉一次新范围的数据
   };
   document.getElementById('selWay').onchange = function () {
     state.offset = 0;
@@ -2970,21 +2971,25 @@ function swBusy(on) {
   var sw = document.querySelector('#autoCtl .switch');
   if (sw) sw.classList.toggle('busy', !!on);
 }
-function refreshData(force, done, lite) {
+function refreshData(force, done, mode) {
   // 只有自动更新（非 force）才转圈；「立刻更新」按钮自带「更新中…」文案，不重复提示
   if (!force) swBusy(true);
   var finish = function (ok) { if (!force) swBusy(false); if (done) done(ok); };
-  /* 自动更新（!force）只读后端数据：GET /api/runs，不触发任何抓取。
-     lite=true 时只拉最新 10 条做增量合并（5s 快刷用），否则全量；
-     抓取由后端常驻线程自己做，登录失效也会自动重登后重试；
-     所以这里不判断后端抓取状态，读到什么就显示什么（陈旧数据由标题栏
-     「数据获取时间」如实反映）。「立刻更新」（force=1）才走 POST 触发全量抓取。 */
+  /* mode：
+     - undefined：全量替换 RECORDS（初始加载 / 返回视图补拉 / 「立刻更新」force=1 的返回）
+     - 'lite'：只拉最新 6 条，按 id 增量合并（5s 快刷）
+     - 'range'：拉「总长」范围内的记录，增量合并（5min 兜底 + 总长切换补拉），
+       不真全量，库里更早的数据不传 */
+  var url;
+  if (mode === 'lite') url = '/api/runs?limit=6';
+  else if (mode === 'range') url = '/api/runs?since=' + (Date.now() - state.total);
+  else url = '/api/runs';
   var req = force
     ? fetch('/api/refresh?force=1', { method: 'POST', credentials: 'same-origin' }).then(function (r) {
         if (r.status === 401) { location.href = '/login'; return null; }
         return r.json();
       })
-    : api('/api/runs' + (lite ? '?limit=6' : ''));
+    : api(url);
   return req.then(function (d) {
     var warnEl = document.getElementById('refreshWarn');
     var okFlag = false;
@@ -2992,8 +2997,8 @@ function refreshData(force, done, lite) {
       okFlag = true;
       // 只有「立刻更新」会失败；自动更新读的是后端内存，失败时才提示
       if (warnEl && force) warnEl.style.display = 'none';
-      if (lite) {
-        /* 轻量刷新：只拿到最新 10 条，按 id 增量合并进已有 RECORDS，不丢旧数据 */
+      if (mode) {
+        /* lite / range：增量合并进已有 RECORDS（按 id 去重），不丢旧数据 */
         var seen = {};
         var merged = d.records.slice();
         for (var i = 0; i < merged.length; i++) seen[merged[i].id] = true;
@@ -3035,18 +3040,18 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
     setTimeout(function () { btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
-/* 自动更新：6s 轻量刷（/api/runs?limit=6 增量合并，不触发抓取），
-   每 5min 做一次全量拉取兜底；仅在依赖实跑数据的视图生效。
-   抓取由后端常驻线程自行完成。 */
+/* 自动更新：6s 轻量刷（最新 6 条增量合并，不触发抓取），每 5min 做一次
+   「总长」范围刷新兜底（/api/runs?since=，同样不真全量）；仅在依赖实跑数据
+   的视图生效。抓取由后端常驻线程自行完成。 */
 var AUTO_FULL_MS = 5 * 60 * 1000;
 var lastFullTick = 0;
 function autoTick() {
   if (curView !== 'timeline' && curView !== 'analysis') return;
   if (Date.now() - lastFullTick >= AUTO_FULL_MS) {
     lastFullTick = Date.now();
-    refreshData(false, null, false);
+    refreshData(false, null, 'range');
   } else {
-    refreshData(false, null, true);
+    refreshData(false, null, 'lite');
   }
 }
 /* 机器人状态页快刷：后端每 6s 轮询桌面 API underway（运行中记录，与
@@ -3222,7 +3227,7 @@ document.getElementById('btnRerun').addEventListener('click', function () {
     onDone: function () {
       /* 新运行要等后端下一轮抓取（约 1 分钟内）才会进内存；这里先把内存里的
          数据重画一遍，不额外触发后端抓取。 */
-      if (typeof refreshData === 'function') refreshData();
+      if (typeof refreshData === 'function') refreshData(false, null, 'range');
     }
   });
 });

@@ -205,9 +205,10 @@ def UPSERT_SQL(cfg):
 _COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"
 
 
-def fetch_records(limit=None):
-    """按 start_ms 倒序查询（最新在前），limit 给定时只取最新 N 条。
-    返回原始行 dict 列表（时间为毫秒）。"""
+def fetch_records(limit=None, since_ms=None):
+    """按 start_ms 倒序查询（最新在前）。
+    limit 给定时只取最新 N 条；since_ms 给定时只取「在途或 end >= since_ms」的行
+    （按与时间范围的 overlapped 判定，覆盖跨界的长任务）。"""
     cfg = _cfg()
     if not cfg:
         return []
@@ -217,10 +218,17 @@ def fetch_records(limit=None):
             return []
         sql = "SELECT {cols} FROM `{db}`.`{table}`".format(
             cols=_COLS, db=cfg["database"], table=TABLE)
+        params = []
+        if since_ms:
+            sql += " WHERE end_ms IS NULL OR end_ms >= %s"
+            params.append(int(since_ms))
         if limit:
             sql += " ORDER BY start_ms DESC LIMIT %s"
+            params.append(int(limit))
+        elif since_ms:
+            sql += " ORDER BY start_ms DESC"
         with conn.cursor(pymysql_ss()) as cur:
-            cur.execute(sql, (int(limit),) if limit else ())
+            cur.execute(sql, params or None)
             cols = [c[0] for c in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         conn.close()

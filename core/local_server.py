@@ -132,14 +132,15 @@ def _db_records_from_rows(rows):
     return out
 
 
-def _db_records(limit=None):
+def _db_records(limit=None, since_ms=None):
     """从 MySQL 查运行记录并组装成前端/dashboard 同构的记录列表。
 
-    数据库是唯一真相源：在途记录（end 为空）由 underway 轮询先行入库，
-    终态由 crawler 覆盖，同 process_no 永远只有一行、且是最新状态。
-    limit 给定时只取最新 N 条（前端 5s 轻量刷新用）。
+    数据库是唯一真相源：在途记录（end 为空）与终态由轮询线程写入，
+    同 process_no 永远只有一行、且是最新状态。
+    limit 给定时只取最新 N 条（前端 5s 轻量刷新用）；
+    since_ms 给定时只取与「now-since_ms ~ now」有交集的记录（前端总长范围刷新用）。
     """
-    return _db_records_from_rows(db.fetch_records(limit=limit))
+    return _db_records_from_rows(db.fetch_records(limit=limit, since_ms=since_ms))
 
 
 def load_log_roots():
@@ -924,15 +925,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_runs(self):
-        """GET /api/runs[?limit=N]：返回运行记录（时间轴/分析视图共用），按需查 MySQL。
-        limit 给定时只返回最新 N 条（前端 5s 轻量刷新，5min 全量一次）。"""
+        """GET /api/runs[?limit=N][?since=ms]：返回运行记录（时间轴/分析视图共用），按需查 MySQL。
+        limit：只返回最新 N 条（前端 5s 轻量刷新）。
+        since：只返回与 now-since 有交集的记录（前端按「总长」范围刷新）。"""
         q = parse_qs(urlparse(self.path).query)
         limit = None
         try:
             limit = int(q.get("limit", [""])[0]) or None
         except ValueError:
             pass
-        records = _db_records(limit=limit)
+        since_ms = None
+        try:
+            since_ms = int(q.get("since", [""])[0]) or None
+        except ValueError:
+            pass
+        records = _db_records(limit=limit, since_ms=since_ms)
         payload = {"ok": True, "records": records, "count": len(records),
                    "time": LAST_UPDATE_TIME[0] or now_text()}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
