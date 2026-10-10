@@ -631,19 +631,6 @@ function tlRender() {
   });
   var sepData = [];
   lastRows.forEach(function (r) { if (r !== topGroupRow) sepData.push({ value: [r] }); });
-  /* 悬浮引导：一条贯穿整幅的竖线 + 顶部时长气泡，标出「悬浮那条」落在哪个时刻。
-     块太窄时它自己也读不到文字，这个气泡是唯一的时长来源，所以值得单独画。
-     数据只放一条（当前悬浮的），没悬浮时为空数组 = 不画。 */
-  var hoverData = [];
-  if (hot) {
-    for (var hj = 0; hj < data.length; hj++) {
-      if (data[hj].rid === hot) {
-        hoverData.push({ value: [(data[hj].value[0] + data[hj].value[1]) / 2, data[hj].value[2],
-                                 data[hj].name, data[hj].value[1] - data[hj].value[0]] });
-        break;
-      }
-    }
-  }
   var recIds = {};
   visible.forEach(function (s) { recIds[s.r.id] = 1; });
   var recCount = Object.keys(recIds).length;
@@ -651,14 +638,32 @@ function tlRender() {
 
   /* 悬浮联动：当前有悬浮行时，只有它对应的块是「主角」，其余一律淡出。
      注意 hot 只对「窗口内可见」的记录有效 —— 悬浮的行可能因为时间窗口没包含它
-     而不在图上，这时 hot 什么也匹配不到，图上维持原样（不会误淡出整幅）。 */
+     而不在图上，这时 hot 什么也匹配不到，图上维持原样（不会误淡出整幅）。
+     必须在构造 hoverData 之前算好（曾因写在后面，var 提升让 hoverData 拿到
+     undefined，引导线与气泡整个不画）。 */
   var hot = tlHover.rid;
-  var hotOnChart = false;
   if (hot) {
+    var hotOnChart = false;
     for (var hi = 0; hi < data.length; hi++) {
       if (data[hi].rid === hot) { hotOnChart = true; break; }
     }
     if (!hotOnChart) hot = null;     // 该记录不在当前窗口内：不做淡出，保持图正常
+  }
+
+  /* 悬浮引导：一条贯穿整幅的竖线 + 贴着目标块的气泡（应用名 · 时长），
+     标出「悬浮那条」落在哪个时刻。块太窄时它自己也读不到文字，
+     这个气泡就是唯一的时长来源，所以值得单独画。没悬浮时为空数组 = 不画。 */
+  var hoverData = [];
+  if (hot) {
+    for (var hj = 0; hj < data.length; hj++) {
+      if (data[hj].rid === hot) {
+        hoverData.push({
+          value: [(data[hj].value[0] + data[hj].value[1]) / 2, data[hj].value[2],
+          data[hj].name, data[hj].value[1] - data[hj].value[0]]
+        });
+        break;
+      }
+    }
   }
 
   /* ---- 坐标工具（横向布局：时间在横轴、泳道在纵轴） ---- */
@@ -855,7 +860,7 @@ function tlRender() {
     }, {
       /* 悬浮引导（zlevel 3 = 盖在数据块与文字之上）：
          一条贯穿绘图区上下的金色竖虚线，锁定「悬浮那条」的时刻；
-         线顶浮一个气泡，写应用名 + 时长 —— 块窄到没有文字时，这里是唯一读数。 */
+         块上方浮一个气泡，写应用名 + 时长 —— 块窄到没有文字时，这里是唯一读数。 */
       type: 'custom', data: hoverData, zlevel: 3, silent: true,
       renderItem: function (params, api) {
         var t = api.value(0);
@@ -866,37 +871,43 @@ function tlRender() {
         var bottom = xy(api, t, Math.max(0, layout.totalRows - 1));
         var band = bandOf(api);
         var g = tlGrid();
-        var yTop = Math.max(2, g.top - 14);
-        var yBot = bottom[1] + band / 2;
-        if (yBot <= yTop) return null;
+        var canvasH = chartEl ? (chartEl.clientHeight || 0) : 0;
+        /* 竖线从绘图区顶一直画到最底泳道的下沿（夹进画布，免得越界） */
+        var yLineTop = Math.max(0, g.top - 6);
+        var yBot = Math.min(canvasH, bottom[1] + band / 2);
+        if (yBot <= yLineTop) return null;
         var out = [{
           type: 'line',
-          shape: { x1: top[0], y1: yTop, x2: top[0], y2: yBot },
+          shape: { x1: top[0], y1: yLineTop, x2: top[0], y2: yBot },
           style: { stroke: 'rgba(255,209,102,0.75)', lineWidth: 1.5, lineDash: [5, 4] }
         }];
-        /* 顶部气泡：时长 + 应用名（超宽就只留时长，别把气泡拉出屏幕）。
-           用金色圆角块 + 深色字，和「现在」红线的标签区分开。 */
+        /* 气泡文字：应用名 + 时长（超宽就只留时长，别把气泡拉出屏幕） */
         var durTxt = fmtDurShort(durMs);
         var fs = 11;
-        var padX = 7, h = 19;
-        var nameMax = 150;
-        var label = nm ? truncateLabel(nm, nameMax, fs) : '';
+        var padX = 7, bh2 = 19;
+        var label = nm ? truncateLabel(nm, 150, fs) : '';
         var text = label ? (label + ' · ' + durTxt) : durTxt;
-        var w = Math.min(260, measureW(text, fs) + padX * 2);
-        if (measureW(text, fs) + padX * 2 > 260) {
-          text = durTxt;                        // 放不下就退回只显示时长
-          w = measureW(text, fs) + padX * 2;
-        }
-        var cx = Math.max(g.left + w / 2, Math.min(chartEl.clientWidth - g.right - w / 2, top[0]));
+        var w = measureW(text, fs) + padX * 2;
+        if (w > 260) { text = durTxt; w = measureW(text, fs) + padX * 2; }
+        /* 气泡贴着「悬浮那条」的块上沿浮，而不是贴在画布顶端：
+           ① 一眼看清是哪一块（画布顶部离块可能很远，尤其泳道多时）；
+           ② 贴顶会被画布裁掉（原先气泡中心放在 y=6、高 19px，上沿落到 -3.5px 被裁）。
+           块上方放不下就翻到块下方，最后再整体夹进画布内，保证永远完整可见。 */
+        var blockTop = top[1] - band / 2;
+        var cy = blockTop - bh2 / 2 - 6;                 // 默认：块上方
+        if (cy - bh2 / 2 < 1) cy = top[1] + band / 2 + bh2 / 2 + 6;   // 上方不够 -> 块下方
+        cy = Math.max(bh2 / 2 + 1, Math.min(canvasH - bh2 / 2 - 1, cy));
+        var cx = Math.max(g.left + w / 2,
+          Math.min((chartEl ? chartEl.clientWidth : 900) - g.right - w / 2, top[0]));
         out.push({
           type: 'rect',
-          shape: { x: cx - w / 2, y: yTop - h / 2, width: w, height: h, r: h / 2 },
+          shape: { x: cx - w / 2, y: cy - bh2 / 2, width: w, height: bh2, r: bh2 / 2 },
           style: { fill: 'rgba(255,209,102,0.95)', stroke: 'rgba(255,255,255,0.35)', lineWidth: 1 }
         });
         out.push({
           type: 'text',
           style: {
-            text: text, x: cx, y: yTop, textAlign: 'center', textVerticalAlign: 'middle',
+            text: text, x: cx, y: cy, textAlign: 'center', textVerticalAlign: 'middle',
             fill: '#1a1206', fontSize: fs, fontWeight: 600, fontFamily: FONT_STACK
           }
         });
