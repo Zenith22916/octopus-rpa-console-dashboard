@@ -403,7 +403,7 @@ if (window.innerWidth < window.innerHeight) {
 }
 var records = [];           // 时间轴工作副本（来自 RECORDS）
 var robots = [];
-var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null };
+var state = { span: DEF_SPAN, end: Date.now(), offset: 0, focusId: null, total: 24 * 3600 * 1000 };
 var DATA_MIN = Infinity, DATA_MAX = -Infinity;
 var tlChart = null, chartEl = null;
 var tlLastData = null;      // 最近一次渲染的数据项：custom series 取不到附加字段时按 dataIndex 回查
@@ -435,6 +435,12 @@ function recomputeBounds() {
     var e = r.end == null ? nowT : r.end;
     if (e > DATA_MAX) DATA_MAX = e;
   });
+  /* 总长裁剪：只保留「总长」下拉选定的最近一段数据（默认 1 天），
+     更早的记录不进甘特图/滚动条范围（记录列表不受影响，仍看全量） */
+  if (isFinite(DATA_MAX) && isFinite(DATA_MIN)) {
+    var cutoff = DATA_MAX - (state.total || Infinity);
+    if (DATA_MIN < cutoff) DATA_MIN = cutoff;
+  }
 }
 function robotList(segs) {
   var arr = [];
@@ -590,6 +596,9 @@ function tlRender() {
   if (!showQueue) segs = segs.filter(function (s) { return s.kind !== 'wait'; });   // 关闭排队：去掉排队段，布局/泳道按运行段计算
   var lgQueue = document.getElementById('lgQueue');
   if (lgQueue) lgQueue.style.display = showQueue ? '' : 'none';
+  /* 总长裁剪：总长之外的旧记录不进泳道布局，也不出现在图里（列表仍显示全量） */
+  var totalStart = state.end - state.total;
+  segs = segs.filter(function (s) { return effEnd(s) >= totalStart; });
   robots = robotList(segs);
   var visible = segs.filter(function (s) { return effEnd(s) >= winStart && s.start <= nowW; });
   /* 文字下限：屏幕上不足 MIN_BAR_PX 的记录仍会画（撑到最小可见厚度，见 renderItem 的 stretch），
@@ -1323,6 +1332,14 @@ function tlInit() {
     state.span = parseInt(this.value, 10);
     state.offset = 0;
     state.focusId = null;
+    tlUpdateWindow();
+  };
+  document.getElementById('selTotal').onchange = function () {
+    state.total = parseInt(this.value, 10) || state.total;
+    if (state.span > state.total) { state.span = state.total; syncSpanSelect(); }   // 窗口不能大于总长
+    state.offset = 0;
+    state.focusId = null;
+    recomputeBounds();
     tlUpdateWindow();
   };
   document.getElementById('selWay').onchange = function () {

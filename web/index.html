@@ -97,6 +97,17 @@
              手机上没有甘特图，时间窗口/触发方式/显示排队这些筛选也就失去了对象） -->
         <div class="tl-card" id="tlChartCard">
           <div class="chart-head">
+            <span class="filter-label">总长：</span>
+            <select id="selTotal" title="总共显示多久的数据（甘特图泳道与底部滚动条的范围）">
+              <option value="3600000">1 小时</option>
+              <option value="7200000">2 小时</option>
+              <option value="21600000">6 小时</option>
+              <option value="43200000">12 小时</option>
+              <option value="86400000" selected>1 天</option>
+              <option value="172800000">2 天</option>
+              <option value="259200000">3 天</option>
+              <option value="604800000">7 天</option>
+            </select>
             <span class="filter-label">时间窗口：</span>
             <select id="selSpan" title="窗口预设；滑块可调任意大小">
               <option value="600000">10 分钟</option>
