@@ -631,10 +631,35 @@ function tlRender() {
   });
   var sepData = [];
   lastRows.forEach(function (r) { if (r !== topGroupRow) sepData.push({ value: [r] }); });
+  /* 悬浮引导：一条贯穿整幅的竖线 + 顶部时长气泡，标出「悬浮那条」落在哪个时刻。
+     块太窄时它自己也读不到文字，这个气泡是唯一的时长来源，所以值得单独画。
+     数据只放一条（当前悬浮的），没悬浮时为空数组 = 不画。 */
+  var hoverData = [];
+  if (hot) {
+    for (var hj = 0; hj < data.length; hj++) {
+      if (data[hj].rid === hot) {
+        hoverData.push({ value: [(data[hj].value[0] + data[hj].value[1]) / 2, data[hj].value[2],
+                                 data[hj].name, data[hj].value[1] - data[hj].value[0]] });
+        break;
+      }
+    }
+  }
   var recIds = {};
   visible.forEach(function (s) { recIds[s.r.id] = 1; });
   var recCount = Object.keys(recIds).length;
   tlLastData = data;
+
+  /* 悬浮联动：当前有悬浮行时，只有它对应的块是「主角」，其余一律淡出。
+     注意 hot 只对「窗口内可见」的记录有效 —— 悬浮的行可能因为时间窗口没包含它
+     而不在图上，这时 hot 什么也匹配不到，图上维持原样（不会误淡出整幅）。 */
+  var hot = tlHover.rid;
+  var hotOnChart = false;
+  if (hot) {
+    for (var hi = 0; hi < data.length; hi++) {
+      if (data[hi].rid === hot) { hotOnChart = true; break; }
+    }
+    if (!hotOnChart) hot = null;     // 该记录不在当前窗口内：不做淡出，保持图正常
+  }
 
   /* ---- 坐标工具（横向布局：时间在横轴、泳道在纵轴） ---- */
   // 时间 t + 泳道 row -> 屏幕坐标 [x, y]
@@ -727,6 +752,16 @@ function tlRender() {
         var bh = Math.max(10, band - 4);
         var exec = api.value(6);
         var hasWait = exec && exec > api.value(0);
+        /* 本块是不是被悬浮行点中的那条：是则原样（并加金色描边），
+           否则在「有悬浮」时淡出到 18%。用 dataIndex 回查而不是读附加字段 ——
+           custom series 不保证保留 rid（踩过这个坑）。 */
+        var isHot = false;
+        if (hot) {
+          var di = (typeof params.dataIndex === 'number') ? tlLastData[params.dataIndex] : null;
+          isHot = !!(di && di.rid === hot);
+        }
+        var dim = !!hot && !isHot;
+        var dimA = dim ? 0.18 : 1;
         if (hasWait && showQueue) {
           var q0 = Math.max(api.value(0), winA), q1 = Math.min(exec, nowW);
           if (q1 > q0) {
@@ -735,7 +770,7 @@ function tlRender() {
                （运行块本身必须可见 —— 那代表「这条记录跑过」，语义不同） */
             var pq0 = xy(api, q0, row), pq1 = xy(api, q1, row);
             if (lenOf(pq0, pq1) >= 1) {
-              children.push(barOf(pq0, pq1, bh, { fill: WAIT_FILL }));
+              children.push(barOf(pq0, pq1, bh, { fill: WAIT_FILL, opacity: dimA }));
             }
           }
         }
@@ -747,13 +782,25 @@ function tlRender() {
              不要在 renderItem 里读 params.data.status —— custom series
              不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
              横条一律「上亮下暗」竖向渐变。 */
-          children.push(barOf(st2[0], st2[1], bh, { fill: shadeGrad(api.value(5), 'v', .07, .09) }));
+          children.push(barOf(st2[0], st2[1], bh, {
+            fill: shadeGrad(api.value(5), 'v', .07, .09), opacity: dimA
+          }));
         }
         var pv0 = xy(api, vs, row), pv1 = xy(api, ve, row);
         var stv = stretch(pv0, pv1);
         if (lenOf(stv[0], stv[1]) >= 1) {
-          children.push(barOf(stv[0], stv[1], bh,
-            { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' }));
+          /* 悬浮中的那条：白描边换成金色加粗描边 + 外扩 2px，视觉上「鼓」出来；
+             其余保持原来的白细边（淡出时描边也一起淡）。 */
+          if (isHot) {
+            var e0 = stv[0], e1 = stv[1];
+            children.push(barOf([e0[0] - 2, e0[1]], [e1[0] + 2, e1[1]], bh + 6, {
+              fill: 'rgba(255,209,102,0.14)',
+              stroke: '#ffd166', lineWidth: 2
+            }));
+          } else {
+            children.push(barOf(stv[0], stv[1], bh,
+              { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer', opacity: dimA }));
+          }
         }
         if (!children.length) return null;
         return children.length === 1 ? children[0] : { type: 'group', children: children };
@@ -804,6 +851,56 @@ function tlRender() {
           type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
           style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
         };
+      }
+    }, {
+      /* 悬浮引导（zlevel 3 = 盖在数据块与文字之上）：
+         一条贯穿绘图区上下的金色竖虚线，锁定「悬浮那条」的时刻；
+         线顶浮一个气泡，写应用名 + 时长 —— 块窄到没有文字时，这里是唯一读数。 */
+      type: 'custom', data: hoverData, zlevel: 3, silent: true,
+      renderItem: function (params, api) {
+        var t = api.value(0);
+        var row = api.value(1);
+        var nm = String(api.value(2) || '');
+        var durMs = api.value(3);
+        var top = xy(api, t, 0);
+        var bottom = xy(api, t, Math.max(0, layout.totalRows - 1));
+        var band = bandOf(api);
+        var g = tlGrid();
+        var yTop = Math.max(2, g.top - 14);
+        var yBot = bottom[1] + band / 2;
+        if (yBot <= yTop) return null;
+        var out = [{
+          type: 'line',
+          shape: { x1: top[0], y1: yTop, x2: top[0], y2: yBot },
+          style: { stroke: 'rgba(255,209,102,0.75)', lineWidth: 1.5, lineDash: [5, 4] }
+        }];
+        /* 顶部气泡：时长 + 应用名（超宽就只留时长，别把气泡拉出屏幕）。
+           用金色圆角块 + 深色字，和「现在」红线的标签区分开。 */
+        var durTxt = fmtDurShort(durMs);
+        var fs = 11;
+        var padX = 7, h = 19;
+        var nameMax = 150;
+        var label = nm ? truncateLabel(nm, nameMax, fs) : '';
+        var text = label ? (label + ' · ' + durTxt) : durTxt;
+        var w = Math.min(260, measureW(text, fs) + padX * 2);
+        if (measureW(text, fs) + padX * 2 > 260) {
+          text = durTxt;                        // 放不下就退回只显示时长
+          w = measureW(text, fs) + padX * 2;
+        }
+        var cx = Math.max(g.left + w / 2, Math.min(chartEl.clientWidth - g.right - w / 2, top[0]));
+        out.push({
+          type: 'rect',
+          shape: { x: cx - w / 2, y: yTop - h / 2, width: w, height: h, r: h / 2 },
+          style: { fill: 'rgba(255,209,102,0.95)', stroke: 'rgba(255,255,255,0.35)', lineWidth: 1 }
+        });
+        out.push({
+          type: 'text',
+          style: {
+            text: text, x: cx, y: yTop, textAlign: 'center', textVerticalAlign: 'middle',
+            fill: '#1a1206', fontSize: fs, fontWeight: 600, fontFamily: FONT_STACK
+          }
+        });
+        return { type: 'group', children: out };
       }
     }]
   }, { lazyUpdate: true });
@@ -859,6 +956,43 @@ function tlSortByEndDesc(a, b) {
   return b.start - a.start;          // 结束时间相同：后开始的在前
 }
 
+/* ==================== 记录行 <-> 甘特图数据块 联动高亮 ====================
+   鼠标悬浮运行记录某一行时，把甘特图里对应的数据块「点亮」，其余整幅淡出。
+   这样一眼就能把「表格里这条」和「图上那块」对上，不用自己按时间去数。
+
+   表现设计（三层，都是为了让目标块在密集的时间轴里跳出来）：
+   1. 其余所有块淡出到 18% 不透明度 —— 背景退成灰，目标块是唯一的高饱和色；
+   2. 目标块本身加一圈金色描边 + 微微外扩（视觉上「鼓」出来一点）；
+   3. 目标块上方浮一个时长标签（块太窄、平时不显示文字时也能读到「这条跑了多久」），
+      并画一条贯穿整个泳道的竖向高亮带，方便看清它落在哪个时刻。
+
+   实现上不给每条记录单独建 series（1700 条会拖慢渲染）：
+   只把「当前悬浮的 rid」存进 tlHover.rid，重绘时按它决定每个块的样式。
+   重绘走 echarts 的 lazyUpdate，一帧内多次调用会被合并，悬浮移动不卡。 */
+var tlHover = { rid: null, timer: 0 };
+
+function tlSetHover(rid) {
+  var v = rid ? String(rid) : null;
+  if (v === tlHover.rid) return;          // 值没变就不重绘（行内单元格间移动会高频触发）
+  tlHover.rid = v;
+  if (tlHover.timer) { clearTimeout(tlHover.timer); tlHover.timer = 0; }
+  /* 悬浮切换用一帧节流：快速划过整列行时不必每行都重画一次图 */
+  tlHover.timer = setTimeout(function () {
+    tlHover.timer = 0;
+    if (curView === 'timeline' && !IS_MOBILE) tlRender();
+  }, 16);
+}
+/* 同步表格行的 .hot 类（图表那边由 tlRender 读 tlHover.rid 决定样式） */
+function tlHoverRowSync(rid) {
+  var tbl = document.getElementById('tlListTbl');
+  if (!tbl) return;
+  var rows = tbl.querySelectorAll('tr[data-rid]');
+  for (var i = 0; i < rows.length; i++) {
+    var hit = rid && String(rows[i].getAttribute('data-rid')) === String(rid);
+    rows[i].classList.toggle('hot', !!hit);
+  }
+}
+
 function tlListRender(force) {
   var tbl = document.getElementById('tlListTbl');
   var cards = document.getElementById('tlCards');
@@ -894,7 +1028,7 @@ function tlListRender(force) {
   var info = document.getElementById('tlListInfo');
   if (info) info.textContent = '窗口内 ' + rows.length + ' 条 · 共 ' + records.length + ' 条';
   var tipEl = document.getElementById('tlListTip');
-  if (tipEl) tipEl.textContent = '点击某行可让甘特图对齐该条记录的结束时间';
+  if (tipEl) tipEl.textContent = '点击某行进入该条记录的日志详情 · 悬浮可高亮图中对应数据块';
 
   if (!rows.length) {
     cards.innerHTML = '';
@@ -917,6 +1051,8 @@ function tlListRender(force) {
       '</tr>';
   });
   tbl.innerHTML = html + '</tbody>';
+  /* 重排后把 .hot 补回去：自动更新每 60s 会重建表格，悬浮中的那一行不能因此丢高亮 */
+  tlHoverRowSync(tlHover.rid);
 }
 
 /* ---- 手机端记录流 ---- */
@@ -1075,42 +1211,34 @@ function tlFeedObserve() {
   }, { root: null, rootMargin: '300px' });
   tlFeedObserve._io.observe(sentinel);
 }
-function tlGotoRec(rid) {
-  var rec = null;
-  for (var i = 0; i < records.length; i++) {
-    if (String(records[i].id) === String(rid)) { rec = records[i]; break; }
-  }
-  if (!rec) return;
-  state.end = Date.now();
-  /* 未结束（end 为空）-> 对齐到最右（现在）；已结束 -> 窗口右边缘对齐结束时间 */
-  state.offset = (rec.end == null)
-    ? 0
-    : Math.max(DATA_MIN - state.end, Math.min(0, rec.end - state.end));
+/* 打开某条记录的详情页（桌面表格行 / 手机卡片都走这里）。
+   顺带记住点过哪条：从详情页返回时该行仍高亮，便于接着往下看。 */
+function tlOpenRec(rid) {
+  if (!rid) return;
   state.focusId = String(rid);
-  tlUpdateWindow();
-  tlListRender(true);
-  if (tlChart) tlChart.resize();     // 按当前容器尺寸重算，避免数据块与横轴错位
+  location.hash = '#/detail?id=' + encodeURIComponent(rid);
 }
+/* 运行记录列表的交互：
+   - 点击 -> 进该条记录的日志详情（两端一致，不再要求「先对齐甘特图再点」两步）
+   - 桌面端鼠标悬浮 -> 甘特图里对应的数据块高亮（见 tlSetHover / tlRender 的 hot 分支） */
 function tlListBind() {
   var box = document.getElementById('tlList');
   if (!box || box._tlBound) return;
   box._tlBound = 1;
   box.addEventListener('click', function (e) {
     if (!e.target || !e.target.closest) return;
-    /* 手机端点卡片 -> 直接进该条记录的日志详情（没有甘特图要对齐）；
-       桌面端点表格行 -> 让甘特图右边缘对齐该条记录的结束时间。 */
-    var card = e.target.closest('.tl-card-item[data-rid]');
-    if (card) {
-      if (IS_MOBILE) {
-        location.hash = '#/detail?id=' + encodeURIComponent(card.getAttribute('data-rid'));
-        return;
-      }
-      tlGotoRec(card.getAttribute('data-rid'));
-      return;
-    }
-    var tr = e.target.closest('tr[data-rid]');
-    if (tr) tlGotoRec(tr.getAttribute('data-rid'));
+    var el = e.target.closest('.tl-card-item[data-rid], tr[data-rid]');
+    if (el) tlOpenRec(el.getAttribute('data-rid'));
   });
+  /* 悬浮联动：只在桌面端做（触屏没有 hover 语义，硬做反而会在点按时闪一下）。
+     用 mouseover 事件委托 + 每次都比较当前值（tlSetHover 内部提前返回），
+     行内单元格之间移动不会产生多余的图表重绘。 */
+  box.addEventListener('mouseover', function (e) {
+    if (IS_MOBILE) return;
+    var tr = (e.target && e.target.closest) ? e.target.closest('tr[data-rid]') : null;
+    tlSetHover(tr ? tr.getAttribute('data-rid') : null);
+  });
+  box.addEventListener('mouseleave', function () { tlSetHover(null); });
 }
 /* 窗口信息（当前窗口长度 + 起止时刻） */
 function tlSpanInfoUpdate() {
