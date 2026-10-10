@@ -858,33 +858,24 @@ function tlRender() {
         };
       }
     }, {
-      /* 悬浮引导（zlevel 3 = 盖在数据块与文字之上）：
-         一条贯穿绘图区上下的金色竖虚线，锁定「悬浮那条」的时刻；
-         块上方浮一个气泡，写应用名 + 时长 —— 块窄到没有文字时，这里是唯一读数。 */
+      /* 悬浮气泡（zlevel 3 = 盖在数据块与文字之上）：贴着目标块浮一行「应用名 · 时长」。
+         块窄到没文字时（几秒的记录），这里是唯一的时长读数，所以值得单独画。
+         曾经还画过一条贯穿上下的金色竖虚线，已去掉：它的下端依赖 layout.totalRows，
+         在闭包里取到 NaN、被 api.coord 当成 0，结果线只覆盖第 0 条泳道（实测高度仅 53px），
+         数据块在别的泳道时线就跑到无关的位置 —— 高亮环 + 其余淡出已足够定位，不必留它。 */
       type: 'custom', data: hoverData, zlevel: 3, silent: true,
       renderItem: function (params, api) {
         var t = api.value(0);
         var row = api.value(1);
         var nm = String(api.value(2) || '');
         var durMs = api.value(3);
-        /* 目标块的中心 y：必须用 row 这个真实泳道，不能写死 0。
+        /* 目标块的中心：必须用 row 这个真实泳道，不能写死 0。
            （曾写成 xy(api, t, 0)：气泡会固定贴在第 0 行，与目标块能差 200px 以上，
            看起来像「气泡跟块没关系」。实测 row=4 时气泡在 y=247、块在 y=69。） */
         var center = xy(api, t, row);
-        var top = xy(api, t, 0);
-        var bottom = xy(api, t, Math.max(0, layout.totalRows - 1));
         var band = bandOf(api);
         var g = tlGrid();
         var canvasH = chartEl ? (chartEl.clientHeight || 0) : 0;
-        /* 竖线从绘图区顶一直画到最底泳道的下沿（夹进画布，免得越界） */
-        var yLineTop = Math.max(0, g.top - 6);
-        var yBot = Math.min(canvasH, bottom[1] + band / 2);
-        if (yBot <= yLineTop) return null;
-        var out = [{
-          type: 'line',
-          shape: { x1: top[0], y1: yLineTop, x2: top[0], y2: yBot },
-          style: { stroke: 'rgba(255,209,102,0.75)', lineWidth: 1.5, lineDash: [5, 4] }
-        }];
         /* 气泡文字：应用名 + 时长（超宽就只留时长，别把气泡拉出屏幕） */
         var durTxt = fmtDurShort(durMs);
         var fs = 11;
@@ -902,19 +893,18 @@ function tlRender() {
         if (cy - bh2 / 2 < 1) cy = center[1] + band / 2 + bh2 / 2 + 6;   // 上方不够 -> 块下方
         cy = Math.max(bh2 / 2 + 1, Math.min(canvasH - bh2 / 2 - 1, cy));
         var cx = Math.max(g.left + w / 2,
-          Math.min((chartEl ? chartEl.clientWidth : 900) - g.right - w / 2, top[0]));
-        out.push({
+          Math.min((chartEl ? chartEl.clientWidth : 900) - g.right - w / 2, center[0]));
+        var out = [{
           type: 'rect',
           shape: { x: cx - w / 2, y: cy - bh2 / 2, width: w, height: bh2, r: bh2 / 2 },
           style: { fill: 'rgba(255,209,102,0.95)', stroke: 'rgba(255,255,255,0.35)', lineWidth: 1 }
-        });
-        out.push({
+        }, {
           type: 'text',
           style: {
             text: text, x: cx, y: cy, textAlign: 'center', textVerticalAlign: 'middle',
             fill: '#1a1206', fontSize: fs, fontWeight: 600, fontFamily: FONT_STACK
           }
-        });
+        }];
         return { type: 'group', children: out };
       }
     }]
