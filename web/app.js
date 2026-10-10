@@ -2939,8 +2939,8 @@ function scExport() {
   }).then(done);
 }
 document.getElementById('scExport').addEventListener('click', scExport);
-/* 当前时刻标记每 5 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
-setInterval(scUpdateNowLine, 5000);
+/* 当前时刻标记每 6 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
+setInterval(scUpdateNowLine, 6000);
 
 /* ==================== 自动更新 ==================== */
 /* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */
@@ -2962,7 +2962,7 @@ function refreshData(force, done, lite) {
         if (r.status === 401) { location.href = '/login'; return null; }
         return r.json();
       })
-    : api('/api/runs' + (lite ? '?limit=10' : ''));
+    : api('/api/runs' + (lite ? '?limit=6' : ''));
   return req.then(function (d) {
     var warnEl = document.getElementById('refreshWarn');
     var okFlag = false;
@@ -3013,7 +3013,7 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
     setTimeout(function () { btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
-/* 自动更新：5s 轻量刷（/api/runs?limit=10 增量合并，不触发抓取），
+/* 自动更新：6s 轻量刷（/api/runs?limit=6 增量合并，不触发抓取），
    每 5min 做一次全量拉取兜底；仅在依赖实跑数据的视图生效。
    抓取由后端常驻线程自行完成。 */
 var AUTO_FULL_MS = 5 * 60 * 1000;
@@ -3027,18 +3027,18 @@ function autoTick() {
     refreshData(false, null, true);
   }
 }
-/* 机器人状态页快刷：后端每 5s 轮询桌面 API underway（运行中记录，与
-   OctopusRPA 桌面客户端同机制），这里同步 5s 直接拉 /api/botstatus，
+/* 机器人状态页快刷：后端每 6s 轮询桌面 API underway（运行中记录，与
+   OctopusRPA 桌面客户端同机制），这里同步 6s 直接拉 /api/botstatus，
    不经过 autoTick 的 refreshData 链路。勾选「自动更新」时生效。 */
 setInterval(function () {
   if (curView === 'botstatus' && document.getElementById('chkAuto').checked) {
     bsLoad().then(bsRender);
   }
-}, 5000);
+}, 6000);
 document.getElementById('chkAuto').addEventListener('change', function () {
   if (this.checked) {
     autoTick();
-    if (!autoTimer) autoTimer = setInterval(autoTick, 5000);
+    if (!autoTimer) autoTimer = setInterval(autoTick, 6000);
   } else {
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
@@ -3226,7 +3226,7 @@ document.addEventListener('click', function () {
 });
 if (document.getElementById('chkAuto').checked) {
   autoTick();
-  if (!autoTimer) autoTimer = setInterval(autoTick, 5000);
+  if (!autoTimer) autoTimer = setInterval(autoTick, 6000);
 }
 
 /* ==================== 项目控制台视图 ==================== */

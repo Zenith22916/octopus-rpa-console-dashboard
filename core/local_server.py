@@ -38,8 +38,6 @@ WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 MONACO_ROOT = os.path.join(BASE, "assets", "monaco")         # Monaco Editor（日志高亮，离线自托管；URL /monaco/vs/... → assets/monaco/vs/...）
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
-REFRESH_INTERVAL = 60                # 后端自动抓取运行记录的间隔（秒）：常驻线程每分钟一次
-LAST_REFRESH = [0.0]                 # 上次成功抓取运行记录的时间戳（后台轮询/立刻更新共用）
 LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）；节流跳过不更新
 UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
 LOG_PAGE = 5000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
@@ -51,10 +49,12 @@ MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 l
 
 # ---- underway 实时层（逆向自 OctopusRPA 桌面客户端抓包）----
 # 桌面客户端以固定频率 GET /desktop/bots/runningRecords/underway?start=0&take=500
-# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里每 5 秒轮询一次，抓到的在途记录
-# 直接入库（end 为空），跑完由 runs_poller 写终态覆盖——库即最新状态，无内存态。
-UNDERWAY_INTERVAL = 5                # 轮询间隔（秒）
+# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里每 6 秒轮询一次，与上一轮比对：
+# 有新增直接入库（end 为空）；有消失说明刚跑完，立即抓一页 runningRecords 写终态——
+# 库即最新状态，无内存态，也没有单独的 60s 增量线程。
+UNDERWAY_INTERVAL = 6                # 轮询间隔（秒）
 LAST_UNDERWAY_TS = [0.0]             # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
+TERM_BACKSTOP = 60                   # 距上次终态抓取超过该秒数时，强制补抓一页 runningRecords 兜底
 
 
 def now_text():
@@ -1261,7 +1261,7 @@ def run_refresh():
     """全量抓取：crawler 完整爬取（触发器 + 运行记录全量，写 CSV + 入库）。
 
     只有两个入口：服务器启动时的 initial_full_fetch、标题栏「立刻更新」按钮。
-    日常 60 秒增量与 5 秒在途轮询走桌面 API（runs_poller/underway_poller），
+    日常在途轮询与终态补抓走桌面 API（underway_poller 差异化写库），
     不经过这里——网页版会话失效只影响触发器排期的刷新，不影响运行记录。
 
     登录态失效由 crawler 自身的 authenticate() 处理：缓存会话/配置 Cookie 失效时
@@ -1287,7 +1287,6 @@ def run_refresh():
                       % datetime.datetime.now().strftime("%H:%M:%S"))
                 return False
             stamp_data_time()   # 记录“数据获取”时间
-            LAST_REFRESH[0] = time.time()
             print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
             return True
         except Exception as e:
@@ -1342,43 +1341,44 @@ def _raw_rows(items):
     return out
 
 
-def runs_poller():
-    """后台常驻线程：每 REFRESH_INTERVAL 秒直调桌面 API runningRecords（最新 20 条）。
-
-    旧数据不会变，只有新增记录需要入库：一次轻 GET 拿最新 20 条（全部状态，
-    含终态 endTime），upsert 进 MySQL（幂等），进程内完成、不起子进程。
-    Bearer token 自主续期，不依赖网页版 Cookie 会话；失败限频打印，下轮重试。
-    """
-    while True:
-        time.sleep(REFRESH_INTERVAL)
-        try:
-            with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            items = octo_api.fetch_recent_records(cfg, take=20)
-            rows = _raw_rows(items)
-            db.upsert_raw_runs(rows, source="desktop")
-            stamp_data_time()
-            LAST_REFRESH[0] = time.time()
-        except Exception as e:
-            print("[定时] 运行记录抓取异常:", e)
-
-
 def underway_poller():
-    """后台轻量轮询线程：每 UNDERWAY_INTERVAL(5) 秒调桌面 API underway（运行中记录）。
+    """后台轻量轮询线程：每 UNDERWAY_INTERVAL(6) 秒调桌面 API underway（运行中记录）。
 
-    与 runs_poller(60s) 互补：这里只负责「谁在跑/排队中」的秒级实时性，
-    响应只有几百字节。抓到的在途记录直接 upsert 入库（end 为空，source="underway"），
-    跑完由 runningRecords 轮询写终态覆盖——库即最新状态，无内存态。
-    失败静默跳过本轮，限频打印避免刷屏；octo_api 内部 401 时会自行续期/重登。
+    与上一轮结果按 process_no 比对：
+    - 有新增：直接 upsert 入库（end 为空，source="underway"）；
+    - 有消失：说明刚跑完离开 underway 列表，立即抓一页 runningRecords（最新 20 条，
+      含终态 endTime）upsert 入库覆盖——终态延迟从最多 60s 降到 ~6s，消除前端
+      「在途时长虚涨后闪回」；
+    - 无变动但距上次终态抓取已超过 TERM_BACKSTOP(60s)：强制补抓一页兜底，
+      覆盖离线期间/漏网的终态。
+    每次实际改库后刷新「数据获取」时间。失败静默跳过本轮，限频打印避免刷屏；
+    octo_api 内部 401 时会自行续期/重登。
     """
     fail = 0
+    prev = None      # 上一轮 {process_no: row}；None=首轮
+    last_term = 0.0  # 上次终态抓取（runningRecords 页）时间戳
     time.sleep(5)   # 让主服务先起来（token 缓存/配置就绪）
     while True:
         try:
             with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             items = octo_api.list_underway(cfg).get("items") or []
-            db.upsert_raw_runs(_raw_rows(items), source="underway")
+            cur = {}
+            for r in _raw_rows(items):
+                if r["process_no"]:
+                    cur[r["process_no"]] = r
+            if prev is None or set(cur) != set(prev):
+                new = [r for p, r in cur.items() if prev is None or p not in prev]
+                gone = [p for p in prev if p not in cur] if prev else []
+                if new:
+                    db.upsert_raw_runs(new, source="underway")
+                    stamp_data_time()   # 有改库：刷新「数据获取」时间
+                if gone or time.time() - last_term >= TERM_BACKSTOP:
+                    page = octo_api.fetch_recent_records(cfg, take=20)
+                    db.upsert_raw_runs(_raw_rows(page), source="desktop")
+                    stamp_data_time()
+                    last_term = time.time()
+                prev = cur
             LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
         except Exception as e:
@@ -1414,7 +1414,7 @@ def main():
 
     def initial_full_fetch():
         """服务器启动时先全量抓一轮（触发器 + 运行记录全量，写 CSV + 入库），
-        保证重启后数据完整；与 runs_poller 通过 UPDATE_LOCK 串行。"""
+        保证重启后数据完整；与 underway_poller 通过 UPDATE_LOCK 串行。"""
         try:
             run_refresh()
         except Exception as e:
@@ -1422,7 +1422,6 @@ def main():
 
     threading.Thread(target=initial_full_fetch, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
-    threading.Thread(target=runs_poller, daemon=True).start()
     threading.Thread(target=underway_poller, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
@@ -1436,7 +1435,7 @@ def main():
         else:
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
-        print("  运行记录刷新: 每 %d 秒桌面 API 拉最新 20 条入库（启动时先全量一轮）" % REFRESH_INTERVAL)
+        print("  在途轮询:   每 %d 秒桌面 API underway（差异写库；超 60s 无终态抓取则补抓一页）" % UNDERWAY_INTERVAL)
         print("  在途状态轮询: 每 %d 秒（桌面 API underway，谁在跑/排队中实时可见）" % UNDERWAY_INTERVAL)
         print("  网页读取:     按需查询 MySQL（唯一真相源），不触发抓取")
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
