@@ -47,14 +47,12 @@ MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 l
 # 运行记录不再进内存：crawler 增量/全量抓到后直接 upsert 入库（db.upsert_raw_runs），
 # 前端各接口按需查库（db.fetch_records/fetch_run_by_pno），CSV 只是全量快照备份。
 
-# ---- underway 实时层（逆向自 OctopusRPA 桌面客户端抓包）----
-# 桌面客户端以固定频率 GET /desktop/bots/runningRecords/underway?start=0&take=500
-# 轮询"运行中"记录（纯 REST 轮询、无推送）。这里每 6 秒轮询一次，与上一轮比对：
-# 有新增直接入库（end 为空）；有消失说明刚跑完，立即抓一页 runningRecords 写终态——
-# 库即最新状态，无内存态，也没有单独的 60s 增量线程。
+# ---- 运行记录实时轮询（桌面客户端 runningRecords 接口）----
+# 桌面客户端以固定频率轮询"运行中"记录（纯 REST 轮询、无推送）。这里每 6 秒
+# 拉一页 runningRecords（最新 50 条，Executing/Finished 全状态）upsert 入库，
+# 在途与终态一次同步——库即最新状态，无内存态。
 UNDERWAY_INTERVAL = 6                # 轮询间隔（秒）
 LAST_UNDERWAY_TS = [0.0]             # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
-TERM_BACKSTOP = 60                   # 距上次终态抓取超过该秒数时，强制补抓一页 runningRecords 兜底
 
 
 def now_text():
@@ -1261,7 +1259,7 @@ def run_refresh():
     """全量抓取：crawler 完整爬取（触发器 + 运行记录全量，写 CSV + 入库）。
 
     只有两个入口：服务器启动时的 initial_full_fetch、标题栏「立刻更新」按钮。
-    日常在途轮询与终态补抓走桌面 API（underway_poller 差异化写库），
+    日常在途与终态同步走桌面 API（records_poller 每 6s 拉最新 50 条 upsert），
     不经过这里——网页版会话失效只影响触发器排期的刷新，不影响运行记录。
 
     登录态失效由 crawler 自身的 authenticate() 处理：缓存会话/配置 Cookie 失效时
@@ -1341,50 +1339,31 @@ def _raw_rows(items):
     return out
 
 
-def underway_poller():
-    """后台轻量轮询线程：每 UNDERWAY_INTERVAL(6) 秒调桌面 API underway（运行中记录）。
+def records_poller():
+    """后台常驻线程：每 UNDERWAY_INTERVAL(6) 秒拉一页 runningRecords（最新 50 条）upsert 入库。
 
-    与上一轮结果按 process_no 比对：
-    - 有新增：直接 upsert 入库（end 为空，source="underway"）；
-    - 有消失：说明刚跑完离开 underway 列表，立即抓一页 runningRecords（最新 20 条，
-      含终态 endTime）upsert 入库覆盖——终态延迟从最多 60s 降到 ~6s，消除前端
-      「在途时长虚涨后闪回」；
-    - 无变动但距上次终态抓取已超过 TERM_BACKSTOP(60s)：强制补抓一页兜底，
-      覆盖离线期间/漏网的终态。
-    每次实际改库后刷新「数据获取」时间。失败静默跳过本轮，限频打印避免刷屏；
-    octo_api 内部 401 时会自行续期/重登。
+    runningRecords 一页同时含在途（Executing，endTime 空）与终态（Finished，
+    endTime 有值），upsert 幂等（同 process_no 以最后一次写入为准，在途被终态
+    覆盖），所以无需 underway 差异比对——一条轻 GET 每 6s 就能把新增和终态
+    都同步进库，前端感知延迟 ≤6s。60s 无成功轮询时前端显示「离线快照」。
+    失败静默跳过本轮，限频打印避免刷屏；octo_api 内部 401 时会自行续期/重登。
     """
     fail = 0
-    prev = None      # 上一轮 {process_no: row}；None=首轮
-    last_term = 0.0  # 上次终态抓取（runningRecords 页）时间戳
     time.sleep(5)   # 让主服务先起来（token 缓存/配置就绪）
     while True:
         try:
             with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            items = octo_api.list_underway(cfg).get("items") or []
-            cur = {}
-            for r in _raw_rows(items):
-                if r["process_no"]:
-                    cur[r["process_no"]] = r
-            if prev is None or set(cur) != set(prev):
-                new = [r for p, r in cur.items() if prev is None or p not in prev]
-                gone = [p for p in prev if p not in cur] if prev else []
-                if new:
-                    db.upsert_raw_runs(new, source="underway")
-                    stamp_data_time()   # 有改库：刷新「数据获取」时间
-                if gone or time.time() - last_term >= TERM_BACKSTOP:
-                    page = octo_api.fetch_recent_records(cfg, take=20)
-                    db.upsert_raw_runs(_raw_rows(page), source="desktop")
-                    stamp_data_time()
-                    last_term = time.time()
-                prev = cur
+            page = octo_api.fetch_recent_records(cfg, take=50)
+            n = db.upsert_raw_runs(_raw_rows(page), source="desktop")
+            if n:
+                stamp_data_time()   # 有改库：刷新「数据获取」时间
             LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
         except Exception as e:
             fail += 1
             if fail == 1 or fail % 60 == 0:
-                print("[underway] 轮询失败 x%d: %s" % (fail, e))
+                print("[轮询] 运行记录抓取失败 x%d: %s" % (fail, e))
         time.sleep(UNDERWAY_INTERVAL)
 
 
@@ -1414,7 +1393,7 @@ def main():
 
     def initial_full_fetch():
         """服务器启动时先全量抓一轮（触发器 + 运行记录全量，写 CSV + 入库），
-        保证重启后数据完整；与 underway_poller 通过 UPDATE_LOCK 串行。"""
+        保证重启后数据完整；与 records_poller 通过 UPDATE_LOCK 串行。"""
         try:
             run_refresh()
         except Exception as e:
@@ -1422,7 +1401,7 @@ def main():
 
     threading.Thread(target=initial_full_fetch, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
-    threading.Thread(target=underway_poller, daemon=True).start()
+    threading.Thread(target=records_poller, daemon=True).start()
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
         print("  RPA 日程仪表盘 - 局域网服务器已启动")
@@ -1435,8 +1414,7 @@ def main():
         else:
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
-        print("  在途轮询:   每 %d 秒桌面 API underway（差异写库；超 60s 无终态抓取则补抓一页）" % UNDERWAY_INTERVAL)
-        print("  在途状态轮询: 每 %d 秒（桌面 API underway，谁在跑/排队中实时可见）" % UNDERWAY_INTERVAL)
+        print("  运行记录轮询: 每 %d 秒桌面 API runningRecords 最新 50 条入库（在途+终态一次同步）" % UNDERWAY_INTERVAL)
         print("  网页读取:     按需查询 MySQL（唯一真相源），不触发抓取")
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
         print("  无需 Windows 任务计划：数据更新由本后端进程自动完成")
