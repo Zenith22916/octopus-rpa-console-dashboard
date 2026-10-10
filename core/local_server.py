@@ -134,13 +134,14 @@ def _db_records_from_rows(rows):
     return out
 
 
-def _db_records():
+def _db_records(limit=None):
     """从 MySQL 查运行记录并组装成前端/dashboard 同构的记录列表。
 
     数据库是唯一真相源：在途记录（end 为空）由 underway 轮询先行入库，
     终态由 crawler 覆盖，同 process_no 永远只有一行、且是最新状态。
+    limit 给定时只取最新 N 条（前端 5s 轻量刷新用）。
     """
-    return _db_records_from_rows(db.fetch_records())
+    return _db_records_from_rows(db.fetch_records(limit=limit))
 
 
 def load_log_roots():
@@ -925,8 +926,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_runs(self):
-        """GET /api/runs：返回运行记录（时间轴/分析视图共用），按需查 MySQL。"""
-        records = _db_records()
+        """GET /api/runs[?limit=N]：返回运行记录（时间轴/分析视图共用），按需查 MySQL。
+        limit 给定时只返回最新 N 条（前端 5s 轻量刷新，5min 全量一次）。"""
+        q = parse_qs(urlparse(self.path).query)
+        limit = None
+        try:
+            limit = int(q.get("limit", [""])[0]) or None
+        except ValueError:
+            pass
+        records = _db_records(limit=limit)
         payload = {"ok": True, "records": records, "count": len(records),
                    "time": LAST_UPDATE_TIME[0] or now_text()}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

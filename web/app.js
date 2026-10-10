@@ -2939,8 +2939,8 @@ function scExport() {
   }).then(done);
 }
 document.getElementById('scExport').addEventListener('click', scExport);
-/* 当前时刻标记每 10 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
-setInterval(scUpdateNowLine, 10000);
+/* 当前时刻标记每 5 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
+setInterval(scUpdateNowLine, 5000);
 
 /* ==================== 自动更新 ==================== */
 /* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */
@@ -2948,12 +2948,13 @@ function swBusy(on) {
   var sw = document.querySelector('#autoCtl .switch');
   if (sw) sw.classList.toggle('busy', !!on);
 }
-function refreshData(force, done) {
+function refreshData(force, done, lite) {
   // 只有自动更新（非 force）才转圈；「立刻更新」按钮自带「更新中…」文案，不重复提示
   if (!force) swBusy(true);
   var finish = function (ok) { if (!force) swBusy(false); if (done) done(ok); };
-  /* 自动更新（!force）只读后端内存里的数据：GET /api/runs，不触发任何抓取。
-     抓取由后端常驻线程每分钟自己做，登录失效也会自动重登后重试；
+  /* 自动更新（!force）只读后端数据：GET /api/runs，不触发任何抓取。
+     lite=true 时只拉最新 10 条做增量合并（5s 快刷用），否则全量；
+     抓取由后端常驻线程自己做，登录失效也会自动重登后重试；
      所以这里不判断后端抓取状态，读到什么就显示什么（陈旧数据由标题栏
      「数据获取时间」如实反映）。「立刻更新」（force=1）才走 POST 触发全量抓取。 */
   var req = force
@@ -2961,7 +2962,7 @@ function refreshData(force, done) {
         if (r.status === 401) { location.href = '/login'; return null; }
         return r.json();
       })
-    : api('/api/runs');
+    : api('/api/runs' + (lite ? '?limit=10' : ''));
   return req.then(function (d) {
     var warnEl = document.getElementById('refreshWarn');
     var okFlag = false;
@@ -2969,7 +2970,17 @@ function refreshData(force, done) {
       okFlag = true;
       // 只有「立刻更新」会失败；自动更新读的是后端内存，失败时才提示
       if (warnEl && force) warnEl.style.display = 'none';
-      RECORDS = d.records;
+      if (lite) {
+        /* 轻量刷新：只拿到最新 10 条，按 id 增量合并进已有 RECORDS，不丢旧数据 */
+        var seen = {};
+        var merged = d.records.slice();
+        for (var i = 0; i < merged.length; i++) seen[merged[i].id] = true;
+        for (var j = 0; j < RECORDS.length; j++) if (!seen[RECORDS[j].id]) merged.push(RECORDS[j]);
+        merged.sort(function (a, b) { return (b.start || '') < (a.start || '') ? -1 : 1; });
+        RECORDS = merged;
+      } else {
+        RECORDS = d.records;
+      }
       if (curView === 'timeline') {
         records = RECORDS.slice();
         recomputeBounds();
@@ -3002,23 +3013,32 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
     setTimeout(function () { btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
-/* 自动更新：每 60s 拉一次后端内存里的运行记录（GET /api/runs，不触发抓取），
-   仅在依赖实跑数据的视图生效。抓取由后端常驻线程每分钟自行完成。 */
+/* 自动更新：5s 轻量刷（/api/runs?limit=10 增量合并，不触发抓取），
+   每 5min 做一次全量拉取兜底；仅在依赖实跑数据的视图生效。
+   抓取由后端常驻线程自行完成。 */
+var AUTO_FULL_MS = 5 * 60 * 1000;
+var lastFullTick = 0;
 function autoTick() {
-  if (curView === 'timeline' || curView === 'analysis') refreshData();
+  if (curView !== 'timeline' && curView !== 'analysis') return;
+  if (Date.now() - lastFullTick >= AUTO_FULL_MS) {
+    lastFullTick = Date.now();
+    refreshData(false, null, false);
+  } else {
+    refreshData(false, null, true);
+  }
 }
-/* 机器人状态页快刷：后端每 ~8s 轮询桌面 API underway（运行中记录，与
-   OctopusRPA 桌面客户端同机制），这里 10s 直接拉 /api/botstatus，
-   不经过 60s 的 refreshData 链路。勾选「自动更新」时生效。 */
+/* 机器人状态页快刷：后端每 5s 轮询桌面 API underway（运行中记录，与
+   OctopusRPA 桌面客户端同机制），这里同步 5s 直接拉 /api/botstatus，
+   不经过 autoTick 的 refreshData 链路。勾选「自动更新」时生效。 */
 setInterval(function () {
   if (curView === 'botstatus' && document.getElementById('chkAuto').checked) {
     bsLoad().then(bsRender);
   }
-}, 10000);
+}, 5000);
 document.getElementById('chkAuto').addEventListener('change', function () {
   if (this.checked) {
     autoTick();
-    if (!autoTimer) autoTimer = setInterval(autoTick, 60000);
+    if (!autoTimer) autoTimer = setInterval(autoTick, 5000);
   } else {
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   }
@@ -3206,7 +3226,7 @@ document.addEventListener('click', function () {
 });
 if (document.getElementById('chkAuto').checked) {
   autoTick();
-  if (!autoTimer) autoTimer = setInterval(autoTick, 60000);
+  if (!autoTimer) autoTimer = setInterval(autoTick, 5000);
 }
 
 /* ==================== 项目控制台视图 ==================== */

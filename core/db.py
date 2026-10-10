@@ -205,8 +205,9 @@ def UPSERT_SQL(cfg):
 _COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"
 
 
-def fetch_records():
-    """全表查询，按 start_ms 倒序（最新在前）。返回原始行 dict 列表（时间为毫秒）。"""
+def fetch_records(limit=None):
+    """按 start_ms 倒序查询（最新在前），limit 给定时只取最新 N 条。
+    返回原始行 dict 列表（时间为毫秒）。"""
     cfg = _cfg()
     if not cfg:
         return []
@@ -214,9 +215,12 @@ def fetch_records():
         conn, _ = _connect(cfg)
         if conn is None:
             return []
+        sql = "SELECT {cols} FROM `{db}`.`{table}`".format(
+            cols=_COLS, db=cfg["database"], table=TABLE)
+        if limit:
+            sql += " ORDER BY start_ms DESC LIMIT %s"
         with conn.cursor(pymysql_ss()) as cur:
-            cur.execute("SELECT {cols} FROM `{db}`.`{table}`".format(
-                cols=_COLS, db=cfg["database"], table=TABLE))
+            cur.execute(sql, (int(limit),) if limit else ())
             cols = [c[0] for c in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         conn.close()
