@@ -480,6 +480,8 @@ var TITLE_FS = (function () {
   try { var el = document.querySelector('.title'); if (el) return parseFloat(getComputedStyle(el).fontSize) || 20; } catch (e) { }
   return 20;
 })();
+/* 甘特图数据块内文字字号（独立于 .title，改这里即可） */
+var BAR_FS = 15;
 /* 手机端断点：与 web/mobile.css、web/theme.js 里的 880px 保持一致。
    CSS 管不到 ECharts 画布内部，图表的内边距与刻度字号只能在这里分流：
    桌面那套 left:100px 的左留白是给宽图表配的，原样搬到手机上会把绘图区压没。 */
@@ -822,6 +824,9 @@ function tlRender() {
         var row = api.value(1);
         var raw = String(api.value(2) || '');
         if (!raw) return null;
+        /* 显示文字去掉第一个 "_" 及之前的内容（无 "_" 则原样显示） */
+        var us = raw.indexOf('_');
+        if (us >= 0) raw = raw.slice(us + 1);
         var mStart = api.value(3);
         var mEnd = api.value(4) == null ? nowW : api.value(4);
         var vStart = Math.max(mStart, nowW - state.span);
@@ -832,12 +837,12 @@ function tlRender() {
         var avail = lenOf(xy(api, vStart, row), xy(api, vEnd, row));
 
         // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
-        var label = truncateLabel(raw, Math.max(2, avail - 4), TITLE_FS);
+        var label = truncateLabel(raw, Math.max(2, avail - 4), BAR_FS);
         if (!label || label.length < 8) return null;
         return {
           type: 'text', style: {
             text: label, x: pc[0], y: pc[1], textAlign: 'center',
-            textVerticalAlign: 'middle', fill: '#10141a', fontSize: TITLE_FS,
+            textVerticalAlign: 'middle', fill: '#10141a', fontSize: BAR_FS,
             fontWeight: 500, fontFamily: FONT_STACK
           }
         };
