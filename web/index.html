@@ -93,8 +93,9 @@
 
       <!-- ==================== 时间轴视图 ==================== -->
       <div id="view-timeline" class="view" style="display:none;">
-        <!-- 大卡片：筛选栏 + 甘特图 + 横向滚动条（滚动条贴图表下方、同卡内） -->
-        <div class="tl-card">
+        <!-- 筛选卡片：桌面端独立一张卡（手机端整块隐藏 —— 手机上只有记录流，没有甘特图，
+             时间窗口/触发方式/显示排队这些筛选就都失去了对象） -->
+        <div class="panel tl-filter" id="tlFilter">
           <div class="chart-head">
             <span class="filter-label">时间窗口：</span>
             <select id="selSpan" title="窗口预设；滑块可调任意大小">
@@ -123,6 +124,9 @@
             <span class="filter-label way-label">显示排队：</span>
             <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
           </div>
+        </div>
+        <!-- 图表卡片：甘特图 + 窗口指示条 + 图例（桌面端专用，手机端整块隐藏） -->
+        <div class="tl-card" id="tlChartCard">
           <!-- 直接在图区拖动平移时间轴（1:1 跟手），Ctrl+滚轮缩放窗口，双击回到实时视图 -->
           <div id="chart" class="chart" title="按住拖动平移时间轴 · Ctrl+滚轮缩放窗口 · 双击回到实时视图"></div>
           <!-- 窗口位置指示条：滑块宽度跟随窗口长度，拖滑块（或点轨道）可平移；长度不可拖 -->
@@ -140,15 +144,23 @@
             <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
           </div>
         </div>
-        <!-- 运行记录列表：点行让甘特图右边缘对齐该条记录的结束时间 -->
+        <!-- 运行记录：桌面端六列表格（点行让甘特图对齐该条记录的结束时间）；
+             手机端是一整屏的记录流（#tlCards），按结束时间倒序、滚到底自动续批 -->
         <div class="panel tl-list-panel">
           <div class="toolbar">
             <h2 style="margin:0;">运行记录</h2>
             <span class="datatime" id="tlListInfo">—</span>
-            <span class="hint" style="margin:0 0 0 auto;">点击某行可让甘特图对齐该条记录的结束时间</span>
+            <span class="hint" id="tlListTip" style="margin:0 0 0 auto;">点击某行可让甘特图对齐该条记录的结束时间</span>
           </div>
-          <div class="scroll" id="tlList"><table id="tlListTbl"></table></div>
+          <!-- 桌面：六列表格；手机端：记录流（#tlCards）。两者共存，由 app.js 按断点切显隐 ——
+               不能互相覆盖 innerHTML，否则被覆盖掉的那个容器会连同元素一起消失 -->
+          <div class="scroll" id="tlList">
+            <table id="tlListTbl"></table>
+            <div id="tlCards" class="tl-cards" style="display:none;"></div>
+          </div>
         </div>
+        <!-- 手机端：有更新但用户已经滚下去了，浮这个小药丸提示（不重排列表、不顶掉视线），点它回顶部 -->
+        <button type="button" class="tl-feed-pill" id="tlFeedPill" style="display:none;"></button>
         <div id="toast"></div>
       </div>
 

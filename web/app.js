@@ -30,6 +30,17 @@ function fmtDur(ms) {
   var m = Math.floor(s / 60), sec = s % 60; if (m < 60) return m + " 分" + (sec ? " " + sec + " 秒" : "");
   var h = Math.floor(m / 60), mm = m % 60; return h + " 小时" + (mm ? " " + mm + " 分" : "");
 }
+/* 紧凑时长：手机端时间轴块内文字、运行记录卡片的右侧读数用。
+   比 fmtDur 短（「5秒 / 27分11秒 / 1小时2分」），窄容器里也放得下。 */
+function fmtDurShort(ms) {
+  if (ms == null || ms < 0) return "—";
+  var s = Math.round(ms / 1000);
+  if (s < 60) return s + "秒";
+  var m = Math.floor(s / 60), sec = s % 60;
+  if (m < 60) return sec ? (m + "分" + sec + "秒") : (m + "分");
+  var h = Math.floor(m / 60), mm = m % 60;
+  return mm ? (h + "小时" + mm + "分") : (h + "小时");
+}
 function fmtDurM(ms) {
   if (ms == null || isNaN(ms)) return "-";
   var m = ms / 60000;
@@ -45,6 +56,15 @@ function statusColor(r) {
   if (r.status === "Waiting") return "rgba(55,138,221,0.6)";
   if (r.status === "Stopped") return "rgba(95,94,90,0.6)";
   return "rgba(29,158,117,0.6)";
+}
+/* 状态色的实色版：时间轴数据块用 0.6 透明度（半透明便于看重叠），
+   但手机端卡片里的「时长」是正文文字，0.6 在深色底上偏灰、读起来费劲 —— 文字用实色。 */
+function statusColorSolid(r) {
+  if (r.status === "Failed") return "#E24B4A";
+  if (r.status === "Executing") return "#EF9F27";
+  if (r.status === "Waiting") return "#378ADD";
+  if (r.status === "Stopped") return "#8b8f98";
+  return "#1D9E75";
 }
 /* ==================== 图表视觉：渐变填充与圆角 ====================
    纯样式层：只影响图形怎么画，不参与任何数据计算与交互逻辑。 */
@@ -292,7 +312,8 @@ function route() {
     if (!tlReady) {
       loadRuns().then(function () { tlInit(); tlReady = true; });
     } else {
-      tlResize();
+      if (IS_MOBILE) { tlFeedObserve(); tlFeedTick(); }
+      else tlResize();
       if (prevView === 'detail') refreshData();   // 从日志详情页返回：自动更新在详情页停更了，补拉一次后端内存里的最新数据
     }
   } else if (name === 'analysis') {
@@ -336,6 +357,26 @@ function route() {
   }
 }
 window.addEventListener('hashchange', route);
+/* 断点切换（横竖屏翻转 / 拖动窗口）时重排时间轴视图。
+   手机端与桌面端在这里不只是「重画」—— 手机端根本没有甘特图实例，
+   所以要整块换布局：手机 -> 桌面要补建 ECharts，桌面 -> 手机要把它拆掉。 */
+function applyTimelineLayout() {
+  if (curView !== 'timeline' || !tlReady) return;
+  if (IS_MOBILE) {
+    if (tlChart) { try { tlChart.dispose(); } catch (e) { } tlChart = null; }
+    chartEl = null;
+    FEED.n = FEED_PAGE;
+    FEED.sig = '';
+    tlFeedHidePill();
+    tlListRender(true);      // 统一切显隐 + 渲染记录流
+    tlFeedObserve();
+  } else {
+    if (tlFeedObserve._io) { tlFeedObserve._io.disconnect(); tlFeedObserve._io = null; }
+    if (!tlChart) tlInit();          // 从手机切回桌面：补建图表（tlInit 内部会 tlRender）
+    else { tlRender(); }
+    tlListRender(true);
+  }
+}
 window.addEventListener('resize', function () {
   /* 桌面 <-> 手机布局互切：图表的内边距/刻度字号是按布局算出来的，
      断点变了必须整块重画，只 resize() 会保留旧布局量出来的边距 */
@@ -343,17 +384,20 @@ window.addEventListener('resize', function () {
   if (mob !== IS_MOBILE) {
     IS_MOBILE = mob;
     if (typeof LOGM !== 'undefined' && LOGM.editor) LOGM.editor.updateOptions(lgViewOptions());
-    if (curView === 'timeline' && tlReady) tlRender();
+    applyTimelineLayout();
     if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
     if (curView === 'schedule' && scReady && RECORDS.length) scReload();
   }
-  if (curView === 'timeline' && tlReady) tlChartResize();
+  if (curView === 'timeline' && tlReady && !IS_MOBILE) tlChartResize();
   if (curView === 'analysis' && anReady) anResize();
   if (curView === 'schedule' && scReady) scResize();
 });
 
-/* ==================== 时间轴视图 ==================== */
-var DEF_SPAN = 2 * 3600 * 1000;
+/* ==================== 时间轴视图 ====================
+   桌面端：甘特图（时间轴）+ 运行记录表格；
+   手机端（≤880px）：只有运行记录流 —— 甘特图与筛选整块砍掉（见 mobile.css 的
+   #tlFilter / #tlChartCard display:none 与 tlInit 的 IS_MOBILE 分支）。 */
+var DEF_SPAN = 2 * 3600 * 1000;   // 桌面默认时间窗口
 if (window.innerWidth < window.innerHeight) {
   DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，靠拖动平移浏览
 }
@@ -368,23 +412,21 @@ var tlPanMoved = false;     // 本次拖拽是否真的移动过：拖完那一�
 var tlScrollTrackEl = null, tlScrollWinEl = null;   // 底部滚动条（只反映窗口，不负责缩放）
 
 /* 时间轴的绘图区边距（tlRender 的 grid 与 1:1 拖动换算共用一处，避免两边对不上）。
-   桌面时间在横向：左右留白大；手机转置后时间在纵向：上下留白给刻度与机器人名字 */
-var TL_GRID = {
-  desk: { left: 100, right: 20, top: 20, bottom: 30 },
-  mob: { left: 46, right: 10, top: 14, bottom: 58 }
-};
-function tlGrid() { return IS_MOBILE ? TL_GRID.mob : TL_GRID.desk; }
-/* 时间方向的绘图区像素长度：桌面是横向宽度（拖 100px 就走 100px 的时间），
-   手机转置后是纵向高度。1:1 拖动与「可见下限」都以它为准 */
+   甘特图只在桌面端渲染（手机端整块砍掉，只留记录流），所以这里只有一套桌面值。 */
+var TL_GRID = { left: 100, right: 20, top: 20, bottom: 30 };
+function tlGrid() { return TL_GRID; }
+/* 数据块的最小可见厚度（px）：6 秒的记录在 6 小时窗口里只有 0.1px，不撑一下就等于没画，
+   「这台机器人跑过一次」这件事就看不见了。 */
+var MIN_BAR_PX = 4;
+/* 时间方向的绘图区像素长度（拖 100px 就走 100px 的时间）。
+   1:1 拖动与「可见下限」都以它为准 */
 function tlTimeLenPx() {
   var g = tlGrid();
-  var len = IS_MOBILE
-    ? (chartEl ? chartEl.clientHeight || 0 : 0) - g.top - g.bottom
-    : (chartEl ? chartEl.clientWidth || 0 : 0) - g.left - g.right;
+  var len = (chartEl ? chartEl.clientWidth || 0 : 0) - g.left - g.right;
   return Math.max(50, len || 900);
 }
-/* 指针在「时间方向」上的位置：桌面取横坐标，手机转置后取纵坐标 */
-function tlPointerPos(e) { return IS_MOBILE ? e.clientY : e.clientX; }
+/* 指针在「时间方向」上的位置：横向布局取横坐标 */
+function tlPointerPos(e) { return e.clientX; }
 function recomputeBounds() {
   DATA_MIN = Infinity; DATA_MAX = -Infinity;
   var nowT = Date.now();
@@ -400,7 +442,18 @@ function robotList(segs) {
     var rb = s.r.robot;
     if (rb && rb !== "(未指定机器人)" && arr.indexOf(rb) < 0) arr.push(rb);
   });
+  /* 两端都是横向布局（时间在横轴），机器人是纵向的泳道组，行序与时间流向无关，
+     统一按名称排序 —— 行序稳定，不随窗口平移抖动，肌肉记忆才好用。 */
   return arr.sort();
+}
+/* 手机端纵轴/记录流用的机器人短名：8 字全名（「A🍩硕晞-01」）在手机上太长，
+   去掉组前缀（A/B）与 emoji，只留「硕晞-01」；完整名在提示窗与详情页里都有。 */
+function robotShortName(n) {
+  var s = String(n == null ? '' : n);
+  s = s.replace(/^[A-Za-z]\s*/, '');            // 去掉开头的 A/B 分组字母
+  s = s.replace(/[^\u4e00-\u9fa5A-Za-z0-9-]/g, '');   // 去掉 emoji 等符号
+  s = s.replace(/^-+/, '');
+  return s || String(n == null ? '' : n);
 }
 function buildSegs() {
   var segs = [];
@@ -462,8 +515,9 @@ function truncateLabel(name, maxW, fs) {
   return cur + ell;
 }
 function effEnd(s) { return s.end == null ? state.end : s.end; }
-function layout(segs, minVisibleMs) {
-  minVisibleMs = minVisibleMs || 0;   // 屏幕上不足该时长的条视为看不见，不参与独立泳道分配
+/* 泳道分配：同一机器人时间重叠的记录分到不同泳道（横着叠开，互不遮挡）。
+   只按真实时间重叠判定 —— 与窗口大小无关，泳道数在任何缩放下都稳定。 */
+function layout(segs) {
   var recs = [];
   var recOfSeg = {};
   var byRobot = {};
@@ -489,26 +543,24 @@ function layout(segs, minVisibleMs) {
     var idxs = (byRobot[rb] || []).slice().sort(function (a, b) { return recs[a].start - recs[b].start; });
     var lanes = [];
     var laneOfRec = {};
-    // 先排“正常可见”的记录；太细（屏幕上不足约 2px）的条最后统一塞进第一条泳道，
-    // 避免它单独占一条泳道却因渲染不出而变成“空泳道”。（窗口越大阈值越大，缩放到足够大时它仍会正常占道）
-    var normals = [], tinies = [];
+    /* 泳道分配按「真实时间重叠」算，不按拉伸后的视觉厚度算。
+       试过按视觉厚度（max(真实时长, minVisibleMs)）分配：极短记录被撑到 4px 后，
+       在 7 天/30 天这种大窗口下 4px 相当于好几个小时，于是同一台机器人的记录几乎
+       条条互斥，泳道数从 11 条暴涨到 37/93 条 —— 每条泳道只剩几像素高，反而全糊了。
+       真实重叠的判定与窗口大小无关，泳道数始终稳定；短记录怎么画得看得见，
+       交给绘制阶段的 stretch（见下），两件事分开管。 */
     idxs.forEach(function (ri) {
-      var u = recs[ri];
-      (u.end - u.start < minVisibleMs ? tinies : normals).push(ri);
-    });
-    normals.forEach(function (ri) {
       var u = recs[ri], st = u.start, en = u.end, lane = -1;
       for (var l = 0; l < lanes.length; l++) {
         if (st >= lanes[l].end || en <= lanes[l].start) { lane = l; break; }
       }
       if (lane < 0) { lane = lanes.length; lanes.push({ start: st, end: en }); }
-      else { if (st < lanes[lane].start) lanes[lane].start = st; if (en > lanes[lane].end) lanes[lane].end = en; }
+      else {
+        if (st < lanes[lane].start) lanes[lane].start = st;
+        if (en > lanes[lane].end) lanes[lane].end = en;
+      }
       laneOfRec[ri] = lane;
     });
-    if (tinies.length) {
-      if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
-      tinies.forEach(function (ri) { laneOfRec[ri] = 0; });
-    }
     if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
     var base = rowCursor;
     rowCursor += lanes.length;
@@ -538,12 +590,11 @@ function tlRender() {
   if (lgQueue) lgQueue.style.display = showQueue ? '' : 'none';
   robots = robotList(segs);
   var visible = segs.filter(function (s) { return effEnd(s) >= winStart && s.start <= nowW; });
-  /* 手机端（窄屏）把时间轴转置：时间沿竖直方向展开、机器人横向排开，块内文字逐字竖排。
-     下面所有绘制都按「时间方向 / 泳道方向」两个方向来算，两种布局共用一套代码。 */
-  var T = IS_MOBILE;
-  // 可见下限：屏幕上不足约 2px 的条视为看不见（窗口越大阈值越大），用于抑制“细到不渲染却仍占泳道”的空泳道。
-  var minVisibleMs = state.span * (2 / tlTimeLenPx());
-  var info = layout(visible, minVisibleMs);
+  /* 文字下限：屏幕上不足 MIN_BAR_PX 的记录仍会画（撑到最小可见厚度，见 renderItem 的 stretch），
+     但不值得再往上写应用名 —— 挤出来的几个像素只够表达「这里跑过一次」。
+     泳道分配不受这个值影响，只按真实时间重叠算（见 layout）。 */
+  var minVisibleMs = state.span * (MIN_BAR_PX / tlTimeLenPx());
+  var info = layout(visible);
   var yLabels = layout.yLabels;
   var lastRows = layout.groupLastRows || [];
   var topGroupRow = lastRows.length ? Math.max.apply(null, lastRows) : -1;
@@ -571,7 +622,11 @@ function tlRender() {
       });
     }
     if (s.kind === 'run' && s.r.name && (merge.max - merge.min) >= minVisibleMs) {
-      textData.push({ value: [(merge.min + merge.max) / 2, li.row, s.r.name, merge.min, merge.max] });
+      /* value(2) 应用名：两端都用（手机端只放得下缩写版，见 renderItem 里按 IS_MOBILE 分流）。
+         门槛用 minVisibleMs：屏幕上太窄的块连字都排不下，画上去只是糊。 */
+      textData.push({
+        value: [0, li.row, s.r.name, merge.min, merge.max]
+      });
     }
   });
   var sepData = [];
@@ -581,26 +636,36 @@ function tlRender() {
   var recCount = Object.keys(recIds).length;
   tlLastData = data;
 
-  /* ---- 两种布局共用的坐标工具（T = 转置时 x 轴是泳道、y 轴是时间） ---- */
+  /* ---- 坐标工具（横向布局：时间在横轴、泳道在纵轴） ---- */
   // 时间 t + 泳道 row -> 屏幕坐标 [x, y]
-  function xy(api, t, row) { return api.coord(T ? [row, t] : [t, row]); }
-  // 两点在「时间方向」上的像素长度：桌面看横向、转置后看纵向
-  function lenOf(p0, p1) { return T ? Math.abs(p1[1] - p0[1]) : Math.abs(p1[0] - p0[0]); }
-  // 泳道方向的厚度（一条泳道有多厚）
-  function bandOf(api) { return T ? api.size([1, 0])[0] : api.size([0, 1])[1]; }
+  function xy(api, t, row) { return api.coord([t, row]); }
+  // 两点在「时间方向」上的像素长度 = 横向长度
+  function lenOf(p0, p1) { return Math.abs(p1[0] - p0[0]); }
+  // 泳道方向的厚度（一条泳道有多厚）= 纵向高度
+  function bandOf(api) { return api.size([0, 1])[1]; }
   // 画一段块：p0/p1 为两端屏幕坐标，thick 为泳道方向厚度
   function barOf(p0, p1, thick, style) {
-    var a0 = T ? Math.min(p0[1], p1[1]) : Math.min(p0[0], p1[0]);
-    var a1 = T ? Math.max(p0[1], p1[1]) : Math.max(p0[0], p1[0]);
+    var a0 = Math.min(p0[0], p1[0]);
+    var a1 = Math.max(p0[0], p1[0]);
     var len = a1 - a0;
-    var c = T ? p0[0] : p0[1];                 // 泳道中心
+    var c = p0[1];                             // 泳道中心
     var r = Math.min(3, len / 2, thick / 2);
     return {
       type: 'rect',
-      shape: T ? { x: c - thick / 2, y: a0, width: thick, height: len, r: r }
-        : { x: a0, y: c - thick / 2, width: len, height: thick, r: r },
+      shape: { x: a0, y: c - thick / 2, width: len, height: thick, r: r },
       style: style
     };
+  }
+  /* 极短记录的最小可见厚度：6 秒的记录在 6 小时窗口里只有 0.1px，
+     原来直接被「不足 2px 就不画」的规则吞掉 —— 记录凭空消失。
+     这里把太短的条以「真实位置为中心」撑到 MIN_BAR_PX，保证「跑过一次」这件事看得见；
+     它只影响画出来的宽度，不影响任何时间换算（时长读数、拖动、点击跳转都按真实值走）。 */
+  function stretch(p0, p1) {
+    var px = lenOf(p0, p1);
+    if (px >= MIN_BAR_PX) return [p0, p1];
+    var mid = (p0[0] + p1[0]) / 2;
+    var half = MIN_BAR_PX / 2;
+    return [[mid - half, p0[1]], [mid + half, p1[1]]];
   }
 
   tlChart.setOption({
@@ -629,16 +694,8 @@ function tlRender() {
       }
     }),
     grid: tlGrid(),
-    /* 转置后 x 轴 = 机器人泳道（横向排开，标签斜排免得互相压），y 轴 = 时间（纵向） */
-    xAxis: T ? {
-      type: 'category', data: yLabels,
-      axisLabel: {
-        color: '#c9cdd4', fontSize: 10, rotate: 45, interval: 0,
-        width: 62, overflow: 'truncate'      // 斜排：旋转后横向投影约 44px，窄屏也不互相压
-      },
-      axisLine: { lineStyle: { color: '#333' } },
-      splitLine: { show: true, lineStyle: { color: '#20242c' } }
-    } : {
+    /* 横轴 = 时间 */
+    xAxis: {
       type: 'time', min: nowW - state.span, max: nowW,
       axisLabel: {
         color: '#8b8f98', fontSize: 11, hideOverlap: true,
@@ -647,22 +704,8 @@ function tlRender() {
       axisLine: { lineStyle: { color: '#333' } },
       splitLine: { show: true, lineStyle: { color: '#20242c' } }
     },
-    yAxis: T ? {
-      /* inverse：默认 y 轴是「值大在上」，那时间就成了「现在在上、过去在下」，
-         与桌面从左到右的时间流向相反。反过来排，过去在上、现在在下，顺着看。 */
-      type: 'time', min: nowW - state.span, max: nowW, inverse: true,
-      axisLabel: {
-        color: '#8b8f98', fontSize: 10, hideOverlap: true,
-        /* 横向的 «9-22 11:00» 放不进左侧那点宽度（日期会被裁掉），拆成两行竖着排 */
-        formatter: function (v) {
-          var d = new Date(v);
-          return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '\n' +
-            pad(d.getHours()) + ':' + pad(d.getMinutes());
-        }
-      },
-      axisLine: { lineStyle: { color: '#333' } },
-      splitLine: { show: true, lineStyle: { color: '#20242c' } }
-    } : {
+    /* 纵轴 = 机器人泳道 */
+    yAxis: {
       type: 'category', data: yLabels,
       axisLabel: {
         color: '#c9cdd4', fontSize: 12,
@@ -687,8 +730,11 @@ function tlRender() {
         if (hasWait && showQueue) {
           var q0 = Math.max(api.value(0), winA), q1 = Math.min(exec, nowW);
           if (q1 > q0) {
+            /* 排队段不撑最小厚度：它只是运行块前面的一小截蓝头，
+               当前缩放级别看不见就说明「排队时间短到无关紧要」，不必硬挤出来。
+               （运行块本身必须可见 —— 那代表「这条记录跑过」，语义不同） */
             var pq0 = xy(api, q0, row), pq1 = xy(api, q1, row);
-            if (lenOf(pq0, pq1) >= 2) {
+            if (lenOf(pq0, pq1) >= 1) {
               children.push(barOf(pq0, pq1, bh, { fill: WAIT_FILL }));
             }
           }
@@ -696,18 +742,17 @@ function tlRender() {
         var rs = hasWait ? exec : api.value(0);
         var r0 = Math.max(rs, winA), r1 = Math.min(api.value(1), nowW);
         if (r1 > r0) {
-          var pr0 = xy(api, r0, row), pr1 = xy(api, r1, row);
-          if (lenOf(pr0, pr1) >= 2) {
-            /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
-               不要在 renderItem 里读 params.data.status —— custom series
-               不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
-               渐变方向跟着块的长边：桌面横条用竖向，转置后的竖条用横向 */
-            children.push(barOf(pr0, pr1, bh, { fill: shadeGrad(api.value(5), T ? 'h' : 'v', .07, .09) }));
-          }
+          var st2 = stretch(xy(api, r0, row), xy(api, r1, row));
+          /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
+             不要在 renderItem 里读 params.data.status —— custom series
+             不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
+             横条一律「上亮下暗」竖向渐变。 */
+          children.push(barOf(st2[0], st2[1], bh, { fill: shadeGrad(api.value(5), 'v', .07, .09) }));
         }
         var pv0 = xy(api, vs, row), pv1 = xy(api, ve, row);
-        if (lenOf(pv0, pv1) >= 2) {
-          children.push(barOf(pv0, pv1, bh,
+        var stv = stretch(pv0, pv1);
+        if (lenOf(stv[0], stv[1]) >= 1) {
+          children.push(barOf(stv[0], stv[1], bh,
             { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer' }));
         }
         if (!children.length) return null;
@@ -716,8 +761,8 @@ function tlRender() {
       markLine: {
         silent: true, symbol: 'none', lineStyle: { color: '#E24B4A', width: 2 },
         label: { show: true, formatter: '现在', color: '#E24B4A', fontSize: 10, position: 'insideEndTop' },
-        // 「现在」分界线：桌面为竖线，转置后时间在纵轴上，改用横线
-        data: [T ? { yAxis: state.end } : { xAxis: state.end }]
+        // 「现在」分界线：横轴布局下永远是竖线
+        data: [{ xAxis: state.end }]
       }
     }, {
       type: 'custom', data: textData, zlevel: 2, silent: true,
@@ -734,22 +779,7 @@ function tlRender() {
         var pc = xy(api, vc, row);
         var avail = lenOf(xy(api, vStart, row), xy(api, vEnd, row));
 
-        if (T) {
-          /* 转置后块是竖长条：文字逐字竖排（每字一行、字正立，不是整体旋转 90°），
-             放不下按「能排几个字」截断 */
-          var per = 13;                                   // 每字占的高度
-          var maxChars = Math.floor(Math.max(6, avail - 4) / per);
-          if (maxChars < 2) return null;
-          var txt = raw.length > maxChars ? raw.slice(0, maxChars - 1) + '…' : raw;
-          return {
-            type: 'text', style: {
-              text: txt.split('').join('\n'), x: pc[0], y: pc[1],
-              textAlign: 'center', textVerticalAlign: 'middle', fill: '#10141a',
-              fontSize: 12, fontWeight: 500, fontFamily: FONT_STACK, lineHeight: per
-            }
-          };
-        }
-        // 桌面：数据块文字单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
+        // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
         var label = truncateLabel(raw, Math.max(2, avail - 4), TITLE_FS);
         if (!label || label.length < 8) return null;
         return {
@@ -767,18 +797,13 @@ function tlRender() {
         var band = bandOf(api);
         var c0 = xy(api, nowW - state.span, row);
         var c1 = xy(api, nowW, row);
-        var lo = T ? Math.min(c0[1], c1[1]) : Math.min(c0[0], c1[0]);
-        var hi = T ? Math.max(c0[1], c1[1]) : Math.max(c0[0], c1[0]);
-        // 机器人分组之间的白色虚线：桌面画横线（每组的底边），转置后画竖线（每组的右边）
-        return T
-          ? {
-            type: 'line', shape: { x1: c0[0] + band / 2, y1: lo, x2: c0[0] + band / 2, y2: hi },
-            style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
-          }
-          : {
-            type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
-            style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
-          };
+        var lo = Math.min(c0[0], c1[0]);
+        var hi = Math.max(c0[0], c1[0]);
+        // 机器人分组之间的白色虚线：横轴布局下画横线（每组的底边）
+        return {
+          type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
+          style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
+        };
       }
     }]
   }, { lazyUpdate: true });
@@ -789,24 +814,74 @@ function tlRender() {
     var wk = s.r.id + '_' + s.r.way;
     if (!seenW[wk] && wayRecs[s.r.way] != null) { seenW[wk] = 1; wayRecs[s.r.way]++; }
   });
-  document.getElementById('mTotal').textContent = wayRecs.Webhook;
-  document.getElementById('mManual').textContent = wayRecs.Manual;
-  document.getElementById('mTiming').textContent = wayRecs.TimingTrigger;
-  document.getElementById('mRobots').textContent = robots.length;
+  tlMetricsSet(wayRecs, robots.length);
   tlSpanInfoUpdate();
   tlScrollSync();
   tlListRender(false);
+}
+/* 标题栏指标卡（Webhook / 手动 / 定时 / 机器人）。
+   抽成独立函数：手机端没有甘特图、不跑 tlRender，但这四张卡还得有数
+   —— 由记录流自己按全量数据算一份（口径：全部已抓取记录，不是某个时间窗口）。 */
+function tlMetricsSet(wayRecs, robotCount) {
+  var el;
+  if ((el = document.getElementById('mTotal'))) el.textContent = wayRecs.Webhook || 0;
+  if ((el = document.getElementById('mManual'))) el.textContent = wayRecs.Manual || 0;
+  if ((el = document.getElementById('mTiming'))) el.textContent = wayRecs.TimingTrigger || 0;
+  if ((el = document.getElementById('mRobots'))) el.textContent = robotCount || 0;
+}
+/* 手机端指标：按全部记录统计（没有时间窗口这个概念） */
+function tlMetricsFromAll() {
+  var wayRecs = { Manual: 0, TimingTrigger: 0, Webhook: 0 };
+  var rb = {};
+  records.forEach(function (r) {
+    if (wayRecs[r.way] != null) wayRecs[r.way]++;
+    if (r.robot && r.robot !== '(未指定机器人)') rb[r.robot] = 1;
+  });
+  tlMetricsSet(wayRecs, Object.keys(rb).length);
 }
 /* ==================== 运行记录列表（时间轴卡片下方） ====================
    展示当前时间窗口内的记录；点某行 -> 甘特图右边缘对齐该记录的结束时间，
    记录还没结束（end 为空）则对齐到最右，也就是当前时刻。 */
 var tlListLast = 0;
+/* 手机端记录流的分页状态（桌面端不用）。
+   FEED_PAGE 是「一屏大概放几条」，滚到底自动续一批 —— 数据有 1700+ 条，
+   一次性渲染既慢又没意义，用户也不可能一次看完。 */
+var FEED_PAGE = 20;
+var FEED = { n: FEED_PAGE, pending: 0, sig: '' };
+
+/* 记录排序：结束时间倒序（最新跑完的在最上面），还没结束的（在跑）永远置顶。
+   end 为空的记录用「现在」当结束时间，所以它天然最大；这里再显式排一次，
+   保证多台机器人同时在跑时它们稳定聚在最前面。 */
+function tlSortByEndDesc(a, b) {
+  var ae = (a.end == null) ? Infinity : a.end;
+  var be = (b.end == null) ? Infinity : b.end;
+  if (ae !== be) return be - ae;
+  return b.start - a.start;          // 结束时间相同：后开始的在前
+}
+
 function tlListRender(force) {
   var tbl = document.getElementById('tlListTbl');
-  if (!tbl) return;
+  var cards = document.getElementById('tlCards');
+  if (!tbl || !cards) return;
   var now = Date.now();
   if (!force && now - tlListLast < 600) return;   // 窗口一直在实时推进，重绘做节流
   tlListLast = now;
+
+  /* 两个容器共存，按断点切显隐：桌面看表格、手机看记录流。
+     注意不能互相写 innerHTML —— 那会把对方的元素整个抹掉。 */
+  tbl.style.display = IS_MOBILE ? 'none' : '';
+  cards.style.display = IS_MOBILE ? 'flex' : 'none';
+
+  /* ---- 手机端：纯记录流（没有甘特图、没有时间窗口概念）----
+     列表按「结束时间倒序」列全部记录，滚到底自动续批。
+     不再按时间窗口过滤：窗口是甘特图的概念，手机上既然没有图，就没必要让用户
+     先选个窗口才能看到记录。 */
+  if (IS_MOBILE) {
+    tbl.innerHTML = '';
+    tlMetricsFromAll();
+    tlFeedRender(force);
+    return;
+  }
 
   var nowW = Math.min(state.end + state.offset, state.end);
   var winStart = nowW - state.span;
@@ -818,11 +893,15 @@ function tlListRender(force) {
 
   var info = document.getElementById('tlListInfo');
   if (info) info.textContent = '窗口内 ' + rows.length + ' 条 · 共 ' + records.length + ' 条';
+  var tipEl = document.getElementById('tlListTip');
+  if (tipEl) tipEl.textContent = '点击某行可让甘特图对齐该条记录的结束时间';
 
   if (!rows.length) {
+    cards.innerHTML = '';
     tbl.innerHTML = '<tbody><tr><td class="pj-empty-sm" style="border:none;">当前时间窗口内没有记录</td></tr></tbody>';
     return;
   }
+  cards.innerHTML = '';
   var html = '<thead><tr><th>机器人</th><th>应用</th><th>状态</th><th>开始</th><th>结束</th><th>用时</th></tr></thead><tbody>';
   rows.slice(0, 120).forEach(function (r) {
     var live = (r.end == null);
@@ -838,6 +917,163 @@ function tlListRender(force) {
       '</tr>';
   });
   tbl.innerHTML = html + '</tbody>';
+}
+
+/* ---- 手机端记录流 ---- */
+/* 一次渲染 n 条（默认首屏 FEED_PAGE 条），滚动到底自动续下一批。
+   列表按「结束时间倒序」，新记录从顶部进来 —— 所以「无感」的关键是：
+   新数据到达时，如果用户已经滚下去了，绝不重排 DOM（那会把视线顶掉），
+   只在顶部浮一个「N 条新记录」的小药丸，点它才回到顶部看新的。 */
+function tlFeedList() { return records.slice().sort(tlSortByEndDesc); }
+
+function tlFeedCard(r, i, maxDur) {
+  var live = (r.end == null);
+  var endMs = live ? Date.now() : r.end;
+  var dur = endMs - r.start;
+  var q = (r.execStart && r.execStart > r.start) ? (r.execStart - r.start) : 0;
+  var pct = Math.max(2, Math.round(dur / maxDur * 100));
+  var col = statusColorSolid(r);      // 卡片里是正文文字，用实色（半透明在深底上发灰、读不清）
+  function hms(ms) {
+    var d = new Date(ms);
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  return '<div class="tl-card-item' + (live ? ' live' : '') +
+    (String(r.id) === String(state.focusId) ? ' on' : '') +
+    '" data-rid="' + esc(String(r.id)) + '">' +
+    '<div class="tl-ci-top">' +
+    '<span class="tl-ci-idx">' + (i + 1) + '</span>' +
+    '<span class="tl-ci-name">' + esc(r.name || r.app || '—') + '</span>' +
+    '<span class="tl-ci-dur" data-live-dur="' + (live ? esc(String(r.id)) : '') + '"' +
+    ' data-start="' + r.start + '" style="color:' + col + '">' + fmtDurShort(dur) + '</span>' +
+    '</div>' +
+    '<div class="tl-ci-mid">' +
+    '<span class="tl-ci-robot">' + esc(robotShortName(r.robot)) + '</span>' +
+    statusBadge(r.status) +
+    '<span class="tl-ci-time">' + hms(r.start) + (live ? ' ~ 进行中' : ' ~ ' + hms(r.end)) +
+    (q > 1000 ? ' · 排队 ' + fmtDurShort(q) : '') + '</span>' +
+    '</div>' +
+    '<div class="tl-ci-bar"><i style="width:' + pct + '%;background:' + col + '"></i></div>' +
+    '</div>';
+}
+function tlFeedRender(force) {
+  var box = document.getElementById('tlCards');
+  if (!box) return;
+  var all = tlFeedList();
+  var shown = all.slice(0, FEED.n);
+
+  /* 已经渲染过、且条数与顺序都没变 -> 只刷新「进行中」那几条的时长文字，
+     整块 DOM 不动（这是自动更新时最常走的分支，必须零重排）。 */
+  var sig = shown.length + '|' + shown.map(function (r) { return r.id; }).join(',');
+  if (sig === FEED.sig && !force) {
+    tlFeedTick();
+    tlFeedInfo(all.length);
+    return;
+  }
+  FEED.sig = sig;
+
+  var maxDur = 1;
+  shown.forEach(function (r) {
+    var d = (r.end == null ? Date.now() : r.end) - r.start;
+    if (d > maxDur) maxDur = d;
+  });
+  var html = '';
+  var lastDay = null;
+  shown.forEach(function (r, i) {
+    /* 日期分隔条：跨天时插一条「10-10」，长列表里定位「哪天」靠它 */
+    var d = new Date(r.start);
+    var dayKey = (d.getMonth() + 1) + '-' + pad(d.getDate());
+    if (dayKey !== lastDay) {
+      lastDay = dayKey;
+      html += '<div class="tl-feed-day">' + dayKey + '</div>';
+    }
+    html += tlFeedCard(r, i, maxDur);
+  });
+  html += '<div class="tl-feed-end" id="tlFeedEnd">' +
+    (shown.length < all.length ? '向下滚动加载更多…' : '已到底 · 共 ' + all.length + ' 条') +
+    '</div>';
+  box.innerHTML = html;
+  tlFeedInfo(all.length);
+  tlFeedHidePill();
+}
+/* 只更新「进行中」记录的时长文字（每 5 秒一跳），不碰其他 DOM */
+function tlFeedTick() {
+  var els = document.querySelectorAll('.tl-ci-dur[data-live-dur]');
+  var nowT = Date.now();
+  for (var i = 0; i < els.length; i++) {
+    var rid = els[i].getAttribute('data-live-dur');
+    if (!rid) continue;
+    var st = +els[i].getAttribute('data-start');
+    if (st) els[i].textContent = fmtDurShort(nowT - st);
+  }
+}
+function tlFeedInfo(total) {
+  var info = document.getElementById('tlListInfo');
+  if (info) info.textContent = '已显示 ' + Math.min(FEED.n, total) + ' / ' + total + ' 条';
+  var tipEl = document.getElementById('tlListTip');
+  if (tipEl) tipEl.textContent = '按结束时间排序 · 下拉加载更多';
+}
+/* 顶部「N 条新记录」小药丸：用户滚下去了才显示，点一下回到顶部并刷新列表 */
+function tlFeedPill(n) {
+  var el = document.getElementById('tlFeedPill');
+  if (!el) return;
+  if (!n) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.textContent = '↑ ' + n + ' 条新记录';
+}
+function tlFeedHidePill() {
+  FEED.pending = 0;
+  tlFeedPill(0);
+}
+/* 药丸点击：回到顶部并重排列表（此时用户明确表示要看新的） */
+function tlFeedPillBind() {
+  var el = document.getElementById('tlFeedPill');
+  if (!el || el._bound) return;
+  el._bound = 1;
+  el.addEventListener('click', function () {
+    FEED.sig = '';
+    tlFeedRender(true);
+    tlFeedObserve();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+}
+/* 数据刷新后调用：判断要不要重排列表，还是只提示「有新记录」 */
+function tlFeedSync() {
+  var all = tlFeedList();
+  var sig = Math.min(FEED.n, all.length) + '|' +
+    all.slice(0, FEED.n).map(function (r) { return r.id; }).join(',');
+  if (sig === FEED.sig) { tlFeedTick(); tlFeedInfo(all.length); return; }
+  /* 用户在顶部（或列表还没满一屏）-> 直接换掉，他看得见新内容，不存在「被顶掉」 */
+  var atTop = (window.scrollY || document.documentElement.scrollTop || 0) < 80;
+  if (atTop) { tlFeedRender(true); return; }
+  /* 已经滚下去了：只记数、浮药丸，DOM 一律不动 */
+  var shownIds = FEED.sig.split('|')[1] ? FEED.sig.split('|')[1].split(',') : [];
+  var newTop = all.slice(0, FEED.n).map(function (r) { return String(r.id); });
+  var added = 0;
+  for (var i = 0; i < newTop.length; i++) {
+    if (shownIds.indexOf(newTop[i]) < 0) added++; else break;
+  }
+  FEED.pending = added || 1;
+  tlFeedPill(FEED.pending);
+  tlFeedTick();
+}
+/* 滚到底自动续批：哨兵元素进入视口就 +1 页。
+   用 IntersectionObserver 而不是 scroll 事件 —— 后者要自己算阈值、还得防抖，
+   这里只要「底部哨兵露头就加载」，交给浏览器判定更稳。 */
+function tlFeedObserve() {
+  var sentinel = document.getElementById('tlFeedEnd');
+  if (!sentinel || !window.IntersectionObserver) return;
+  if (tlFeedObserve._io) tlFeedObserve._io.disconnect();
+  tlFeedObserve._io = new IntersectionObserver(function (ents) {
+    for (var i = 0; i < ents.length; i++) {
+      if (ents[i].isIntersecting && FEED.n < records.length) {
+        FEED.n += FEED_PAGE;
+        tlFeedRender(true);
+        tlFeedObserve();          // 哨兵被换掉了，重新观察新的
+        break;
+      }
+    }
+  }, { root: null, rootMargin: '300px' });
+  tlFeedObserve._io.observe(sentinel);
 }
 function tlGotoRec(rid) {
   var rec = null;
@@ -860,7 +1096,19 @@ function tlListBind() {
   if (!box || box._tlBound) return;
   box._tlBound = 1;
   box.addEventListener('click', function (e) {
-    var tr = (e.target && e.target.closest) ? e.target.closest('tr[data-rid]') : null;
+    if (!e.target || !e.target.closest) return;
+    /* 手机端点卡片 -> 直接进该条记录的日志详情（没有甘特图要对齐）；
+       桌面端点表格行 -> 让甘特图右边缘对齐该条记录的结束时间。 */
+    var card = e.target.closest('.tl-card-item[data-rid]');
+    if (card) {
+      if (IS_MOBILE) {
+        location.hash = '#/detail?id=' + encodeURIComponent(card.getAttribute('data-rid'));
+        return;
+      }
+      tlGotoRec(card.getAttribute('data-rid'));
+      return;
+    }
+    var tr = e.target.closest('tr[data-rid]');
     if (tr) tlGotoRec(tr.getAttribute('data-rid'));
   });
 }
@@ -900,12 +1148,23 @@ function syncSpanSelect() {
   }
   sel.selectedIndex = hit;
 }
-function tlUpdateWindow() { if (curView === 'timeline') tlRender(); }
+function tlUpdateWindow() { if (curView === 'timeline' && !IS_MOBILE) tlRender(); }
 function tlResize() { if (tlChart) tlChart.resize(); }
 function tlChartResize() { if (tlChart) tlChart.resize(); }
 function tlInit() {
   records = RECORDS.slice();
   recomputeBounds();
+  /* 手机端没有甘特图（整块砍掉，只留记录流），所以不建 ECharts 实例、
+     也不绑滚轮/拖动/缩放那一套 —— 少一个 canvas、少一堆手势冲突。
+     桌面端照旧。断点切换时由 applyLayout 补建/销毁。 */
+  if (IS_MOBILE) {
+    FEED.n = FEED_PAGE;
+    FEED.sig = '';
+    tlFeedPillBind();
+    tlListRender(true);      // 由它统一切「表格 / 记录流」的显隐，避免两处各写一遍
+    tlFeedObserve();
+    return;
+  }
   chartEl = document.getElementById('chart');
   if (!chartEl) return;
   if (tlChart) { try { tlChart.dispose(); } catch (e) { } }
@@ -964,10 +1223,9 @@ function tlInit() {
   function zoomAt(e) {
     var rect = chartEl.getBoundingClientRect();
     var g = tlGrid();
-    /* 锚点比例按「绘图区内」算（转置后锚点在纵向），不然边距会让锚点偏掉 */
-    var frac = IS_MOBILE
-      ? (e.clientY - rect.top - g.top) / Math.max(1, rect.height - g.top - g.bottom)
-      : (e.clientX - rect.left - g.left) / Math.max(1, rect.width - g.left - g.right);
+    /* 锚点比例按「绘图区内」算（减掉左右留白），不然边距会让锚点偏掉。
+       两端都是横向布局，一律取横坐标。 */
+    var frac = (e.clientX - rect.left - g.left) / Math.max(1, rect.width - g.left - g.right);
     frac = Math.max(0, Math.min(1, frac));
     var nowW = Math.min(state.end + state.offset, state.end);
     var anchor = nowW - state.span + frac * state.span;
@@ -981,8 +1239,8 @@ function tlInit() {
   function panApply() {
     panRaf = 0;
     if (!tlPan) return;
-    /* 1:1 跟手：整幅「时间长度」对应整个窗口。桌面拖横向（clientX，除数取宽），
-       手机转置后拖纵向（clientY，除数取高） */
+    /* 1:1 跟手：整幅「时间长度」对应整个窗口宽度，拖 N 像素就走 N 像素的时间。
+       两端都是横向拖动（横向手势归平移，纵向留给滚页面）。 */
     var dMs = (tlPan.last - tlPan.start) * (state.span / tlTimeLenPx());
     panTo(tlPan.left - dMs);
   }
@@ -1058,7 +1316,17 @@ function tlInit() {
   });
   tlRender();
 }
-setInterval(function () { if (curView === 'timeline') { state.end = Date.now(); tlRender(); } }, 200);
+/* 甘特图实时推进（「现在」分界线 + 数据块随时间左移）：只在桌面端跑。
+   手机端没有图，这里直接不做事；「进行中」的时长由下面 5 秒那支定时器单独刷新。 */
+setInterval(function () {
+  if (curView !== 'timeline' || IS_MOBILE) return;
+  state.end = Date.now();
+  tlRender();
+}, 200);
+/* 手机端记录流里「进行中」的时长每 5 秒走一格（只改那几行的文本，不重排 DOM） */
+setInterval(function () {
+  if (curView === 'timeline' && IS_MOBILE) tlFeedTick();
+}, 5000);
 
 /* ==================== 分析视图 ==================== */
 var anCharts = {};
@@ -2566,7 +2834,13 @@ function refreshData(force, done) {
       // 只有「立刻更新」会失败；自动更新读的是后端内存，失败时才提示
       if (warnEl && force) warnEl.style.display = 'none';
       RECORDS = d.records;
-      if (curView === 'timeline') { records = RECORDS.slice(); recomputeBounds(); tlRender(); }
+      if (curView === 'timeline') {
+        records = RECORDS.slice();
+        recomputeBounds();
+        /* 手机端走记录流：有变化才重排，用户滚下去了就只浮「N 条新记录」提示，不顶掉视线 */
+        if (IS_MOBILE) tlFeedSync();
+        else tlRender();
+      }
       else if (curView === 'analysis' && anReady) anRenderAll(RECORDS);
       else if (curView === 'botstatus') bsLoad().then(bsRender);
       else if (curView === 'compliance') cpLoad();

@@ -688,7 +688,22 @@ body {
   border-radius: 10px;
 }
 
-/* ------------- 时间轴大卡片：筛选栏 + 甘特图 + 横向滚动条（同一张卡） ------------- */
+/* ------------- 时间轴筛选卡片：独立一张卡（原先贴在甘特图卡片顶部） ------------- */
+.tl-filter {
+  flex: none;
+  overflow: hidden;
+}
+
+/* 卡片内的筛选栏不再自带背景/边框/圆角 —— 这些由外层 .panel 承担，
+   否则会在卡片里再套一层框，出现「卡中卡」的双边框。 */
+.tl-filter .chart-head {
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ------------- 时间轴大卡片：甘特图 + 横向滚动条（筛选已拆到独立卡片） ------------- */
 .tl-card {
   flex: 1 1 auto;
   min-height: 0;
@@ -701,14 +716,7 @@ body {
   overflow: hidden;
 }
 
-.tl-card .chart-head {
-  flex: none;
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--t-line-soft);
-  border-radius: 0;
-  box-shadow: none;
-}
+/* 筛选栏已在 .tl-filter 卡片里（见上方），.tl-card 内不再有 chart-head */
 
 .tl-card #chart {
   flex: 1 1 auto;
@@ -877,10 +885,12 @@ body {
 
 /* 首屏骨架依次浮起；用 backwards 而非 both，动画结束后把 transform 交还给 hover */
 #view-timeline > .tl-card,
+#view-timeline > .tl-filter,
 #view-timeline > .tl-list-panel {
   animation: riseIn .62s var(--t-ease) backwards;
 }
 
+#view-timeline > .tl-filter     { animation-delay: 0s; }
 #view-timeline > .tl-card       { animation-delay: .02s; }
 #view-timeline > .tl-list-panel { animation-delay: .12s; }
 

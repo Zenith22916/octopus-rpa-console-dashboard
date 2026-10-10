@@ -57,6 +57,7 @@
 
   /* 入场位移在纵向长页里会让内容短暂错位，只保留视图级淡入 */
   #view-timeline > .tl-card,
+  #view-timeline > .tl-filter,
   #view-timeline > .tl-list-panel,
   .grid > .panel,
   .panels > .panel,
@@ -303,99 +304,25 @@
   }
 
   /* ==========================================================================
-   * 4. 时间轴视图
+   * 4. 时间轴视图（手机端 = 纯记录流）
+   *    手机上没有甘特图、也没有筛选：390px 宽的图看不出运行顺序，
+   *    筛选（时间窗口/触发方式/显示排队）又全是甘特图的参数，没有图就失去了对象。
+   *    整块砍掉，只留一屏能读完的记录流，按结束时间倒序、滚到底自动续批。
    * ======================================================================== */
   #view-timeline {
     display: block;
     overflow: visible;
   }
 
-  .tl-card {
-    display: block;
-    flex: none;
-    margin-bottom: 10px;
-    overflow: hidden;
+  /* 筛选卡片与甘特图卡片：手机端整块隐藏。
+     用 display:none 而不是删元素 —— 横竖屏翻转/拉宽窗口回到桌面时要能原样恢复。 */
+  #tlFilter,
+  #tlChartCard {
+    display: none !important;
   }
 
-  /* 筛选栏：两列网格（左标签 / 右控件），每行一组，不再出现标签孤行 */
-  .tl-card .chart-head {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: 9px 10px;
-    padding: 10px 12px;
-    row-gap: 9px;
-  }
-
-  .tl-card .chart-head .filter-label {
-    margin-right: 0;
-  }
-
-  .tl-card .chart-head .way-label {
-    margin-left: 0;
-  }
-
-  .tl-card .chart-head select {
-    width: 100%;
-    min-height: 32px;
-    box-sizing: border-box;
-  }
-
-  .tl-card .chart-head .switch {
-    justify-self: start;
-  }
-
-  /* 甘特图改固定高：不再靠 flex 分配剩余高度（手机上剩余高度是负的） */
-  .tl-card #chart {
-    display: block;
-    flex: none;
-    height: 58vh;
-    min-height: 380px;
-    /* 转置后时间沿竖直方向，拖动平移就是竖向手势：这里不能让浏览器接管，
-       否则一拖就变成滚页面（桌面端是横向拖动，故留 pan-y）。
-       !important 是为了不依赖样式表加载顺序压过 theme.css 里的 pan-y */
-    touch-action: none !important;
-  }
-
-  /* 窗口指示条：加粗轨道、加大触控热区 */
-  .tl-card .tl-scroll {
-    height: 34px;
-    margin: 0 12px;
-    background: none;
-    border: none;
-  }
-
-  .tl-scroll-track {
-    left: 0;
-    right: 0;
-    height: 6px;
-    border-radius: 6px;
-  }
-
-  .tl-scroll-win {
-    height: 24px;
-    min-width: 46px;
-    border-radius: 12px;
-  }
-
-  .tl-card .hint {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 2px;
-    padding: 8px 12px 10px;
-  }
-
-  .tl-card .hint .legend {
-    margin-left: 8px;
-  }
-
-  .tl-card .hint .tl-span-info {
-    flex: 1 1 100%;
-    margin-right: 0;
-  }
-
-  /* 运行记录列表：容器内滚动，高度按屏占比给 */
+  /* 运行记录面板：手机端就是整页内容，去掉卡片内的滚动容器限制，
+     让整页自然滚动（配合滚动到底自动续批）。 */
   .tl-list-panel {
     height: auto;
     min-height: 0;
@@ -403,10 +330,185 @@
     margin-bottom: 10px;
   }
 
+  .tl-list-panel .toolbar {
+    margin-bottom: 8px;
+  }
+
+  /* 面板标题下那句提示在手机端没意义（没有甘特图可对齐），藏掉省一行 */
+  .tl-list-panel .toolbar .hint {
+    display: none;
+  }
+
   .tl-list-panel .scroll {
     flex: none;
-    max-height: 50vh;
-    min-height: 120px;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* ---- 运行记录流（手机端专用，取代六列表格） ----
+     表格六列在 390px 屏上必然横向溢出，开始/结束/用时全在屏外 ——
+     而那正是「顺序 + 时长」最需要的两列。改成一张记录一张卡，纵向排列：
+     序号 + 应用名 + 大号时长 + 机器人/状态/起止时刻 + 按时长比例画的横条。
+     卡片本身不再横向滚动，整块宽度自适应屏宽。 */
+  .tl-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  /* 日期分隔条：跨天时插一条「10-10」，长列表里定位「哪天」靠它 */
+  .tl-feed-day {
+    position: sticky;
+    top: 96px;                  /* 吸在吸顶导航下面，滚动时始终知道当前是哪天 */
+    z-index: 3;
+    align-self: flex-start;
+    margin: 6px 0 2px;
+    padding: 2px 9px;
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    color: #9aa3b3;
+    border: 1px solid var(--t-line);
+    border-radius: 999px;
+    background: rgba(16, 20, 28, .92);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+
+  /* 列表底部：加载更多 / 已到底 */
+  .tl-feed-end {
+    padding: 14px 0 6px;
+    text-align: center;
+    font-size: 11px;
+    color: #6f7480;
+  }
+
+  /* 「N 条新记录」药丸：固定在屏幕底部中央，点一下回顶部看新的。
+     它只做提示，不重排列表 —— 用户滚到哪就停在哪，视线不被顶掉。 */
+  .tl-feed-pill {
+    position: fixed;
+    left: 50%;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 16px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #dbeaff;
+    border: 1px solid rgba(77, 155, 240, .45);
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(77, 155, 240, .34), rgba(77, 155, 240, .16));
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 10px 26px -12px rgba(0, 0, 0, .95);
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    animation: pillIn .28s ease backwards;
+  }
+
+  @keyframes pillIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  }
+
+  .tl-card-item {
+    box-sizing: border-box;
+    padding: 8px 10px 7px;
+    border: 1px solid var(--t-line-soft);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .025);
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+
+  .tl-card-item:active {
+    background: rgba(77, 155, 240, .12);
+  }
+
+  /* 当前已对齐的那条（点卡片后高亮，与桌面表格的 .on 同一套语义色） */
+  .tl-card-item.on {
+    border-color: rgba(255, 209, 102, .45);
+    background: linear-gradient(90deg, rgba(255, 209, 102, .16), rgba(255, 209, 102, .02));
+    box-shadow: inset 2px 0 0 #ffd166;
+  }
+
+  .tl-ci-top {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  /* 序号：本时间窗口内的运行顺序（从 1 开始，与上方图表的时间流向一致） */
+  .tl-ci-idx {
+    flex: 0 0 auto;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    color: #9aa3b3;
+    border: 1px solid var(--t-line);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .04);
+  }
+
+  .tl-ci-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12.5px;
+    color: #dfe5ee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 时长：卡片里最大最亮的一个数，一眼看出这条跑了多久 */
+  .tl-ci-dur {
+    flex: 0 0 auto;
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.2px;
+  }
+
+  .tl-ci-mid {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px 7px;
+    margin-top: 4px;
+    font-size: 10.5px;
+    color: #8b8f98;
+  }
+
+  .tl-ci-robot {
+    color: #c9cdd4;
+  }
+
+  .tl-ci-time {
+    font-variant-numeric: tabular-nums;
+    color: #7c8496;
+  }
+
+  /* 时长比例条：最长的记录铺满，其余按比例 —— 谁长谁短不用读数字就能比出来 */
+  .tl-ci-bar {
+    height: 3px;
+    margin-top: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .06);
+    overflow: hidden;
+  }
+
+  .tl-ci-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    opacity: .85;
   }
 
   /* ==========================================================================
