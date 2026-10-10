@@ -394,9 +394,9 @@ window.addEventListener('resize', function () {
 });
 
 /* ==================== 时间轴视图 ====================
-   桌面端：甘特图（时间轴）+ 运行记录表格；
-   手机端（≤880px）：只有运行记录流 —— 甘特图与筛选整块砍掉（见 mobile.css 的
-   #tlFilter / #tlChartCard display:none 与 tlInit 的 IS_MOBILE 分支）。 */
+   桌面端：甘特图（含筛选栏）+ 运行记录表格；
+   手机端（≤880px）：只有运行记录流 —— 整个图表卡片（筛选栏 + 甘特图 + 图例）
+   一起隐藏（见 mobile.css 的 #tlChartCard 与 tlInit 的 IS_MOBILE 分支）。 */
 var DEF_SPAN = 2 * 3600 * 1000;   // 桌面默认时间窗口
 if (window.innerWidth < window.innerHeight) {
   DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，靠拖动平移浏览
@@ -867,6 +867,10 @@ function tlRender() {
         var row = api.value(1);
         var nm = String(api.value(2) || '');
         var durMs = api.value(3);
+        /* 目标块的中心 y：必须用 row 这个真实泳道，不能写死 0。
+           （曾写成 xy(api, t, 0)：气泡会固定贴在第 0 行，与目标块能差 200px 以上，
+           看起来像「气泡跟块没关系」。实测 row=4 时气泡在 y=247、块在 y=69。） */
+        var center = xy(api, t, row);
         var top = xy(api, t, 0);
         var bottom = xy(api, t, Math.max(0, layout.totalRows - 1));
         var band = bandOf(api);
@@ -893,9 +897,9 @@ function tlRender() {
            ① 一眼看清是哪一块（画布顶部离块可能很远，尤其泳道多时）；
            ② 贴顶会被画布裁掉（原先气泡中心放在 y=6、高 19px，上沿落到 -3.5px 被裁）。
            块上方放不下就翻到块下方，最后再整体夹进画布内，保证永远完整可见。 */
-        var blockTop = top[1] - band / 2;
+        var blockTop = center[1] - band / 2;
         var cy = blockTop - bh2 / 2 - 6;                 // 默认：块上方
-        if (cy - bh2 / 2 < 1) cy = top[1] + band / 2 + bh2 / 2 + 6;   // 上方不够 -> 块下方
+        if (cy - bh2 / 2 < 1) cy = center[1] + band / 2 + bh2 / 2 + 6;   // 上方不够 -> 块下方
         cy = Math.max(bh2 / 2 + 1, Math.min(canvasH - bh2 / 2 - 1, cy));
         var cx = Math.max(g.left + w / 2,
           Math.min((chartEl ? chartEl.clientWidth : 900) - g.right - w / 2, top[0]));
@@ -1300,6 +1304,9 @@ function tlInit() {
     FEED.n = FEED_PAGE;
     FEED.sig = '';
     tlFeedPillBind();
+    /* 点击进详情的事件委托必须在这里绑：tlInit 手机端会提前 return，
+       绑在函数末尾的话手机端永远执行不到 —— 这正是「手机点卡片进不去详情页」的原因。 */
+    tlListBind();
     tlListRender(true);      // 由它统一切「表格 / 记录流」的显隐，避免两处各写一遍
     tlFeedObserve();
     return;

@@ -93,9 +93,9 @@
 
       <!-- ==================== 时间轴视图 ==================== -->
       <div id="view-timeline" class="view" style="display:none;">
-        <!-- 筛选卡片：桌面端独立一张卡（手机端整块隐藏 —— 手机上只有记录流，没有甘特图，
-             时间窗口/触发方式/显示排队这些筛选就都失去了对象） -->
-        <div class="panel tl-filter" id="tlFilter">
+        <!-- 图表卡片：筛选栏 + 甘特图 + 窗口指示条 + 图例（桌面端专用，手机端整块隐藏 ——
+             手机上没有甘特图，时间窗口/触发方式/显示排队这些筛选也就失去了对象） -->
+        <div class="tl-card" id="tlChartCard">
           <div class="chart-head">
             <span class="filter-label">时间窗口：</span>
             <select id="selSpan" title="窗口预设；滑块可调任意大小">
@@ -124,11 +124,8 @@
             <span class="filter-label way-label">显示排队：</span>
             <label class="switch" title="开启时显示蓝色排队中块，关闭时不显示"><input type="checkbox" id="chkQueue"><span class="slider"></span></label>
           </div>
-        </div>
-        <!-- 图表卡片：甘特图 + 窗口指示条 + 图例（桌面端专用，手机端整块隐藏） -->
-        <div class="tl-card" id="tlChartCard">
           <!-- 直接在图区拖动平移时间轴（1:1 跟手），Ctrl+滚轮缩放窗口，双击回到实时视图 -->
-          <div id="chart" class="chart" title="按住拖动平移时间轴 · Ctrl+滚轮缩放窗口 · 双击回到实时视图"></div>
+          <div id="chart" class="chart"></div>
           <!-- 窗口位置指示条：滑块宽度跟随窗口长度，拖滑块（或点轨道）可平移；长度不可拖 -->
           <div class="tl-scroll" id="tlScroll">
             <div class="tl-scroll-track" id="tlScrollTrack">
