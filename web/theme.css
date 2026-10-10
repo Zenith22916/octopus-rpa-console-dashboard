@@ -1512,36 +1512,10 @@ tbody tr:hover {
   }
 }
 
-@media (max-width: 900px) {
-  .detail-wrap {
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-
-  .info-card {
-    flex: 0 0 auto;
-    width: 100%;
-    max-width: none;
-    max-height: 44%;
-    overflow-y: auto;
-  }
-
-  .log-card {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-
-  #logbox {
-    flex: 1 1 auto;
-    min-height: 0;
-    height: auto;
-  }
-
+@media (max-width: 880px) {
   /* 缩放机制下逻辑宽度（视口宽 / --s）始终比视口更宽，栅格保持 12 列：
-     一旦掉列会变成纵向堆叠，反而撑出一屏导致滚动，这里锁死列数 */
+     一旦掉列会变成纵向堆叠，反而撑出一屏导致滚动，这里锁死列数。
+     断点用 880 与 mobile.css 对齐（原本 900，与桌面规则 901 之间留下缝隙）。 */
   #view-analysis .grid {
     grid-template-columns: repeat(12, minmax(0, 1fr));
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);

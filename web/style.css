@@ -1046,7 +1046,9 @@ tbody tr:hover {
   overflow: hidden;
 }
 
-@media (max-width: 900px) {
+/* 详情页窄屏兜底：与手机断点对齐（≤880 时 mobile.css 已整套接管，这里只兜 880 及以下
+   的非手机场景）。原本写 900，会在 881~900 与上面的桌面规则打架。 */
+@media (max-width: 880px) {
   .detail-wrap {
     flex-direction: column;
   }
@@ -1068,7 +1070,11 @@ tbody tr:hover {
   }
 }
 
-@media (min-width: 901px) {
+/* 详情页桌面布局。断点用 881（= mobile.css 的 880 + 1）：
+   曾经写 901，与手机断点 880 之间留下 881~900 的缝隙 —— 那段宽度里
+   mobile.css 已失效、这套桌面规则又没生效，.detail-wrap 只剩「上下堆叠」
+   却没有任何高度分配，日志区被压到 151px 且挤出视口（手机横屏正落在这里）。 */
+@media (min-width: 881px) {
   #view-detail {
     overflow: hidden;
   }
