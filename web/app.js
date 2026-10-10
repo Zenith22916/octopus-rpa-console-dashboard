@@ -397,7 +397,7 @@ window.addEventListener('resize', function () {
    桌面端：甘特图（含筛选栏）+ 运行记录表格；
    手机端（≤880px）：只有运行记录流 —— 整个图表卡片（筛选栏 + 甘特图 + 图例）
    一起隐藏（见 mobile.css 的 #tlChartCard 与 tlInit 的 IS_MOBILE 分支）。 */
-var DEF_SPAN = 2 * 3600 * 1000;   // 桌面默认时间窗口
+var DEF_SPAN = 1 * 3600 * 1000;   // 桌面默认时间窗口
 if (window.innerWidth < window.innerHeight) {
   DEF_SPAN = 6 * 3600 * 1000;   // 窄高窗口（宽<高）默认拉长时间窗：横向内容更舒展，靠拖动平移浏览
 }
