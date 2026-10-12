@@ -1,0 +1,598 @@
+/* ============================================================================
+ * app.css —— 应用层样式（Element Plus 变量接管 + 布局 + 少量自绘组件）
+ *
+ * 分层：
+ *   1. EP 主题变量覆写（深色 + 品牌色），组件库自身样式全部来自 vendor/element-plus.css
+ *   2. 壳层布局：左侧导航 / 标题栏 / 主内容区（沿用原「一屏内自适应 + 等比缩放」策略）
+ *   3. 业务自定义块：甘特图容器、排期日历、机器人卡片、日志检索分组、Monaco 装饰
+ *   4. 手机端（≤880px）：整页滚动，脱离「压进一屏」
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------- 0. 字体 */
+/* Maple Mono（源文件 MapleMonoNormalNL-CN-Regular.ttf，转 woff2 后 5.4MB，本地自托管） */
+@font-face {
+  font-family: "Maple Mono";
+  src: url("/fonts/maple-mono.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------------------------------------------------------------- 1. 主题令牌 */
+:root {
+  --rpa-bg: #080a0f;
+  --rpa-surface: #14181f;
+  --rpa-surface-2: #1a1f28;
+  --rpa-line: rgba(255, 255, 255, .075);
+  --rpa-line-hi: rgba(255, 255, 255, .16);
+  --rpa-text: #e8ebf1;
+  --rpa-text-2: #aab3c2;
+  --rpa-dim: #8b93a3;
+  --rpa-accent: #4d9bf0;
+  --rpa-accent-2: #8b7ff0;
+  --rpa-ok: #34d17f;
+  --rpa-warn: #ffb020;
+  --rpa-err: #ff6b6d;
+  --rpa-shadow: 0 12px 32px -18px rgba(0, 0, 0, .9);
+  --rpa-radius: 12px;
+  --s: 1;                                  /* 等比缩放系数，由 app.js 按窗口高度写入 */
+}
+
+/* Element Plus 深色主题：把 EP 的调色板接到本项目配色上 */
+html.dark {
+  --el-color-primary: #4d9bf0;
+  --el-color-primary-light-3: #6cb0f5;
+  --el-color-primary-light-5: #8cc4f8;
+  --el-color-primary-light-7: #2b4a6b;
+  --el-color-primary-light-8: #22374f;
+  --el-color-primary-light-9: #1a2733;
+  --el-color-primary-dark-2: #3b7fd0;
+
+  --el-color-success: #34d17f;
+  --el-color-warning: #ffb020;
+  --el-color-danger: #ff6b6d;
+  --el-color-error: #ff6b6d;
+  --el-color-info: #8b93a3;
+
+  --el-bg-color-page: #080a0f;
+  --el-bg-color: #14181f;
+  --el-bg-color-overlay: #1a1f28;
+  --el-fill-color-blank: #14181f;
+  --el-fill-color: #1f242e;
+  --el-fill-color-light: #1b2028;
+  --el-fill-color-lighter: #181c24;
+  --el-fill-color-dark: #232935;
+  --el-fill-color-darker: #2a313d;
+
+  --el-text-color-primary: #e8ebf1;
+  --el-text-color-regular: #cdd3da;
+  --el-text-color-secondary: #aab3c2;
+  --el-text-color-placeholder: #6f7788;
+  --el-text-color-disabled: #5a6070;
+
+  --el-border-color: #333a45;
+  --el-border-color-light: #2b313b;
+  --el-border-color-lighter: #262b34;
+  --el-border-color-extra-light: #20242c;
+  --el-border-color-dark: #3d444f;
+  --el-border-radius-base: 8px;
+  --el-font-size-base: 13px;
+}
+
+html, body { height: 100%; }
+html { background: var(--rpa-bg); }
+/* 全局 border-box：卡片/输入框都带内边距，content-box 下 width:100% 会顶出横向滚动条 */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--rpa-text);
+  background: linear-gradient(180deg, #0b0e15 0%, #080a0f 52%, #070a0e 100%);
+  font-family: "Maple Mono", -apple-system, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;                        /* 桌面端：所有内容自适应到一屏内，无原生滚动条 */
+}
+/* 氛围光 + 细网格：纯装饰层，不参与布局与交互 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(46% 40% at 12% -4%, rgba(77, 155, 240, .20), transparent 62%),
+    radial-gradient(40% 36% at 90% -6%, rgba(139, 127, 240, .16), transparent 62%),
+    radial-gradient(48% 38% at 52% 108%, rgba(52, 209, 127, .08), transparent 64%);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(125% 95% at 50% 0%, #000 0%, rgba(0, 0, 0, .32) 52%, transparent 86%);
+  mask-image: radial-gradient(125% 95% at 50% 0%, #000 0%, rgba(0, 0, 0, .32) 52%, transparent 86%);
+}
+
+#app { position: relative; z-index: 1; height: 100%; }
+
+* { scrollbar-width: thin; scrollbar-color: #3a4150 transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #4a5263; background-clip: content-box; }
+
+/* ---------------------------------------------------------------- 2. 壳层布局 */
+/* 等比缩放：逻辑尺寸 = 视口 / --s，再 scale(--s) 缩回视口。
+   --s 由 app.js 按窗口高度写入（设计基准高 900），只缩不放；
+   手机端归 1（改用整页滚动布局，见第 4 节）。 */
+.rpa-shell {
+  display: flex;
+  gap: 14px;
+  width: calc(100% / var(--s, 1));
+  height: calc(100% / var(--s, 1));
+  padding: 14px;
+  box-sizing: border-box;
+  transform: scale(var(--s, 1));
+  transform-origin: top left;
+}
+
+/* ---- 左侧导航 ---- */
+.rpa-side {
+  flex: none;
+  width: 196px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 12px 14px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, rgba(36, 42, 55, .93) 0%, rgba(23, 27, 36, .95) 100%);
+  border: 1px solid var(--rpa-line);
+  border-radius: 16px;
+  box-shadow: var(--rpa-shadow);
+  overflow: hidden;
+}
+.rpa-brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 6px; }
+.rpa-logo {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  background: linear-gradient(140deg, var(--rpa-accent) 0%, var(--rpa-accent-2) 100%);
+  box-shadow: 0 6px 16px -8px var(--rpa-accent);
+  position: relative;
+}
+.rpa-logo::after {
+  content: ""; position: absolute; inset: 8px; border-radius: 4px;
+  border: 2px solid rgba(255, 255, 255, .85); border-bottom-color: transparent; border-right-color: transparent;
+}
+.rpa-brand-txt { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.rpa-brand-name { font-size: 14px; font-weight: 600; letter-spacing: .04em; }
+.rpa-brand-sub { font-size: 10.5px; color: var(--rpa-dim); letter-spacing: .12em; }
+
+.rpa-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.rpa-nav .el-menu { border-right: none; background: transparent; }
+.rpa-nav .el-menu-item {
+  height: 38px; line-height: 38px; margin: 2px 0;
+  border-radius: 9px; font-size: 13px;
+}
+.rpa-nav .el-menu-item.is-active {
+  background: linear-gradient(90deg, rgba(77, 155, 240, .22), rgba(77, 155, 240, .06));
+  color: #cfe4ff;
+}
+.rpa-nav .el-menu-item.is-active::after {
+  content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--rpa-accent);
+}
+.rpa-nav-group {
+  padding: 14px 10px 6px; font-size: 11px; letter-spacing: .16em;
+  color: var(--rpa-dim); text-transform: uppercase;
+}
+.rpa-side-foot { border-top: 1px solid var(--rpa-line); padding: 10px 8px 0; }
+.rpa-side-foot .k { font-size: 11px; color: var(--rpa-dim); letter-spacing: .08em; }
+.rpa-side-foot .v { font-size: 12px; color: var(--rpa-text-2); margin-top: 3px; word-break: break-all; }
+
+/* ---- 主区 ---- */
+.rpa-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+.rpa-topbar {
+  flex: none;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(33, 39, 51, .82) 0%, rgba(20, 24, 32, .86) 100%);
+  border: 1px solid var(--rpa-line);
+  border-radius: 14px;
+  box-shadow: var(--rpa-shadow);
+}
+.rpa-topbar .rpa-view-title { font-size: 15px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
+.rpa-metrics { display: flex; gap: 8px; flex: 1 1 auto; flex-wrap: wrap; }
+.rpa-metric {
+  min-width: 92px; padding: 5px 12px; border-radius: 9px;
+  background: rgba(255, 255, 255, .03); border: 1px solid var(--rpa-line);
+  text-align: center;
+}
+.rpa-metric .k { font-size: 11px; color: var(--rpa-dim); letter-spacing: .06em; white-space: nowrap; }
+.rpa-metric .v { font-size: 18px; font-weight: 600; line-height: 1.35; }
+.rpa-topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+
+.rpa-warn {
+  flex: none; padding: 7px 14px; border-radius: 10px; font-size: 12.5px;
+  background: rgba(226, 75, 74, .14); border: 1px solid rgba(226, 75, 74, .4); color: #ffb4b5;
+}
+.rpa-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* 视图根：统一 flex 纵向、内容自管内滚 */
+.rpa-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+/* 内容高度不确定的视图（分析页）：整页纵向滚动，卡片各按自己的固定高度排。
+   子项一律 flex:none —— 否则 flex 容器会把超高的卡片压扁到剩一条边。 */
+.rpa-view-scroll { overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+.rpa-view-scroll > * { flex: none; }
+
+/* 卡片：替代原 .panel / .card（改用 EP 变量，与组件库同源） */
+.rpa-card {
+  background: linear-gradient(180deg, rgba(36, 42, 55, .93) 0%, rgba(23, 27, 36, .95) 100%);
+  border: 1px solid var(--rpa-line);
+  border-radius: var(--rpa-radius);
+  box-shadow: var(--rpa-shadow);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+}
+.rpa-card-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: -2px 0 10px;
+}
+.rpa-card-title { font-size: 13px; font-weight: 600; letter-spacing: .05em; color: #d8dee9; margin: 0; }
+.rpa-card-head .rpa-spacer { margin-left: auto; }
+.rpa-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.rpa-hint { font-size: 11.5px; color: var(--rpa-dim); line-height: 1.65; margin-top: 8px; }
+.rpa-empty { padding: 28px 12px; text-align: center; color: var(--rpa-dim); font-size: 12.5px; }
+
+/* EP 组件在本项目里的尺寸微调（更紧凑，贴合「一屏看全」） */
+.el-table { --el-table-border-color: var(--rpa-line); --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; --el-table-header-bg-color: rgba(255, 255, 255, .035); font-size: 12.5px; }
+.el-table th.el-table__cell { font-weight: 600; color: #c3cad6; }
+.el-table .cell { line-height: 1.5; }
+.el-tag { --el-tag-border-radius: 6px; }
+.el-button { font-family: inherit; }
+.el-dialog { border-radius: 14px; }
+.el-descriptions { --el-descriptions-item-bordered-label-background: rgba(255, 255, 255, .035); }
+.el-descriptions__label { color: var(--rpa-dim) !important; }
+.el-switch.is-checked .el-switch__core { border-color: var(--rpa-accent); }
+
+/* 数字等宽：表格里的时间/时长对齐才好看 */
+.num, .mono { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- 3. 业务自定义块 */
+
+/* ---- 时间轴：甘特图 ---- */
+.tl-chart { flex: 1 1 auto; min-height: 220px; width: 100%; cursor: grab; }
+.tl-chart.tl-pan { cursor: grabbing; }
+.tl-chart-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.tl-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--rpa-dim); }
+.tl-legend i { display: inline-block; width: 14px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.tl-span-info { font-size: 11.5px; color: var(--rpa-dim); }
+/* 底部滚动条：只反映当前窗口在全部数据里的位置与占比，不负责缩放 */
+.tl-scroll { flex: none; margin-top: 8px; padding: 4px 0 2px; }
+.tl-scroll-track {
+  position: relative; height: 10px; border-radius: 6px;
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--rpa-line);
+  cursor: pointer;
+}
+.tl-scroll-win {
+  position: absolute; top: -1px; height: 10px; border-radius: 6px;
+  background: linear-gradient(180deg, rgba(77, 155, 240, .85), rgba(77, 155, 240, .45));
+  border: 1px solid rgba(160, 205, 255, .7); cursor: grab; min-width: 18px;
+}
+.tl-scroll-win:active { cursor: grabbing; }
+.tl-layout { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 桌面：图表占 50%，记录表占 50% */
+.tl-top { flex: 0 0 50%; min-height: 0; display: flex; flex-direction: column; }
+.tl-bottom { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.el-table .tl-row-hot > td { background: rgba(255, 209, 102, .10) !important; }
+.el-table .tl-row-on > td { background: rgba(77, 155, 240, .12) !important; }
+
+/* 手机端记录流：一整屏记录卡片，滚到底自动续批 */
+.tl-feed { display: flex; flex-direction: column; gap: 8px; }
+.tl-feed-day {
+  font-size: 11px; color: var(--rpa-dim); letter-spacing: .1em;
+  padding: 6px 2px 2px; position: sticky; top: 0; z-index: 2;
+  background: linear-gradient(180deg, #14181f 60%, transparent);
+}
+.tl-item {
+  border: 1px solid var(--rpa-line); border-radius: 10px;
+  background: rgba(255, 255, 255, .025); padding: 9px 11px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tl-item.live { border-color: rgba(239, 159, 39, .5); }
+.tl-item.on { border-color: rgba(77, 155, 240, .65); }
+.tl-item-top { display: flex; align-items: center; gap: 8px; }
+.tl-item-idx { font-size: 11px; color: var(--rpa-dim); min-width: 20px; }
+.tl-item-name { flex: 1 1 auto; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-item-dur { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tl-item-mid { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--rpa-text-2); flex-wrap: wrap; }
+.tl-item-bar { height: 4px; border-radius: 3px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.tl-item-bar > i { display: block; height: 100%; border-radius: 3px; }
+.tl-feed-end { text-align: center; color: var(--rpa-dim); font-size: 11.5px; padding: 12px 0 4px; }
+
+/* ---- 分析视图 ----
+   两列网格 + 固定行高：图表卡片高度确定，ECharts 才有稳定的绘图区；
+   整页内容超出时由 .rpa-view-scroll 兜住（分析页是唯一允许整页滚动的视图）。 */
+.an-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; align-content: start; }
+.an-grid > .rpa-card { height: 236px; min-width: 0; }
+.an-grid > .rpa-card.span2 { grid-column: span 2; height: 262px; }
+.an-grid > .rpa-card .rpa-scroll { max-height: 172px; }
+.an-chart { flex: 1 1 auto; min-height: 120px; width: 100%; }
+
+/* ---- 详情视图 ---- */
+.dt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dt-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.dt-log { flex: 1 1 auto; min-height: 260px; }
+.dt-log-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.dt-log-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.dt-log-stat { font-size: 11.5px; color: var(--rpa-dim); }
+.dt-log-stat b { color: var(--rpa-text); }
+.dt-log-stat .s-err { color: #ff6b6d; }
+.dt-log-stat .s-warn { color: #ffb020; }
+.dt-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.dt-tab {
+  display: flex; align-items: center; gap: 8px; max-width: 260px;
+  padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px;
+  border: 1px solid var(--rpa-line); background: rgba(255, 255, 255, .03);
+}
+.dt-tab.on { border-color: rgba(77, 155, 240, .7); background: rgba(77, 155, 240, .14); }
+.dt-tab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-tab .mt { font-size: 10.5px; color: var(--rpa-dim); flex: none; }
+/* 等宽字体：日志正文、文件名标签、配置值 —— 对齐字符、便于逐列比对 */
+.dt-logbox, .dt-logbox .view-lines, .monaco-editor,
+.dt-tab .nm, .ls-hitrow, .pj-main pre {
+  font-family: "Maple Mono", ui-monospace, Consolas, "Microsoft YaHei", monospace;
+}
+.dt-logbox {
+  flex: 1 1 auto; min-height: 240px; border: 1px solid var(--rpa-line);
+  border-radius: 10px; overflow: hidden; background: #0b0d11;
+}
+.dt-logbox .tip { padding: 20px; color: var(--rpa-dim); font-size: 12.5px; }
+.dt-logbox .warn { padding: 20px; color: #ffb020; font-size: 12.5px; }
+/* Monaco 装饰（对齐原 style.css 的取值）：
+   异常行整行底色 / 行首色条 / 关键词命中 / 超长行折叠箭头与提示条 */
+.lg-line-err { background: rgba(226, 75, 74, .13); }
+.lg-line-warn { background: rgba(239, 159, 39, .10); }
+/* 「仅看异常」= 把异常行底色加重，让它们在一片正文里跳出来（不是把其他行变淡） */
+.dt-logbox.lg-only .lg-line-err { background: rgba(226, 75, 74, .30); }
+.dt-logbox.lg-only .lg-line-warn { background: rgba(239, 159, 39, .24); }
+.lg-glyph-err, .lg-glyph-warn {
+  width: 3px !important; margin-left: 3px; border-radius: 2px;
+}
+.lg-glyph-err { background: #FF6B6D; }
+.lg-glyph-warn { background: #FFB020; }
+.lg-hit { background: rgba(74, 144, 217, .40); outline: 1px solid rgba(74, 144, 217, .9); }
+/* 行号可点击（控制超长行展开/收起） */
+.dt-logbox .line-numbers { cursor: pointer; }
+/* 超长行折叠：行首箭头（▸ 已折叠 / ▾ 展开中）+ 行下提示条 + 展开行淡背景 */
+.lg-fold-closed, .lg-fold-open { position: relative; cursor: pointer; }
+.lg-fold-closed::after, .lg-fold-open::after {
+  display: block; line-height: 20px; font-size: 10px;
+  color: #4a90d9; text-align: center;
+}
+.lg-fold-closed::after { content: "▸"; }
+.lg-fold-open::after { content: "▾"; }
+.lg-fold-open-bg { background: rgba(74, 144, 217, .05); }
+.lg-fold-zone {
+  font-size: 11px; line-height: 19px; color: #4a90d9; cursor: pointer;
+  background: rgba(74, 144, 217, .07);
+  border-top: 1px dashed rgba(74, 144, 217, .25);
+  border-bottom: 1px dashed rgba(74, 144, 217, .25);
+}
+.lg-fold-zone:hover { background: rgba(74, 144, 217, .15); }
+
+/* ---- 排期日历 ----
+   .sc-wrap 是「当前时刻横线」的定位基准（本身不参与视觉）。
+   宽度只由 wrap 一处决定：max-content 让它随表格内容撑开（列多时横向滚动），
+   min-width:100% 保证列少时仍铺满容器。
+   表格自己**不能**写 width / min-width —— 百分比宽度在「容器宽度又由内容决定」的
+   循环里会被浏览器按容器宽度硬解，结果表格被压到比内容还窄，
+   「10:00」这类 5 字符时刻的首位会被截掉（实测表格 1597px 而内容需 1779px）。 */
+.sc-wrap { position: relative; display: inline-block; width: max-content; min-width: 100%; }
+.sc-tbl {
+  border-collapse: separate; border-spacing: 0; font-size: 12px;
+}
+.sc-tbl th, .sc-tbl td { border-bottom: 1px solid var(--rpa-line); padding: 4px 6px; vertical-align: top; }
+.sc-tbl thead th {
+  position: sticky; top: 0; z-index: 3; background: #1a1f28;
+  font-weight: 600; color: #c3cad6; font-size: 11.5px; text-align: center;
+  padding: 6px 8px; white-space: nowrap;
+}
+/* 时刻列固定宽度 + 吸左：横向滚动时它跟着走，行标签始终可见。
+   宽度按「10:00」实测内容宽（12px 等宽数字约 36px + 左右 padding 12px + 右边框）留余量；
+   只写 min-width 会被自动表格布局压到内容宽以下，时刻首位会被截掉。 */
+.sc-tbl th.sc-time-h, .sc-tbl td.sc-time {
+  position: sticky; left: 0; z-index: 1; background: #181c24;
+  width: 72px; min-width: 72px; max-width: 72px; white-space: nowrap;
+}
+.sc-tbl th.sc-time-h { text-align: left; z-index: 4; }
+.sc-tbl td.sc-time {
+  color: var(--rpa-dim); font-variant-numeric: tabular-nums; font-weight: 500;
+  border-right: 1px solid var(--rpa-line);
+}
+.sc-cell { min-width: 108px; }
+.sc-cell .sc-dash { color: rgba(255, 255, 255, .12); }
+.sc-today { background: rgba(226, 75, 74, .07); }
+.sc-nowline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed #E24B4A; z-index: 2; pointer-events: none; }
+.sc-now-lab {
+  position: absolute; right: 2px; top: -8px; font-size: 10px; color: #E24B4A;
+  background: rgba(226, 75, 74, .16); border-radius: 4px; padding: 0 4px;
+}
+/* 应用标签：色块 + 名称，悬停点亮同应用全部标签。
+   注意不要给 .sc-tag 写 max-width:100% —— 百分比 max-width 在「表格按内容定宽」
+   的固有尺寸计算里会让浏览器低估标签宽度，整张表被压到比内容还窄，
+   时刻列跟着被挤掉首位（「10:00」显示成「0:00」）。超长名称交给 td 的
+   overflow 处理，不靠标签自己截断。 */
+.sc-tag {
+  display: inline-flex; align-items: center; gap: 3px; margin: 1px 3px 1px 0;
+  padding: 1px 6px; border-radius: 6px; font-size: 11px; cursor: pointer;
+  color: #eef2f8; background: color-mix(in srgb, var(--c) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c) 62%, transparent);
+  white-space: nowrap;
+}
+.sc-tag:hover { background: color-mix(in srgb, var(--c) 52%, transparent); }
+.sc-tag.off { opacity: .55; border-style: dashed; }
+.sc-tag .sc-mul { font-style: normal; font-size: 10px; opacity: .85; }
+.sc-tbl.sc-has-hot .sc-tag { opacity: .35; }
+.sc-tbl.sc-has-hot .sc-tag.hot { opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 80%, transparent); }
+
+/* ---- 项目控制台 ---- */
+.pj-layout { flex: 1 1 auto; min-height: 0; display: flex; gap: 12px; }
+.pj-side { flex: none; width: 268px; display: flex; flex-direction: column; min-height: 0; }
+.pj-list { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.pj-item {
+  border: 1px solid var(--rpa-line); border-radius: 10px; padding: 8px 10px; cursor: pointer;
+  background: rgba(255, 255, 255, .022); display: flex; flex-direction: column; gap: 5px;
+}
+.pj-item:hover { border-color: var(--rpa-line-hi); background: rgba(255, 255, 255, .05); }
+.pj-item.sel { border-color: rgba(77, 155, 240, .75); background: rgba(77, 155, 240, .13); }
+.pj-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pj-avatar {
+  width: 22px; height: 22px; border-radius: 7px; flex: none; color: #fff;
+  font-size: 12px; display: flex; align-items: center; justify-content: center;
+}
+.pj-item-name { flex: 1 1 auto; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-item-meta { font-size: 11px; color: var(--rpa-dim); }
+.pj-foot { flex: none; padding-top: 8px; font-size: 11.5px; color: var(--rpa-dim); }
+.pj-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pj-detail { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.pj-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pj-title-row h2 { margin: 0; font-size: 15px; }
+.pj-title-row .el-button { margin-left: auto; }
+.pj-cards { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pj-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.pj-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ---- 机器人状态 ---- */
+.bs-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); align-content: start; }
+.bs-card {
+  border: 1px solid var(--rpa-line); border-radius: 12px; padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(36, 42, 55, .8) 0%, rgba(22, 26, 34, .9) 100%);
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.bs-card.bs-st-running { border-color: rgba(239, 159, 39, .45); }
+.bs-card.bs-st-queued { border-color: rgba(55, 138, 221, .45); }
+.bs-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bs-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.bs-name { flex: 1 1 auto; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-state { font-size: 11px; padding: 1px 8px; border-radius: 6px; flex: none; }
+.bs-task { display: flex; flex-direction: column; gap: 3px; min-height: 34px; }
+.bs-task-line { display: flex; gap: 6px; font-size: 11.5px; min-width: 0; }
+.bs-task-k { color: var(--rpa-dim); flex: none; }
+.bs-task-v { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-task-v a { color: var(--rpa-accent); cursor: pointer; text-decoration: none; }
+.bs-task-v a:hover { text-decoration: underline; }
+.bs-dim { color: var(--rpa-dim); }
+.bs-bad { color: #ff6b6d; }
+.bs-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.bs-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bs-stat .k { font-size: 10.5px; color: var(--rpa-dim); white-space: nowrap; }
+.bs-stat .v { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- 日志检索 ---- */
+.ls-group { border: 1px solid var(--rpa-line); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.ls-group-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 11px; cursor: pointer; background: rgba(255, 255, 255, .04); font-size: 12px;
+}
+.ls-group-head:hover { background: rgba(77, 155, 240, .12); }
+.ls-g-robot { font-weight: 600; }
+.ls-g-file { color: var(--rpa-text-2); }
+.ls-g-count { color: var(--rpa-warn); }
+.ls-g-time { color: var(--rpa-dim); }
+.ls-g-go { margin-left: auto; color: var(--rpa-accent); }
+.ls-group-body { padding: 4px 0; }
+.ls-hitrow {
+  display: flex; gap: 8px; padding: 3px 11px; font-size: 12px; cursor: pointer;
+  font-family: "Maple Mono", ui-monospace, Consolas, monospace;
+}
+.ls-hitrow:hover { background: rgba(77, 155, 240, .10); }
+.ls-lineno { color: var(--rpa-dim); flex: none; min-width: 66px; }
+.ls-lv { flex: none; padding: 0 6px; border-radius: 5px; font-size: 11px; }
+.ls-hit-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ls-hit-text mark { background: rgba(255, 209, 102, .35); color: #ffe6ad; border-radius: 2px; }
+
+/* ---- 合规视图 ---- */
+.cp-layout { flex: 1 1 auto; min-height: 0; display: flex; gap: 12px; }
+.cp-side { flex: none; width: 300px; }
+.cp-main { flex: 1 1 auto; min-width: 0; }
+.cp-missed { color: #ff6b6d; }
+.cp-rate-bad { color: #ffb020; }
+
+/* ---- 运行机器人选择弹窗 ---- */
+.run-sub { font-size: 12px; color: var(--rpa-text-2); margin-bottom: 8px; }
+.run-bot-list { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.run-bot-group { font-size: 11.5px; color: var(--rpa-dim); letter-spacing: .08em; padding: 6px 2px 2px; }
+.run-bot-item {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; cursor: pointer;
+  border: 1px solid var(--rpa-line); border-radius: 10px; background: rgba(255, 255, 255, .025);
+}
+.run-bot-item:hover { border-color: var(--rpa-line-hi); }
+.run-bot-item.off { opacity: .7; }
+.run-bot-item.auto { border-style: dashed; }
+.run-bot-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.run-bot-name { font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+.run-bot-tag {
+  font-style: normal; font-size: 10px; padding: 0 5px; border-radius: 4px;
+  background: rgba(52, 209, 127, .18); color: #7ee2ab;
+}
+.run-bot-meta { font-size: 11px; color: var(--rpa-dim); }
+.run-bot-bad { color: #ff6b6d; }
+.run-bot-empty { padding: 16px; text-align: center; color: var(--rpa-dim); font-size: 12px; }
+.run-err { color: #ff6b6d; font-size: 12px; min-height: 16px; margin-top: 6px; }
+
+/* 全局遮罩 */
+.rpa-loading {
+  position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 8, 12, .55); backdrop-filter: blur(2px);
+}
+.rpa-loading .box {
+  display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 12px;
+  background: #1a1f28; border: 1px solid var(--rpa-line-hi); box-shadow: var(--rpa-shadow); font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- 4. 手机端（≤880px）
+   脱离桌面「压进一屏」策略：取消等比缩放，改为自然文档流 + 整页滚动。 */
+@media (max-width: 880px) {
+  body { overflow: auto; }
+  .rpa-shell {
+    transform: none; width: 100%; height: auto; min-height: 100%;
+    flex-direction: column; padding: 10px; gap: 10px;
+  }
+  .rpa-side { width: 100%; padding: 10px 12px; }
+  .rpa-brand { padding-bottom: 2px; }
+  .rpa-nav { max-height: none; overflow: visible; }
+  .rpa-nav .el-menu { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rpa-nav .el-menu-item { height: 32px; line-height: 32px; padding: 0 10px !important; }
+  .rpa-nav .el-menu-item.is-active::after { display: none; }
+  .rpa-nav-group { padding: 8px 4px 2px; }
+  .rpa-side-foot { display: none; }
+  /* 标题栏：标题 + 指标卡 + 操作按钮各自整行，避免窄屏被挤出横向滚动条 */
+  .rpa-topbar { padding: 10px 12px; flex-direction: column; align-items: stretch; gap: 8px; }
+  .rpa-metrics { width: 100%; }
+  .rpa-metric { flex: 1 1 40%; min-width: 0; }
+  .rpa-topbar-right { width: 100%; margin-left: 0; justify-content: flex-end; }
+  .rpa-view, .rpa-body { display: block; }
+  .rpa-card { margin-bottom: 10px; }
+  .rpa-scroll { overflow: visible; max-height: none; }
+  .an-grid { display: block; }
+  .an-grid > .rpa-card { height: auto; margin-bottom: 10px; }
+  .an-grid > .rpa-card .rpa-scroll { max-height: none; }
+  .an-chart { height: 240px; }
+  .tl-layout { display: block; }
+  .tl-top { display: none; }              /* 手机端没有甘特图：整块砍掉，只留记录流 */
+  .pj-layout, .cp-layout { display: block; }
+  .pj-side, .cp-side { width: 100%; margin-bottom: 10px; }
+  .pj-list { max-height: 320px; }
+  .bs-grid { grid-template-columns: 1fr; }
+  /* 排期日历天生比手机屏宽：横向滚动限制在卡片内部，不要顶破整页 */
+  .sc-wrap { min-width: max-content; }
+  .rpa-card > .rpa-scroll:has(.sc-wrap) { overflow-x: auto; }
+  .rpa-view-scroll { overflow: visible; }
+  .rpa-view-scroll > * { flex: initial; }
+  .dt-logbox { min-height: 60vh; }
+}

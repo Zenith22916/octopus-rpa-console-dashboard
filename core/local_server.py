@@ -34,7 +34,7 @@ import db           # MySQL 持久层（运行记录入库，config.json -> mysq
 PORT = 8000
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
 DIR = os.path.join(BASE, "output")
-WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html/app.js/style.css）
+WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html + app.css + js/ + vendor/）
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 MONACO_ROOT = os.path.join(BASE, "assets", "monaco")         # Monaco Editor（日志高亮，离线自托管；URL /monaco/vs/... → assets/monaco/vs/...）
 UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
@@ -325,7 +325,7 @@ def read_log_refresh_slice(raw, fn, offset, limit):
 
 
 
-# 行级别判定（与前端 app.js 的 LG_RE 同一套语义：1=错误 2=警告 3=成功 0=普通）
+# 行级别判定（与前端 web/js/views/DetailView.js 的 LG_RE 同一套语义：1=错误 2=警告 3=成功 0=普通）
 LOG_LEVEL_RE = re.compile(
     r"(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)"
     r"|(warn(?:ing)?|timeout|retry|警告|重试|超时(?![\[0-9]))"

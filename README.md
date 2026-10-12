@@ -90,15 +90,17 @@ local_server.py ──▶ MySQL 是唯一真相源：抓取直接入库，前端
     │                   纯 REST 轮询；在途记录先行入库 end 为空，终态由上一行覆盖）
     └─ 每日 12:00 / 启动 / 手动「立刻更新」：crawler 网页版全量（触发器排期唯一来源）
                         │
-web/（纯前端，hash 路由八视图）
-    index.html + app.js + style.css + theme.css + mobile.css + theme.js + fonts/
+web/（Vue 3 + Element Plus，免构建纯静态，hash 路由八视图）
+    index.html + app.css + js/ + vendor/ + fonts/
     #/analysis（默认主页） #/timeline #/detail?id= #/schedule #/projects
     #/botstatus #/logsearch #/compliance（运维组）
     # 版面：左侧固定导航栏（品牌 + 三个分组导航 + 数据时间）+ 右侧主内容区
-    # 桌面端（>880px）：theme.js 按窗口高度等比缩放 --s，所有内容压进一屏、不出原生滚动条
-    # 手机端（≤880px）：mobile.css 整体换一套布局，自然文档流 + 整页滚动（详见「手机端适配」）
-    # theme.css 为视觉增强层（配色/质感/动效/字体），删掉 index.html 里的引用即可回退原样式
-    # mobile.css 为手机端布局层，删掉引用即回到桌面那套窄屏表现
+    # 桌面端（>880px）：main.js 按窗口高度等比缩放 --s，所有内容压进一屏、不出原生滚动条
+    # 手机端（≤880px）：app.css 第 4 节整体换一套布局，自然文档流 + 整页滚动（详见「手机端适配」）
+    # 组件库：表格/表单/弹窗/导航/卡片/标签全部走 Element Plus；甘特图、排期日历、
+    #         热力图等仍由 ECharts 与自绘 DOM 承担（组件库管不到的部分）
+    # 免构建：Vue/Element Plus 用官方 UMD 产物放在 web/vendor/ 本地自托管，完全离线、不走 CDN；
+    #         业务代码是原生 ES Module（web/js/），改完刷新浏览器即生效，无需 npm/打包步骤
 ```
 
 ### 后端接口
@@ -159,7 +161,7 @@ pause
 | 数据获取时间 | 后端最近一次**成功爬取完成**的时刻；「立刻更新」失败会追加「（刷新失败）」红字提示 |
 | 立刻更新 | 立即全量爬取最新数据，不用等后端下一轮自动抓取；按钮反馈 `更新中… → ✓ 已更新 / ✗ 失败` |
 | 自动更新 | 默认开启，每 60 秒读一次 `/api/runs`（后端内存缓存，纯读取、不触发任何抓取；后端状态如何都照常显示） |
-| 指标卡 | **所有视图的指标卡统一放标题栏**（`#headMetrics`），按视图整组切换显隐（位置与 `HEAD_METRIC_BOXES` 一一对应）：时间轴=Webhook/手动/定时记录数+机器人；分析=总运行/运行中/失败等；排期=触发器总数/已启用/已停用/Webhook；项目=项目总数/已配映射/未配映射/配置组数；机器人状态=机器人/运行中/排队中/空闲/在途任务；日志检索=命中行/命中日志文件/候选记录/扫描行数；合规=应跑次数/按时/应用不符/漏跑/命中率 |
+| 指标卡 | **所有视图的指标卡统一放标题栏**，由各视图调用 `setHeadMetrics([...])` 写入 `store.headMetrics`，切换视图时整组替换：时间轴=Webhook/手动/定时记录数+机器人；分析=总运行/运行中/平均排队/平均运行；排期=触发器总数/已启用/已停用/Webhook；项目=项目总数/已配映射/未配映射/配置组数；机器人状态=机器人/运行中/排队中/空闲/在途任务；日志检索=命中行/命中日志文件/候选记录/扫描行数；合规=应跑次数/按时/应用不符/漏跑/命中率 |
 
 ## 八个视图
 
@@ -180,8 +182,8 @@ pause
 ### 任务时间轴（`#/timeline`）
 
 > **桌面端是甘特图，手机端只有记录流** —— 两端策略完全不同，见下面各自的段落。
-> 手机端把甘特图与筛选整块砍掉（`mobile.css` 里 `#tlFilter` / `#tlChartCard` 隐藏，
-> `tlInit` 在手机端直接返回、不建 ECharts 实例）：390px 宽的甘特图，
+> 手机端把甘特图与筛选整块砍掉（`app.css` 第 4 节里 `.tl-top` 隐藏，
+> `TimelineView` 的 `mobile` 分支不建 ECharts 实例）：390px 宽的甘特图，
 > 无论转置还是压成缩略图，都读不出「运行顺序 + 时长」，不如把这一屏全给记录流。
 
 #### 桌面端（甘特图 + 表格）
@@ -321,47 +323,44 @@ pause
   排期点密集时「延迟」判定依赖窗口设置，改 `window` 会同时影响漏跑判定
 
 ## 手机端适配
-桌面端与手机端是**互斥的两套布局逻辑**，断点统一取 `880px`（`mobile.css`、`theme.js`、
-`app.js` 的 `MOBILE_Q` / `IS_MOBILE` 三处保持一致）：
+桌面端与手机端是**互斥的两套布局逻辑**，断点统一取 `880px`（`app.css` 第 4 节的媒体查询、
+`js/main.js` 的 `fitScale()`、`js/store.js` 的 `isMobile()` 三处保持一致）：
 
 | | 桌面端（>880px） | 手机端（≤880px） |
 |---|---|---|
 | 策略 | 禁止原生滚动条，内容压进一屏 | 自然文档流，整页纵向滚动（允许出现滚动条） |
-| 缩放 | `theme.js` 写 `--s`，`.app` 等比缩放 | `--s` 归 1，`transform: none` |
-| 左栏 | 214px 竖排固定栏 | 吸顶：品牌 + 数据时间 / 横向 tab（导航可直接点） |
-| 指标卡 | 一行横排 | 每行两张（`box-sizing: border-box` + `calc(50% - 6px)`） |
+| 缩放 | `main.js` 写 `--s`，`.rpa-shell` 等比缩放 | `--s` 归 1，`transform: none` |
+| 左栏 | 196px 竖排固定栏 | 整宽置顶：品牌 + 分组导航换行铺开（导航可直接点） |
+| 标题栏 | 一行：标题 + 指标卡 + 按钮 | 三行堆叠（标题 / 指标卡两列 / 按钮行），避免横向溢出 |
+| 指标卡 | 一行横排 | 每行两张（`flex: 1 1 40%`） |
 | 图表 | 由 flex 分配剩余高度 | 时间轴整块不渲染（见下）；其他视图固定高度 |
-| 宽表格 | 列自适应压缩 | 内容宽度 `max-content`，容器内横向滚动 |
+| 宽表格 | 列自适应压缩 | 排期日历在卡片内横向滚动；其余表格改为整页滚动 |
 | 机器人状态卡片 | 横屏一行 3 张，容器内往下滚 | 竖屏一行 1 张；容器不封顶，滚动交给整页 |
 | 任务时间轴 | 甘特图 + 筛选卡 + 六列表格 | **只有记录流**：倒序、大号时长、滚到底续批，不横向滚动 |
 
 实现要点：
 
-- **`web/mobile.css` 是唯一的手机端布局层**，只在 `@media (max-width: 880px)` 内生效；
-  删除 `index.html` 里这一行引用即可整体回退到桌面那套窄屏表现。
-- **`web/theme.js`** 在断点两侧切换 `--s`（手机端归 1，避免与 `mobile.css` 打架），
-  并把判定结果写到 `html[data-layout="mobile|desktop"]` 便于调试；跨断点自动重算。
-- **`web/app.js`** 用 `IS_MOBILE` 分流 ECharts / Monaco 里 CSS 管不到的部分：
-  运行记录（记录流 vs 表格）、热力图刻度 11→9px、排期图块文字 20→11px、
-  手机端关闭 Monaco 缩略图（minimap）。
-- **时间轴两端是两套东西**：手机端不建 ECharts 实例（`tlInit` 在 `IS_MOBILE` 时直接返回），
-  甘特图卡片与筛选卡片靠 CSS `display: none` 隐藏。跨断点用 `applyTimelineLayout()` 整体换：
-  切到桌面要**补建**图表实例，切到手机要 **`dispose()` 拆掉** —— 只 resize 是不行的，
-  因为手机端根本没有实例。已实测反复来回切换都正常。
-- **运行记录的两个容器共存**：`#tlListTbl`（表格）与 `#tlCards`（记录流）都在 DOM 里，
-  由 `tlListRender` 按断点切显隐。两者**不能互相写 `innerHTML`** —— 那会把对方的元素
-  连同容器一起抹掉，之后再也渲染不出来（切回手机就只剩空列表）。点击用事件委托挂在
-  `#tlList` 上，同时匹配 `tr[data-rid]` 与 `.tl-card-item[data-rid]`。
+- **`web/app.css` 第 4 节是唯一的手机端布局层**，只在 `@media (max-width: 880px)` 内生效。
+- **`web/js/main.js`** 在断点两侧切换 `--s`（手机端归 1，避免与手机端布局打架），
+  并把判定结果写到 `html[data-layout="mobile|desktop"]` 便于调试；跨断点自动重算并广播
+  `rpa:resize` 事件，各视图收到后按新断点重画。
+- **`web/js/store.js` 的 `isMobile()`** 是 JS 侧唯一断点来源；ECharts / Monaco 里 CSS 管不到的部分
+  按它分流：时间轴的甘特图 vs 记录流、热力图刻度字号、手机端关闭 Monaco 缩略图（minimap）。
+- **时间轴两端是两套东西**：手机端根本不建 ECharts 实例（`TimelineView` 的 `mobile` 分支），
+  甘特图卡片靠 CSS `display: none` 隐藏。跨断点整体换：切到桌面要**补建**图表实例，
+  切到手机要 **`dispose()` 拆掉** —— 只 resize 是不行的，因为手机端根本没有实例。
+- **运行记录的两个容器共存**：桌面 `el-table` 与手机 `.tl-feed` 用 `v-if="!mobile"` / `v-else`
+  切换（Vue 负责销毁与重建，不再有「互相写 innerHTML 把对方容器抹掉」的问题）。
 - **手机端「更新不跳位」的判断依据是 `window.scrollY < 80`**：在顶部就重排（用户看得见新内容），
-  滚下去了就只浮药丸、DOM 一律不动。列表渲染前的签名比对（`FEED.sig` = 条数 + 各条 id）
+  滚下去了就只浮药丸、DOM 一律不动。列表渲染前的签名比对（`feedSig` = 条数 + 各条 id）
   用来区分「真变了」和「只是进行中的时长在走」，后者只改文本。
 - **ECharts custom series 的两个坑**（都踩过）：
   `value` 数组前两位是 x/y 维度，附加数据要从 `value(2)` 起取，**文字塞在第 2 位会被当成
   y 轴时间值直接变成空**；且 `value` 会被按维度摊平，**嵌套数组会被摊成 `null`** ——
   要传多个值就摊平放成多个维度，别塞数组。
-- 布局层的两条坑（都已修）：flex 子项同时有百分比基准和 padding 时必须配
-  `box-sizing: border-box`，否则两张「半宽」卡片永远排不进一行；不能给
-  `#logbox`（Monaco 宿主）随手写 `flex: none`，那会让宽度退化成 7px 的竖线。
+- **组件库相关的两条坑**（都已修）：`.rpa-card` 这类带内边距的容器必须 `box-sizing: border-box`，
+  否则 `width: 100%` 会顶出横向滚动条；`.rpa-view-scroll` 这类 flex 纵向滚动容器要给子项
+  `flex: none`，否则 flex 会把超高的卡片压扁到只剩一条边。
 
 ## 飞书配置中心
 
@@ -492,14 +491,54 @@ octopus-rpa-console-dashboard/
 │   ├── echarts.min.js      # ECharts（本地，离线可用）
 │   ├── monaco/vs/          # Monaco Editor（日志只读高亮，离线自托管）
 │   └── effect_*.jpg|png    # 效果图（真实页面截图，README 引用）
-├── web/                    # 纯前端（前后端分离）
-│   ├── index.html          # 单页骨架（左侧导航 + 主内容区）+ hash 路由八视图
-│   ├── app.js              # 路由 + 时间轴/分析/详情/日程/项目控制台/机器人状态/日志检索/合规 渲染（含手机端图表分流）
-│   ├── style.css           # 基础样式（布局与组件，含运维三视图）
-│   ├── theme.css           # 视觉增强层（配色/质感/圆角/动效，可整层回退）
-│   ├── mobile.css          # 手机端布局层（≤880px 整体换布局，删除引用即可回退）
-│   ├── theme.js            # 适配/装饰层（--s 等比缩放与断点判定、鼠标跟随光晕，失败静默降级）
+├── web/                    # 前端（Vue 3 + Element Plus，免构建纯静态）
+│   ├── index.html          # 单页骨架：引组件库 UMD + 入口模块，挂载点 #app
+│   ├── app.css             # 样式：EP 主题变量覆写 + 壳层布局 + 业务自定义块 + 手机端布局层
+│   ├── js/
+│   │   ├── main.js         # 入口：注册 Element Plus、挂载根组件、--s 等比缩放、全局定时器
+│   │   ├── vendor.js       # 第三方库出口（把 window.Vue / window.ElementPlus 转成 ES 模块）
+│   │   ├── store.js        # 全局状态与跨视图逻辑（记录/排期/视图/弹窗/刷新）+ hash 路由
+│   │   ├── api.js          # 后端接口访问层（统一 401 跳登录、统一 JSON 与下载处理）
+│   │   ├── util.js         # 纯函数工具（时间与时长格式化、状态配色、图表皮肤、画布测宽）
+│   │   ├── chart.js        # ECharts 实例的 Vue 生命周期封装（init/dispose/ResizeObserver）
+│   │   ├── shell.js        # 全局轻提示与全屏加载遮罩（响应式状态 + 两个极薄组件）
+│   │   ├── components/
+│   │   │   └── RunDialog.js    # 运行机器人选择弹窗（详情页「重新运行」/ 项目页「运行该应用」共用）
+│   │   └── views/          # 八个视图 + 壳层（每个视图一个组件，默认导出）
+│   │       ├── Root.js         # 壳层：左侧导航 + 标题栏 + hash 路由 + 全局弹窗
+│   │       ├── TimelineView.js # 任务时间轴（ECharts 甘特图 + 运行记录表 / 手机端记录流）
+│   │       ├── AnalysisView.js # 运行数据分析（四图两表 + 失败记录 CSV 导出）
+│   │       ├── DetailView.js   # 运行记录详情（基础信息 + Monaco 只读日志查看器）
+│   │       ├── ScheduleView.js # 触发器排期（周/月日历表 + 当前时刻线 + xlsx 导出）
+│   │       ├── ProjectsView.js # 项目控制台（项目列表 + 飞书配置 / 运行记录两页签）
+│   │       ├── BotStatusView.js# 机器人实时状态（一机一卡片网格）
+│   │       ├── LogSearchView.js# 全局日志检索（按记录+文件分组，命中行高亮）
+│   │       └── ComplianceView.js# 触发器合规（命中率总览 + 排期明细）
+│   ├── vendor/             # 本地自托管第三方库（完全离线，不走 CDN）
+│   │   ├── vue.global.prod.js        # Vue 3 运行时（UMD）
+│   │   ├── element-plus.full.min.js  # Element Plus 全量组件（UMD）
+│   │   ├── element-plus.css          # Element Plus 组件样式
+│   │   ├── element-plus-dark.css     # Element Plus 深色主题变量（html.dark）
+│   │   ├── element-plus-icons.js     # Element Plus 图标集（UMD）
+│   │   └── element-plus-zh-cn.js     # Element Plus 中文语言包
 │   └── fonts/
 │       └── maple-mono.woff2  # 界面字体 Maple Mono（woff2，约 5.4 MB）
 └── output/                 # 抓取数据 + 整理文档 + 更新日志（git 忽略）
 ```
+
+### 前端工程约定
+
+- **免构建**：不引入 npm / 打包器。Vue 与 Element Plus 用官方 UMD 产物放在 `web/vendor/`
+  本地自托管（离线可用，不走 CDN），业务代码写成原生 ES Module，改完刷新浏览器即生效。
+- **加载顺序有两条硬约束**（见 `index.html` 注释）：Vue 必须在 Element Plus 与图标集之前
+  （两者的 UMD 工厂都直接取全局 `Vue`）；Monaco 的 AMD loader 必须在 echarts / Element Plus
+  之后 —— 它定义了 `define.amd`，而 echarts 的 UMD 包装一旦检测到 `define.amd` 就会注册成
+  AMD 模块、不再暴露 `window.echarts` 全局。
+- **升级依赖**：`npm i vue@3 element-plus@2 @element-plus/icons-vue@2`（可加 `--ignore-scripts`），
+  把 `node_modules` 里对应的 UMD / CSS 产物拷进 `web/vendor/` 即可，不产生 `package.json`。
+- **视图组件的约定**：每个视图只读 `store`、调 `store` 里的动作，彼此不直接引用；
+  标题栏指标卡由视图调用 `setHeadMetrics([...])` 写入，**卸载时必须清空**（`onBeforeUnmount`），
+  否则残留的监听器会把别的视图的指标覆盖掉。
+- **Element Plus 用在哪**：表格、表单、弹窗、下拉、开关、标签、按钮、导航、分页、描述列表、
+  消息提示全部走 EP；甘特图、排期日历、热力图、机器人卡片网格、日志检索分组仍是自绘
+  （EP 没有对应组件，且这些块的交互与性能要求更特殊）。
