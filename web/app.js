@@ -3629,7 +3629,11 @@ function pjModalReadValue() {
 
 /* ==================== 机器人实时状态视图 ====================
    数据来自 /api/botstatus（后端按运行记录聚合）：在途记录 -> 运行中/排队中，
-   无在途 -> 空闲；附当前任务、空闲时长、近 24 小时与近 7 天负载。 */
+   无在途 -> 空闲；附当前任务、空闲时长、近 24 小时与近 7 天负载。
+
+   呈现为「一个机器人一张卡片」的网格：横屏一行 3 张、竖屏一行 1 张，
+   卡片多了在网格容器内往下滚动。列数只由 CSS 的 .bs-grid 决定
+   （style.css 里按视口宽高比切换），JS 这边不掺和排布，只负责出卡片。 */
 var BS_DATA = null;
 var bsReady = false, bsFilter = '__ALL__';
 var BS_STATE = {
@@ -3643,8 +3647,8 @@ function bsBind() {
   if (sel) sel.addEventListener('change', function () { bsFilter = this.value; bsRender(); });
   var rb = document.getElementById('bsReload');
   if (rb) rb.addEventListener('click', function () { bsLoad().then(bsRender); });
-  var tbl = document.getElementById('bsTbl');
-  if (tbl) tbl.addEventListener('click', function (e) {
+  var grid = document.getElementById('bsGrid');
+  if (grid) grid.addEventListener('click', function (e) {
     var a = e.target.closest ? e.target.closest('.bs-task-link[data-rid]') : null;
     if (a) location.hash = '#/detail?id=' + encodeURIComponent(a.getAttribute('data-rid'));
   });
@@ -3655,7 +3659,6 @@ function bsLoad() {
     return BS_DATA;
   }).catch(function () { BS_DATA = null; return null; });
 }
-var BS_COLS = 9;
 function bsMetrics(s) {
   /* 机器人状态：标题栏指标卡（原来是工具条里的一句长文字，扫一眼不如数字） */
   var m = document.getElementById('bsMetrics');
@@ -3667,17 +3670,16 @@ function bsMetrics(s) {
     + anCard('在途任务', s.tasks || 0, '#1D9E75');
 }
 function bsEmpty(msg) {
-  var tbl = document.getElementById('bsTbl');
-  if (tbl) tbl.innerHTML = '<tbody><tr><td colspan="' + BS_COLS + '" class="bs-empty">'
-    + esc(msg) + '</td></tr></tbody>';
+  var grid = document.getElementById('bsGrid');
+  if (grid) grid.innerHTML = '<div class="bs-empty">' + esc(msg) + '</div>';
   var info = document.getElementById('bsInfo');
   if (info) info.textContent = '—';
   var m = document.getElementById('bsMetrics');
   if (m) m.innerHTML = '';
 }
 function bsRender() {
-  var tbl = document.getElementById('bsTbl');
-  if (!tbl) return;
+  var grid = document.getElementById('bsGrid');
+  if (!grid) return;
   if (!BS_DATA) {
     bsEmpty('机器人状态加载失败，请确认后端服务正常。');
     return;
@@ -3694,47 +3696,74 @@ function bsRender() {
   var list = BS_DATA.bots || [];
   if (bsFilter === '__BUSY__') list = list.filter(function (b) { return b.state !== 'idle'; });
   else if (bsFilter === '__IDLE__') list = list.filter(function (b) { return b.state === 'idle'; });
-  var head = '<thead><tr><th>机器人</th><th>状态</th><th>当前任务</th><th>空闲</th>'
-    + '<th>近24h</th><th>近7天</th><th>失败率</th><th>平均排队</th><th>平均运行</th></tr></thead>';
   if (!list.length) {
-    tbl.innerHTML = head + '<tbody><tr><td colspan="' + BS_COLS + '" class="bs-empty">没有符合条件的机器人。</td></tr></tbody>';
+    bsEmpty('没有符合条件的机器人。');
     return;
   }
-  tbl.innerHTML = head + '<tbody>' + list.map(bsRow).join('') + '</tbody>';
+  grid.innerHTML = list.map(bsCard).join('');
 }
-/* 一个机器人一行：当前任务可点（跳该条记录日志），无在途任务则显示最近一次跑的应用 */
-function bsRow(b) {
+/* 一个机器人一张卡片：左侧色条 + 状态点/状态标签表明在跑什么，
+   中间两行「任务名 / 进度」可点（跳该条记录日志），底部 6 个近况读数。
+
+   卡片高度必须完全一致，所以内容按「定长结构」拼：头部 1 行 + 任务区 2 行 +
+   读数区 3×2 格。任务名一律单行省略号截断（不折行），进度行哪怕没有内容也占位
+   （空闲机器填「最近结束 …」）—— 只要有一张卡多折了一行，整行卡片就会被撑高。 */
+function bsCard(b) {
   var st = BS_STATE[b.state] || BS_STATE.idle;
-  var cell;
-  if (b.tasks && b.tasks.length) {
+  var busy = !!(b.tasks && b.tasks.length);
+  var nameHtml, metaHtml;
+  if (busy) {
     var t = b.tasks[0];
-    var meta = (t.status === 'Waiting' ? '等待调度' : '已跑 ' + fmtDur(t.elapsed))
-      + (t.waited ? ' · 排队 ' + fmtDur(t.waited) : '');
-    cell = '<span class="bs-task-link" data-rid="' + esc(t.id) + '" title="点击查看该任务的日志">'
-      + esc(t.name || t.app || '运行记录') + '</span>'
-      + '<span class="bs-task-meta">' + esc(meta) + '</span>'
-      + (b.tasks.length > 1 ? '<span class="bs-task-meta">另有 ' + (b.tasks.length - 1) + ' 个在途</span>' : '');
+    nameHtml = '<span class="bs-task-link" data-rid="' + esc(t.id) + '" title="点击查看该任务的日志">'
+      + esc(t.name || t.app || '运行记录') + '</span>';
+    /* 时长用紧凑写法（fmtDurShort）：一行 3 张时卡片内宽只有 200 出头，
+       带空格的「11 分 40 秒」会把进度行挤到省略号 */
+    metaHtml = '<span class="bs-task-meta">'
+      + esc((t.status === 'Waiting' ? '等待调度' : '已跑 ' + fmtDurShort(t.elapsed))
+        + (t.waited ? ' · 排队 ' + fmtDurShort(t.waited) : '')
+        + (b.tasks.length > 1 ? ' · 另有 ' + (b.tasks.length - 1) + ' 个在途' : ''))
+      + '</span>';
   } else {
-    cell = '<span class="bs-dim">' + (b.lastName ? '最近：' + esc(b.lastName) : '暂无运行记录') + '</span>';
+    nameHtml = '<span class="bs-dim">'
+      + esc(b.lastName || '暂无运行记录') + '</span>';
+    metaHtml = '<span class="bs-task-meta">'
+      + (b.lastEnd ? '最近结束 ' + esc(fmtTime(b.lastEnd)) : '—') + '</span>';
   }
   var w = b.week || {}, r24 = b.recent || {};
   /* 空闲时长只在真空闲时展示：运行中/排队中的机器显示「距上次结束」会被误读成"它闲着呢" */
-  var idle = (b.state === 'idle' && b.idleMs != null) ? fmtDur(b.idleMs) : '—';
-  return '<tr>'
-    + '<td class="bs-robot"><span class="bs-dot" style="background:' + st.color + '"></span>'
-    + esc(b.robot) + '</td>'
-    + '<td><span class="bs-state" style="background:' + st.bg + ';color:' + st.color + '">'
-    + st.cn + '</span></td>'
-    + '<td class="bs-task">' + cell + '</td>'
-    + '<td class="bs-dim">' + esc(idle) + '</td>'
-    + '<td>' + (r24.count || 0)
-    + (r24.failed ? ' <span class="bs-bad">(' + r24.failed + ')</span>' : '') + '</td>'
-    + '<td>' + (w.count || 0) + '</td>'
-    + '<td' + ((w.failRate || 0) >= 0.2 ? ' class="bs-bad"' : '') + '>'
-    + Math.round((w.failRate || 0) * 100) + '%</td>'
-    + '<td class="bs-dim">' + fmtDur(w.avgWait) + '</td>'
-    + '<td class="bs-dim">' + fmtDur(w.avgRun) + '</td>'
-    + '</tr>';
+  var idle = (b.state === 'idle' && b.idleMs != null) ? fmtDurShort(b.idleMs) : '—';
+  /* 有在途任务才是「当前任务」；空闲机器那一行给的是历史记录，标签得跟着换 */
+  var taskK = busy ? '当前任务' : '最近任务';
+  /* 读数一律用紧凑时长（fmtDurShort），且每格单行省略号 —— 格子宽度固定，
+     用 fmtDur 的「7 分 30 秒」会把卡片读数挤成两行，卡片高度就不齐了 */
+  var stats = [
+    ['空闲', idle, b.state === 'idle' ? '' : 'bs-dim'],
+    ['近 24 小时', (r24.count || 0) + (r24.failed ? ' · 失败 ' + r24.failed : ''),
+      r24.failed ? 'bs-bad' : ''],
+    ['近 7 天', String(w.count || 0), ''],
+    ['失败率', Math.round((w.failRate || 0) * 100) + '%', (w.failRate || 0) >= 0.2 ? 'bs-bad' : ''],
+    ['平均排队', fmtDurShort(w.avgWait), 'bs-dim'],
+    ['平均运行', fmtDurShort(w.avgRun), 'bs-dim']
+  ];
+  return '<article class="bs-card bs-st-' + esc(b.state || 'idle') + '">'
+    + '<div class="bs-card-head">'
+    + '<span class="bs-dot" style="background:' + st.color + '"></span>'
+    + '<span class="bs-name" title="' + esc(b.robot) + '">' + esc(b.robot) + '</span>'
+    + '<span class="bs-state" style="background:' + st.bg + ';color:' + st.color + '">'
+    + st.cn + '</span>'
+    + '</div>'
+    + '<div class="bs-card-task">'
+    + '<div class="bs-task-line"><span class="bs-task-k">' + taskK + '</span>'
+    + '<span class="bs-task-v" title="' + esc(busy
+      ? (b.tasks[0].name || b.tasks[0].app || '运行记录') : (b.lastName || '暂无运行记录')) + '">'
+    + nameHtml + '</span></div>'
+    + '<div class="bs-task-line bs-task-line2">' + metaHtml + '</div>'
+    + '</div>'
+    + '<div class="bs-stats">' + stats.map(function (it) {
+      return '<div class="bs-stat"><span class="k">' + it[0] + '</span>'
+        + '<span class="v ' + it[2] + '" title="' + esc(it[1]) + '">' + esc(it[1]) + '</span></div>';
+    }).join('') + '</div>'
+    + '</article>';
 }
 
 /* ==================== 全局日志检索视图 ====================

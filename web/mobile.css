@@ -971,20 +971,30 @@
     flex: none;
   }
 
-  #view-botstatus .bs-scroll,
   #view-logsearch .ls-scroll {
     flex: none;
     max-height: 62vh;
   }
 
-  /* 机器人状态：一个机器人一行的宽表格，容器内横向滚动 */
-  #view-botstatus .bs-tbl {
-    width: max-content;
-    min-width: 100%;
+  /* 机器人状态：卡片网格 —— 手机竖屏一行 1 张，横屏沿用桌面「一行 3 张」。
+     卡片按自然高度堆叠、多了往下滚动。这里不再给容器单独封顶：
+     手机端整页本来就在滚动，再套一层内部滚动条只会让手指不知道该滚哪一层。 */
+  #view-botstatus .bs-scroll {
+    flex: none;
+    max-height: none;
+    overflow: visible;
   }
 
-  .bs-tbl td.bs-task {
-    max-width: 180px;
+  #view-botstatus .bs-grid {
+    gap: 8px;
+  }
+
+  .bs-card {
+    padding: 9px 10px 8px;
+  }
+
+  .bs-card-task {
+    font-size: 12.5px;
   }
 
   #view-botstatus .panel > .toolbar h2,

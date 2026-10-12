@@ -271,7 +271,8 @@
             <span class="datatime" id="bsInfo">—</span>
             <span class="hint bs-tip">状态由运行记录推断：有「运行中」记录即在跑，否则看是否有排队记录</span>
           </div>
-          <div class="scroll bs-scroll"><table id="bsTbl" class="bs-tbl"></table></div>
+          <!-- 一个机器人一张卡片：横屏一行 3 张、竖屏一行 1 张，多了在容器内往下滚动 -->
+          <div class="scroll bs-scroll"><div class="bs-grid" id="bsGrid"></div></div>
         </div>
       </div>
 

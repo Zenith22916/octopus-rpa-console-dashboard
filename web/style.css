@@ -1813,26 +1813,162 @@ tbody tr:hover {
   max-height: none;
 }
 
-.bs-tbl {
-  width: 100%;
-  border-collapse: collapse;
+/* 一个机器人一张卡片：横屏 3 列、竖屏 1 列；卡片多了在 .bs-scroll 里往下滚动。
+   列数只跟「宽高比」有关（横屏/竖屏），不跟具体像素宽度绑定，
+   所以投影仪、笔记本、手机横屏拿到的都是「一行 3 张」。 */
+.bs-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+  padding: 2px 2px 4px;
+  box-sizing: border-box;
 }
 
-/* 一个机器人一行：状态点 + 名称固定不折行，任务列吃掉剩余宽度 */
-.bs-tbl th,
-.bs-tbl td {
+/* 竖屏（高 ≥ 宽）：一行 1 张 */
+@media (max-aspect-ratio: 1/1) {
+  .bs-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 空状态/加载失败占满整行，不占一个卡片位 */
+.bs-grid > .bs-empty {
+  grid-column: 1 / -1;
+}
+
+.bs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px 9px;
+  background: #1b1f26;
+  border: 1px solid #262a33;
+  border-left: 3px solid #3a4150;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+/* 卡片左缘色条 = 状态：扫一列卡片就能看出哪几台在跑 */
+.bs-card.bs-st-running {
+  border-left-color: #EF9F27;
+  background: linear-gradient(180deg, rgba(239, 159, 39, .07), rgba(239, 159, 39, 0) 62%), #1b1f26;
+}
+
+.bs-card.bs-st-queued {
+  border-left-color: #378ADD;
+}
+
+.bs-card.bs-st-idle {
+  border-left-color: #4a515e;
+}
+
+.bs-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.bs-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e6e6e6;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bs-tbl td.bs-robot {
-  font-weight: 500;
-  color: #e6e6e6;
+/* 状态标签钉在右上角：名称再长也不会把它挤走 */
+.bs-card-head .bs-state {
+  margin-left: auto;
+  flex: none;
+  padding-left: 8px;
 }
 
-.bs-tbl td.bs-task {
-  white-space: normal;
-  max-width: 340px;
-  min-width: 180px;
+.bs-card-task {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, .03);
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 任务区固定两行（任务名 1 行 + 进度 1 行）：卡片高度是算出来的，不能由内容撑 */
+.bs-task-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  height: 18px;
+}
+
+.bs-task-k {
+  flex: none;
+  font-size: 11px;
+  color: #6f7480;
+}
+
+/* 任务名/进度都单行省略号：名字再长也只占一行，卡片不会被撑高 */
+.bs-task-v {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bs-task-line2 .bs-task-meta {
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 6 个读数：3 列 × 2 行。每格高度写死（标签 15 + 值 18），
+   这样无论读数是「—」还是「1小时46分」，卡片总高都一样。 */
+.bs-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 33px;
+  gap: 6px 8px;
+}
+
+.bs-stat {
+  min-width: 0;
+}
+
+.bs-stat .k {
+  display: block;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: #6f7480;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bs-stat .v {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: #d6dae0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bs-stat .v.bs-dim {
+  color: #8b8f98;
+}
+
+.bs-stat .v.bs-bad {
+  color: #E24B4A;
 }
 
 .bs-dim {
