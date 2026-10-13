@@ -209,15 +209,15 @@
       <div id="view-detail" class="view" style="display:none;">
         <!-- 整页合并成一张卡片（.dt-card）：标题+操作按钮 → 日志正文。
              指标卡已与其他视图统一上移到顶栏 #headMetrics（dtMetrics），
-             不再占卡片内的高度。标题固定为「运行记录详情」（#ttl 由 renderDetail
-             填具体项目名，见 app.js）；操作按钮全部靠右、同一套外观、不带图标。
-             #app 里只放日志页签与日志正文。
+             不再占卡片内的高度。
+             卡片标题（#ttl）就是项目名，由 renderDetail 填 —— 不再写「运行记录详情」，
+             因为顶栏视图名按钮已经写了，卡片里再写一遍是重复的。
+             操作按钮全部靠右、同一套外观、不带图标；#app 里只放日志页签与日志正文。
              按钮留在静态 HTML 里（不在 renderDetail 的 innerHTML 中重建），
              否则每次进详情页都会丢掉加载时绑好的监听。 -->
         <div class="dt-card">
           <div class="dt-bar">
             <h2 class="dt-title" id="ttl">运行记录详情</h2>
-            <span class="dt-sub" id="ttlSub"></span>
             <div class="dt-actions">
               <button type="button" class="dt-btn" id="btnLogRefresh" disabled title="只重新读取当前日志文件内容：新内容增量追加，滚动位置与搜索状态都保留">刷新</button>
               <button type="button" class="dt-btn" id="btnRerun" title="选择执行机器人后触发一次运行">重新运行</button>

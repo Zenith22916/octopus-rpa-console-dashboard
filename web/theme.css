@@ -1355,9 +1355,6 @@ tbody tr:hover {
 }
 
 /* 指标卡已上移到顶栏，用全局 .metric 皮肤，这里不再需要 .dt-metric 规则 */
-.dt-sub {
-  color: var(--t-faint);
-}
 
 .badge {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .14) inset, 0 6px 16px -10px rgba(0, 0, 0, .9);

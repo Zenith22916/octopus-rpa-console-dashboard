@@ -670,7 +670,7 @@
     overflow: visible;
   }
 
-  /* 标题行：窄屏标题 + 项目名占一行，按钮组折到下一行并靠左
+  /* 标题行：窄屏项目名独占一行（可折行、不省略），按钮组折到下一行并靠左
      （靠右在窄屏会留出一大块空白，看着像没排好）。 */
   .dt-bar {
     gap: 8px;
@@ -678,20 +678,13 @@
   }
 
   .dt-title {
-    flex: none;
-    font-size: 16px;
-  }
-
-  .dt-sub {
     flex: 1 1 100%;
-    order: 3;
-    font-size: 12px;
+    font-size: 16px;
     white-space: normal;      /* 窄屏允许项目名折行，不省略 */
   }
 
   .dt-actions {
     flex: 1 1 100%;
-    order: 2;
     margin-left: 0;
     gap: 8px;
   }

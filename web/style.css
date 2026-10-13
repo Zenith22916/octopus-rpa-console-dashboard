@@ -775,7 +775,7 @@ tbody tr:hover {
 /* 详情页指标卡已与其他视图统一上移到顶栏 #headMetrics（.metric 那套皮肤），
    .dt-metrics / .dt-metric 两组规则随之删除。 */
 
-/* 标题行：左边固定标题「运行记录详情」+ 项目名小字，右边一排操作按钮。
+/* 标题行：左边项目名当标题，右边一排操作按钮。
    按钮全部靠右（margin-left:auto 把整组推到底），顺序由 HTML 决定：
    刷新 → 重新运行 → 项目配置 → 复制路径 → 返回。 */
 .dt-bar {
@@ -788,21 +788,16 @@ tbody tr:hover {
   border-bottom: 1px solid #262a33;
 }
 
+/* 卡片标题 = 项目名（原来这里是「日志内容」，后改为固定标题+灰字副标题，
+   现按需求恢复成「项目名直接当标题」）。flex:1 让它占满左侧、把按钮推到右边；
+   过长时省略号截断，不折行、不把按钮挤走。 */
 .dt-title {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   font-size: 17px;
   font-weight: 600;
   color: #e6e6e6;
-  white-space: nowrap;
-}
-
-/* 项目名：跟在固定标题后面，字号小一档、颜色淡一档，不跟标题抢注意力 */
-.dt-sub {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  color: #8b8f98;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

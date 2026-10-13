@@ -1953,28 +1953,32 @@ function renderDetail() {
     app.innerHTML = '<div class="empty">未找到该运行记录。</div>';
     return;
   }
-  /* 标题固定写「运行记录详情」，具体项目名放在它右边的小字里（原来直接拿项目名
-     当标题，会和下面的日志页签、顶栏视图名混在一起，看不出这是详情页）。 */
+  /* 卡片标题 = 项目名（恢复成标题，不再用「运行记录详情」+ 灰色小字那种写法）：
+     顶栏的视图名按钮已经写了「运行记录详情」，卡片里再写一遍是重复的。
+     这里直接拿项目名当标题，位置就是原来「日志内容」那一行。 */
   var ttl = document.getElementById("ttl");
-  if (ttl) ttl.textContent = "运行记录详情";
-  var ttlSub = document.getElementById("ttlSub");
-  if (ttlSub) ttlSub.textContent = rec.name || "";
+  if (ttl) ttl.textContent = rec.name || "运行记录详情";
   var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
   var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
   var runMs = (rec.end == null) ? null : (rec.end - runFrom);
-  /* 六张指标卡与其他视图统一填进顶栏（#headMetrics 里的 #dtMetrics）：
-     状态 / 触发方式 / 开始时间 / 排队时长 / 运行时长 / 结束时间。
-     时间一律 hh:mm（fmtHM），时长一律英文简写（fmtDurEn，如 2m25s）。 */
+  /* 五张指标卡与其他视图统一填进顶栏（#headMetrics 里的 #dtMetrics）：
+     状态 / 开始时间 / 排队时长 / 运行时长 / 结束时间。
+     时间一律 hh:mm（fmtHM），时长一律英文简写（fmtDurEn，如 2m25s）。
+     配色与其它视图保持一致的口径（见分析页 anMetrics）：
+       排队时长用紫、运行时长用绿 —— 和分析页的「平均排队 / 平均运行」同色；
+       开始时间用蓝、结束时间用琥珀，两端时刻互相区分；
+       状态用状态色（statusColorSolid），失败红 / 运行中橙 / 排队中蓝 / 已完成绿。
+     状态卡的值是 statusBadge（自带底色与文字色），所以传空色 ——
+     外面再套一层 color 反而会和徽章自身的颜色打架。 */
   var mBox = document.getElementById("dtMetrics");
   if (mBox) {
     mBox.innerHTML =
       dtCard("状态", statusBadge(rec.status), "")
-      + dtCard("触发方式", wayCN(rec.way), "")
-      + dtCard("开始时间", rec.start == null ? "—" : fmtHM(rec.start), "")
-      + dtCard("排队时长", queueMs ? fmtDurEn(queueMs) : "—", "")
-      + dtCard("运行时长", runMs != null ? fmtDurEn(runMs) : "—", "")
+      + dtCard("开始时间", rec.start == null ? "—" : fmtHM(rec.start), "#378ADD")
+      + dtCard("排队时长", queueMs ? fmtDurEn(queueMs) : "—", "#7F77DD")
+      + dtCard("运行时长", runMs != null ? fmtDurEn(runMs) : "—", "#1D9E75")
       + dtCard("结束时间", rec.end == null
-        ? '<span style="color:#EF9F27">进行中</span>' : fmtHM(rec.end), "");
+        ? '<span style="color:#EF9F27">进行中</span>' : fmtHM(rec.end), "#EF9F27");
   }
   var logCard = '<div class="log-card">'
     + '<div class="log-tabs" id="logTabs"></div>'
