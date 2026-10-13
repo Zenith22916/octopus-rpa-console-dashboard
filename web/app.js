@@ -49,6 +49,36 @@ function fmtDurM(ms) {
   var h = Math.floor(m / 60), mm = Math.round(m % 60);
   return h + " h" + (mm ? (" " + mm + " min") : "");
 }
+/* 只到分钟的 hh:mm（详情页指标卡用）。
+   同一天内的起止时刻放在并排的卡片里读，日期是多余的；
+   跨天时补一个「月-日」前缀，避免 23:50 → 00:10 这种读反。 */
+function fmtHM(ms) {
+  if (ms == null) return "—";
+  var d = new Date(ms);
+  return pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+/* 英文简写时长：y/M/d/h/m/s 逐级拼（如 2m25s、1h3m、45s）。
+   详情页指标卡宽度有限，中文的「2 分 25 秒」会被挤成两行；
+   简写还能和「排队/运行」两个并排读数对齐。
+   只在最高位与次高位之间取舍：不足 1 秒按秒显示（0s），不显示毫秒。 */
+function fmtDurEn(ms) {
+  if (ms == null || ms < 0 || isNaN(ms)) return "—";
+  var s = Math.round(ms / 1000);
+  var y = Math.floor(s / 31536000); s -= y * 31536000;
+  var M = Math.floor(s / 2592000); s -= M * 2592000;
+  var d = Math.floor(s / 86400); s -= d * 86400;
+  var h = Math.floor(s / 3600); s -= h * 3600;
+  var m = Math.floor(s / 60); s -= m * 60;
+  var parts = [];
+  if (y) parts.push(y + "y");
+  if (M) parts.push(M + "M");
+  if (d) parts.push(d + "d");
+  if (h) parts.push(h + "h");
+  if (m) parts.push(m + "m");
+  if (s || !parts.length) parts.push(s + "s");
+  /* 超过两级就截断（1y2M3d4h5m6s 太长，卡片里放不下，前两级已足够读） */
+  return parts.slice(0, 2).join("");
+}
 function fmtSize(b) { if (b == null) return ""; if (b < 1024) return b + " B"; if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB"; return (b / 1024 / 1024).toFixed(2) + " MB"; }
 function statusColor(r) {
   if (r.status === "Failed") return "rgba(226,75,74,0.6)";
@@ -311,6 +341,13 @@ function navSet(name) {
       var sp = items[i].querySelector('span');
       label = sp ? sp.textContent : items[i].textContent;
       items[i].classList.add('cur');
+      /* 手机端导航是一行横向滚动的 tab：切页后把当前项滚进视野。
+         否则切到靠右的「项目控制台」时，高亮还在屏幕外，看不出当前在哪。
+         用 scrollIntoView({inline:'nearest'}) 而不是手动算偏移：
+         它只滚动这一个容器（block:'nearest' 不会连带把页面纵向滚走）。 */
+      if (IS_MOBILE && items[i].scrollIntoView) {
+        try { items[i].scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { }
+      }
     } else {
       items[i].classList.remove('cur');
     }
@@ -831,6 +868,13 @@ function tlRender() {
     /* 纵轴 = 机器人泳道 */
     yAxis: {
       type: 'category', data: yLabels,
+      /* inverse: ECharts 的 category 轴默认把 data[0] 放在轴的**起点**，
+         而 y 轴起点在**下方** —— 于是 robotList() 排好的顺序（A🍩硕晞-01 在前）
+         在屏幕上整个翻了过来（B💎宝实-03 跑到最上面）。
+         加 inverse 让 data[0] 落在顶部，视觉顺序才与排序键一致。
+         注意只翻转「显示顺序」，不改 data：泳道行号仍按数组下标走，
+         下面所有 api.coord / renderItem 都不受影响。 */
+      inverse: true,
       axisLabel: {
         color: '#c9cdd4', fontSize: 12,
         width: 95, overflow: 'truncate'
@@ -1377,10 +1421,14 @@ function tlScrollSync() {
   tlScrollWinEl.style.display = 'block';
   var tW = tlScrollTrackEl.clientWidth || 1;
   var nowW = Math.min(state.end + state.offset, state.end);
-  /* 视觉下限：窗口再小也按 6 小时对应的宽度画，否则窄到点不中；
-     真实窗口大小不受影响，位置换算始终按 msPerPx 走，与这个宽度无关 */
-  var minW = 6 * 3600 * 1000 / total * tW;
-  var w = Math.max(minW, Math.min(tW, state.span / total * tW));
+  /* 滑块宽度 = 窗口 / 数据范围，严格等比。
+     曾经这里有个「6 小时视觉下限」：窗口再小也按 6 小时对应的宽度画，
+     理由是「窄到点不中」。但那会让滑块长度与真实比例对不上 ——
+     默认 1 天范围 + 1 小时窗口本该是 1/24，却被画成 6/24 = 1/4，
+     看起来像「窗口占了四分之一的数据」，和上面甘特图的实际视野完全不符。
+     现在改成严格等比，可用性交给 CSS 的隐形热区（见 .tl-scroll-win::before，
+     它把可点击范围向左右各扩 6px），视觉比例不再被牺牲。 */
+  var w = Math.max(1, Math.min(tW, state.span / total * tW));
   var frac = (nowW - DATA_MIN) / total;
   var left = Math.max(0, Math.min(tW - w, frac * tW - w));
   tlScrollWinEl.style.width = w + 'px';
@@ -1773,7 +1821,13 @@ function anExport() {
 }
 
 /* ==================== 详情视图 ==================== */
-function fld(k, v) { return '<div class="field"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; }
+/* 详情页指标卡：结构与标题栏那套 .metric 一致（小标题 + 大数字），
+   但走 .dt-metric 这个独立类名 —— 标题栏的 .metric 有 hover 浮起与入场动画，
+   详情页这几张是静态读数，不需要跟着动。 */
+function dtCard(k, v, color) {
+  return '<div class="dt-metric"><div class="k">' + k + '</div>'
+    + '<div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div></div>';
+}
 function renderDetail() {
   var app = document.getElementById("app");
   if (typeof lgReset === "function") lgReset();   // 释放上一个详情的 Monaco 编辑器与模型
@@ -1786,19 +1840,21 @@ function renderDetail() {
   var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
   var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
   var runMs = (rec.end == null) ? null : (rec.end - runFrom);
-  var info = '<div class="card info-card"><h3>基础信息</h3><div class="grid-detail">'
-    + fld("机器人", esc(rec.robot))
-    + fld("状态", statusBadge(rec.status))
-    + fld("触发方式", wayCN(rec.way))
-    + (rec.way && rec.way !== "Manual" && rec.trigger ? fld("触发器", esc(rec.trigger)) : "")
-    + fld("流程ID (flow_id)", esc(rec.fid || "—"))
-    + fld("流程编号 (process_no)", esc(rec.pno || "—"))
-    + fld("开始时间", fmtFull(rec.start))
-    + (rec.execStart ? fld("开始运行", fmtFull(rec.execStart)) : "")
-    + fld("结束时间", rec.end == null ? '<span style="color:#EF9F27">进行中</span>' : fmtFull(rec.end))
-    + (queueMs ? fld("排队时长", fmtDur(queueMs)) : "")
-    + (runMs != null ? fld("运行时长", fmtDur(runMs)) : "")
-    + '</div></div>';
+  /* 六张指标卡填进标题卡（#dtMetrics）：状态 / 触发方式 / 开始时间 / 排队时长 /
+     运行时长 / 结束时间。原先那张「基础信息」大卡片整块去掉 —— 机器人、流程 ID
+     这些字段日常排查看得少，却占掉近半屏，把日志挤到下面。
+     时间一律 hh:mm（fmtHM），时长一律英文简写（fmtDurEn，如 2m25s）。 */
+  var mBox = document.getElementById("dtMetrics");
+  if (mBox) {
+    mBox.innerHTML =
+      dtCard("状态", statusBadge(rec.status))
+      + dtCard("触发方式", wayCN(rec.way))
+      + dtCard("开始时间", rec.start == null ? "—" : fmtHM(rec.start))
+      + dtCard("排队时长", queueMs ? fmtDurEn(queueMs) : "—")
+      + dtCard("运行时长", runMs != null ? fmtDurEn(runMs) : "—")
+      + dtCard("结束时间", rec.end == null
+        ? '<span style="color:#EF9F27">进行中</span>' : fmtHM(rec.end));
+  }
   var logCard = '<div class="card log-card">'
     + '<div class="log-head"><div class="log-title"><h3>日志内容</h3>'
     + '<button class="chip log-refresh" id="btnLogRefresh" disabled title="只重新读取日志文件内容：新内容增量追加，滚动位置与搜索状态都保留">'
@@ -1817,7 +1873,7 @@ function renderDetail() {
     + '<div class="log-body">'
     + '<div id="logbox" class="tip">正在读取日志…</div>'
     + '</div></div>';
-  app.innerHTML = '<div class="detail-wrap">' + info + logCard + '</div>';
+  app.innerHTML = '<div class="detail-wrap">' + logCard + '</div>';
   lgInit();
   loadLogs();
 }

@@ -204,11 +204,18 @@
 
       <!-- ==================== 详情视图 ==================== -->
       <div id="view-detail" class="view" style="display:none;">
-        <div class="topbar">
-          <div class="title"><span id="ttl">运行记录详情</span></div>
-          <button class="back rerun" id="btnRerun" title="选择执行机器人后触发一次运行">↻ 重新运行</button>
-          <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
-          <button class="back" id="btnBack">← 返回上一页</button>
+        <!-- 标题 + 操作按钮 + 指标卡收进同一张卡片（.dt-head）：
+             原来这行按钮直接落在页面黑底上，与下方日志卡片不像一套；
+             指标卡由 renderDetail() 填进 #dtMetrics（状态/触发方式/开始时间/
+             排队时长/运行时长/结束时间），基础信息大卡片已去掉。 -->
+        <div class="dt-head">
+          <div class="topbar">
+            <div class="title"><span id="ttl">运行记录详情</span></div>
+            <button class="back rerun" id="btnRerun" title="选择执行机器人后触发一次运行">↻ 重新运行</button>
+            <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
+            <button class="back" id="btnBack">← 返回上一页</button>
+          </div>
+          <div class="dt-metrics" id="dtMetrics"></div>
         </div>
         <div id="app"></div>
       </div>

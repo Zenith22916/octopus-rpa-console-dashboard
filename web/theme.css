@@ -67,7 +67,6 @@ body {
 .pj-runs-tbl td,
 #mValWrap textarea,
 .m-bool-tip,
-.field .v,
 #logbox,
 #logbox .view-lines,
 .monaco-editor {
@@ -862,7 +861,7 @@ body {
   position: absolute;
   top: 50%;
   height: 14px;
-  min-width: 22px;
+  min-width: 0;              /* 宽度严格按比例，不再兜底撑宽（见 tlScrollSync） */
   box-sizing: border-box;
   transform: translateY(-50%);
   border-radius: 7px;
@@ -870,6 +869,20 @@ body {
   border: 1px solid rgba(255, 255, 255, .3);
   cursor: grab;
   transition: background .2s, border-color .2s;
+}
+
+/* 隐形热区：滑块宽度现在是严格等比（1 天范围 + 1 小时窗口 = 1/24 宽，
+   只有 30 来 px），但手指/鼠标要点的范围不能跟着变窄 ——
+   用伪元素把可拖区域向左右各扩 6px，视觉宽度不变、手感不变。
+   伪元素在 .tl-scroll-win 内部，指针事件会冒泡到滑块自身，
+   所以 pointerdown 的判定完全不用改。 */
+.tl-scroll-win::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: -6px;
+  bottom: -6px;
 }
 
 .tl-scroll-win:hover {
@@ -1074,17 +1087,21 @@ body {
 /* ------------------------------------------------------- 9. 表单与开关控件 */
 /* 外观（底色/描边/圆角/高度/内边距）由 style.css 的全局令牌统一给，
    这里只补主题层的动效与悬停态 —— 两处都写外观会导致同一界面上
-   下拉框圆角/高矮不一致（theme.css 后加载，会盖掉 style.css）。 */
+   下拉框圆角/高矮不一致（theme.css 后加载，会盖掉 style.css）。
+
+   注意这里必须用 background-color 而不是 background 简写：
+   简写会把 style.css 给 select 设的自绘箭头（background-image + position + size）
+   一起清掉，下拉框右侧的「∨」就凭空消失了。 */
 select,
 input[type="search"],
 input[type="text"],
 input[type="password"],
 textarea {
-  background: var(--ctl-bg, rgba(11, 14, 20, .88));
+  background-color: var(--ctl-bg, rgba(11, 14, 20, .88));
   border: 1px solid var(--ctl-border, var(--t-line));
   border-radius: var(--ctl-radius, 8px);
   color: var(--t-text);
-  transition: border-color .22s, box-shadow .3s, background .22s;
+  transition: border-color .22s, box-shadow .3s, background-color .22s;
 }
 
 /* 下拉框的底色/箭头/内边距由 style.css 统一（含自绘箭头），
@@ -1296,25 +1313,34 @@ tbody tr:hover {
 }
 
 /* --------------------------------------------------------- 12. 详情与日志 */
-.field {
+/* 详情页标题卡：与 .panel / .card 同源的渐变面 + 描边 + 阴影，
+   让「标题 + 操作按钮 + 指标卡」这一整块和下方日志卡片看起来是一套。 */
+.dt-head {
+  position: relative;
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: 14px;
+  box-shadow: var(--t-shadow);
+}
+
+/* 指标卡：深底挖空感，与标题卡拉开层次（同 .field 的处理） */
+.dt-metric {
   background: linear-gradient(180deg, rgba(255, 255, 255, .032), rgba(255, 255, 255, .008));
   border: 1px solid var(--t-line-soft);
-  border-radius: 11px;
-  transition: border-color .26s, background .26s, box-shadow .26s;
+  border-radius: 10px;
+  transition: border-color .26s, background .26s;
 }
 
-.field:hover {
+.dt-metric:hover {
   border-color: rgba(77, 155, 240, .3);
-  box-shadow: 0 0 0 1px rgba(77, 155, 240, .07) inset, 0 12px 28px -22px rgba(77, 155, 240, .95);
 }
 
-.field .k {
+.dt-metric .k {
   color: var(--t-dim);
-  letter-spacing: .07em;
 }
 
-.field .v {
-  font-variant-numeric: tabular-nums;
+.dt-metric .v {
+  color: var(--t-text);
 }
 
 .badge {

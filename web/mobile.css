@@ -167,43 +167,68 @@
   .sidebar .navmenu {
     flex: 1 1 100%;
     order: 3;
-    display: block;
-    overflow: visible;
+    /* 关键：navmenu 自己就是那条横向滚动带。
+       HTML 里导航按分组写成三个 <ul class="navmenu-list">（运行监控 / 问题排查 /
+       配置管理），只在 ul 上设 nowrap 的话，三个 ul 仍会各自占一行纵向堆叠 ——
+       看起来还是「折成三行」。必须让 .navmenu 变成横向 flex 容器把三个 ul 并排，
+       再由它统一横向滚动，才是真正的一行。
+       桌面端是下拉菜单（ul 绝对定位），这里把定位改成 static 参与文档流。 */
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
     min-height: 0;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* 两端淡出：滚动条被隐藏后，用户看不出「这条还能滑」。
+       切到靠右的 tab 时左边会露出半截，看起来像被裁坏了 ——
+       这层 12px 的渐隐把它变成「渐隐 = 还有内容」的通用暗示。
+       注意用 mask 而不是盖一层渐变伪元素：伪元素会挡住 tab 的点击。 */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  }
+
+  .sidebar .navmenu::-webkit-scrollbar {
+    display: none;
   }
 
   .side-group {
     display: none;
   }
 
+  /* 七个 tab 排成一行横向滚动，不再折行。
+     折行的问题是「参差不齐」：390px 屏放得下 4 个，剩下 3 个另起一行，
+     两行长短不一，而且每一行的高度都实打实占着顶栏（原来最多折成 3 行）。
+     横向滚动是移动端 tab 的通用做法 —— 一行定高、右端露出半个 tab 作为
+     「还能滑」的暗示，顶栏高度也就恒定了。
+     注意：不能用 flex-shrink 让它们挤进一行，中文 tab 会被压成两行文字。 */
   .sidebar .navmenu .navmenu-list,
   .sidebar .navmenu:hover .navmenu-list,
   .sidebar .navmenu.open .navmenu-list {
     display: flex;
     position: static;
+    flex: none;               /* 三个分组各自按内容宽度排布，不压缩、不换行 */
     flex-direction: row;
-    flex-wrap: wrap;            /* 窄机型（320/360px）一行放不下时折行，保证四个 tab 都点得到 */
-    gap: 4px;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin: 0;
     padding: 0;
-    overflow: visible;
     min-width: 0;
-    scrollbar-width: none;
+    overflow: visible;        /* 滚动交给外层 .navmenu，避免出现两条滚动带 */
   }
 
-  .sidebar .navmenu-list::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* 4 个 tab 在主流机型（≥390px）一行放得下，320/360/375px 折成两行，不会溢出栏外。
-     宽度算式（Maple Mono 的中文字宽 ≈ 1.21em，实测 11px 时「运行数据分析」= 94px）：
-     4 个 tab 合计 94 + 81 + 81 + 81 = 337px，加 3 个 4px 间隙 = 349px，
-     刚好落在 390 视口扣除纵向滚动条后的可用宽 360px 里。
-     不能用 flex-shrink：让它们缩，文字会溢出到 tab 外面（栏外被裁、还滑不到）。 */
+  /* 七个 tab 全部按内容宽度排布（flex:0 0 auto），由横向滚动承载溢出 */
   .sidebar .navmenu-list li {
     flex: 0 0 auto;
     height: 30px;
-    padding: 0 6px;
+    padding: 0 10px;
     font-size: 11px;
+    white-space: nowrap;
     border: 1px solid var(--t-line-soft);
     border-radius: 9px;
     background: rgba(255, 255, 255, .03);
@@ -647,7 +672,7 @@
 
   .topbar {
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 0;
   }
 
   .topbar .title {
@@ -685,14 +710,26 @@
   /* 同上：.card 自带 padding/border，width:100% 在 content-box 下会多出
      28px 内边距 + 2px 边框，直接把卡片顶出屏外（实测右侧溢出 10px）。
      凡是显式给 width:100% 的块，一律补上 border-box。 */
-  .info-card {
+  .dt-head {
     box-sizing: border-box;
-    flex: none;
     width: 100%;
-    max-width: none;
-    max-height: none;
-    overflow: visible;
+    padding: 10px 12px;
     margin-bottom: 10px;
+  }
+
+  /* 指标卡：窄屏一行两张（六张排三行）。
+     基准 110px 在 390px 屏上放不下三张，两张正好。 */
+  .dt-metrics {
+    gap: 8px;
+  }
+
+  .dt-metric {
+    flex: 1 1 calc(50% - 4px);
+    padding: 7px 8px;
+  }
+
+  .dt-metric .v {
+    font-size: 14px;
   }
 
   .log-card {
@@ -876,6 +913,15 @@
   /* ==========================================================================
    * 10. 表单与触控尺寸
    * ======================================================================== */
+  /* 全局下拉的基准宽度（--ctl-w: 118px）是给桌面一行排三个准备的，
+     窄屏上会顶破工具栏。这里改成「按内容自适应 + 可伸缩」：
+     工具栏本身是 flex-wrap，标签与下拉会自然折行。 */
+  select {
+    width: auto;
+    min-width: 92px;
+    max-width: 100%;
+  }
+
   /* 16px 是 iOS 的临界值：小于它聚焦时 Safari 会自动放大整页 */
   select,
   input[type="search"],
