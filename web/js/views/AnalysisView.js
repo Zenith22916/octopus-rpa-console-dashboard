@@ -242,7 +242,7 @@ export default defineComponent({
     };
   },
   template: `
-<div class="rpa-view rpa-view-scroll">
+<div class="rpa-view an-view">
   <div class="an-grid">
     <div class="rpa-card">
       <div class="rpa-card-head"><h2 class="rpa-card-title">触发方式分布</h2></div>
@@ -253,7 +253,7 @@ export default defineComponent({
       <div ref="statusEl" class="an-chart"></div>
     </div>
 
-    <div class="rpa-card span2">
+    <div class="rpa-card">
       <div class="rpa-card-head"><h2 class="rpa-card-title">运行量热力图（星期 × 小时）</h2></div>
       <div ref="heatEl" class="an-chart"></div>
     </div>
@@ -287,7 +287,10 @@ export default defineComponent({
     </div>
   </div>
 
-  <div class="rpa-card" style="height:320px;">
+  <!-- 失败记录看板：与旧版一致，已从分析页下线（面板在 .an-grid 之外，
+       不参与上面 12 列栅格的 nth-child 定位）。用 CSS 隐藏而不是删节点：
+       想恢复这个面板，删掉 app.css 里 .an-offline 那条 display:none 即可。 -->
+  <div class="rpa-card an-offline">
     <div class="rpa-card-head">
       <h2 class="rpa-card-title">失败记录看板</h2>
       <el-button size="small" :disabled="!failed.length" @click="exportFails">导出失败记录 CSV</el-button>

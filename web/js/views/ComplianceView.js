@@ -172,10 +172,9 @@ export default defineComponent({
           <el-table-column prop="app" label="应用" min-width="200" show-overflow-tooltip />
           <el-table-column label="状态" width="98">
             <template #default="{ row }">
-              <el-tag size="small" effect="dark"
-                      :style="{ background: badge(row.status).bg, color: badge(row.status).color, border: 'none' }">
+              <span class="cp-badge" :style="{ '--c': badge(row.status).color }">
                 {{ badge(row.status).cn }}
-              </el-tag>
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="实际运行" min-width="230">

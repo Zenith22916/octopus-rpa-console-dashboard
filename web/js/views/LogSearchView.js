@@ -188,7 +188,7 @@ export default defineComponent({
                  @click="openHit(g)" title="点击查看该条记录的完整日志">
               <span class="ls-lineno">第 {{ h.line }} 行</span>
               <span v-if="lvTag(h.lvl)" class="ls-lv"
-                    :style="{ background: lvTag(h.lvl).bg, color: lvTag(h.lvl).color }">
+                    :style="{ '--c': lvTag(h.lvl).color }">
                 {{ lvTag(h.lvl).cn }}
               </span>
               <span class="ls-hit-text">

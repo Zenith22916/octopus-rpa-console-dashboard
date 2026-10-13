@@ -36,6 +36,17 @@
   --rpa-shadow: 0 12px 32px -18px rgba(0, 0, 0, .9);
   --rpa-radius: 12px;
   --s: 1;                                  /* 等比缩放系数，由 app.js 按窗口高度写入 */
+
+  /* 幽灵主题：语义色的「描边 + 文字」版本。实色填充的按钮与标签太抢眼，
+     统一改成透明底 + 同色描边与文字，只有 hover / 选中时才浮出一层淡色。
+     这几支变量是按钮、标签、分段控件共用的单一出处。 */
+  --ghost-primary: #5aa6f2;
+  --ghost-success: #3ecf86;
+  --ghost-warning: #f0b34a;
+  --ghost-danger: #ff7b7d;
+  --ghost-info: #9aa2b1;
+  --ghost-line: .42;                       /* 描边浓度 */
+  --ghost-fill: .13;                       /* hover / 选中时的底色浓度 */
 }
 
 /* Element Plus 深色主题：把 EP 的调色板接到本项目配色上 */
@@ -206,14 +217,22 @@ body::after {
   box-shadow: var(--rpa-shadow);
 }
 .rpa-topbar .rpa-view-title { font-size: 15px; font-weight: 600; letter-spacing: .03em; white-space: nowrap; }
-.rpa-metrics { display: flex; gap: 8px; flex: 1 1 auto; flex-wrap: wrap; }
+/* 指标卡：所有视图、任意张数下尺寸完全一致。
+   flex:1 1 0 让同一行的卡片等宽（不随标签/数值长短变形），max-width 封顶后
+   4 张与 5 张的视图拿到同样的宽度；高度固定，避免有无单位造成的行高差。 */
+.rpa-metrics { display: flex; gap: 8px; flex: 1 1 auto; flex-wrap: wrap; min-width: 0; }
 .rpa-metric {
-  min-width: 92px; padding: 5px 12px; border-radius: 9px;
+  flex: 1 1 0; max-width: 136px; min-width: 0;
+  height: 48px; padding: 0 10px; border-radius: 9px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  box-sizing: border-box; text-align: center;
   background: rgba(255, 255, 255, .03); border: 1px solid var(--rpa-line);
-  text-align: center;
 }
-.rpa-metric .k { font-size: 11px; color: var(--rpa-dim); letter-spacing: .06em; white-space: nowrap; }
-.rpa-metric .v { font-size: 18px; font-weight: 600; line-height: 1.35; }
+.rpa-metric .k {
+  font-size: 11px; color: var(--rpa-dim); letter-spacing: .06em;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rpa-metric .v { font-size: 18px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .rpa-topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 
 .rpa-warn {
@@ -224,25 +243,46 @@ body::after {
 
 /* 视图根：统一 flex 纵向、内容自管内滚 */
 .rpa-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
-/* 内容高度不确定的视图（分析页）：整页纵向滚动，卡片各按自己的固定高度排。
-   子项一律 flex:none —— 否则 flex 容器会把超高的卡片压扁到剩一条边。 */
-.rpa-view-scroll { overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
-.rpa-view-scroll > * { flex: none; }
 
-/* 卡片：替代原 .panel / .card（改用 EP 变量，与组件库同源） */
+/* 卡片：替代原 .panel / .card（改用 EP 变量，与组件库同源）。
+   hover 只改描边并浮出一条顶部渐变高光线（旧版 .panel 的观感）。 */
 .rpa-card {
+  position: relative;
   background: linear-gradient(180deg, rgba(36, 42, 55, .93) 0%, rgba(23, 27, 36, .95) 100%);
   border: 1px solid var(--rpa-line);
   border-radius: var(--rpa-radius);
   box-shadow: var(--rpa-shadow);
   padding: 12px 14px;
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  transition: border-color .32s, box-shadow .32s;
 }
+.rpa-card:hover { border-color: var(--rpa-line-hi); }
+/* 面板顶部渐变高光线：从中央铺开，比 hover 位移更克制 */
+.rpa-card::after {
+  content: ""; position: absolute; left: 14%; right: 14%; top: -1px; height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(77, 155, 240, .9), rgba(139, 127, 240, .75), transparent);
+  opacity: 0; transform: scaleX(.35);
+  transition: opacity .4s cubic-bezier(.16, .84, .32, 1), transform .6s cubic-bezier(.16, .84, .32, 1);
+}
+.rpa-card:hover::after { opacity: 1; transform: scaleX(1); }
+
 .rpa-card-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: -2px 0 10px;
 }
+/* 标题前的小竖条：只加在旧版本来就有它的地方 —— 旧规则是
+   `.panel > h2:not(:has(select))::before`，实际命中的只有分析页 5 个面板
+   与合规页「各机器人命中率」。别处（工具栏里的 h2、实体名）旧版都没有，
+   这里一并保持一致，避免多加装饰。 */
 .rpa-card-title { font-size: 13px; font-weight: 600; letter-spacing: .05em; color: #d8dee9; margin: 0; }
+.an-grid > .rpa-card .rpa-card-title::before,
+.cp-side .rpa-card-title::before {
+  content: ""; display: inline-block; width: 3px; height: 11px;
+  margin-right: 9px; border-radius: 2px; vertical-align: -1px;
+  background: linear-gradient(180deg, var(--rpa-accent), var(--rpa-accent-2));
+  box-shadow: 0 0 10px rgba(77, 155, 240, .65);
+}
 .rpa-card-head .rpa-spacer { margin-left: auto; }
 .rpa-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .rpa-hint { font-size: 11.5px; color: var(--rpa-dim); line-height: 1.65; margin-top: 8px; }
@@ -252,12 +292,149 @@ body::after {
 .el-table { --el-table-border-color: var(--rpa-line); --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; --el-table-header-bg-color: rgba(255, 255, 255, .035); font-size: 12.5px; }
 .el-table th.el-table__cell { font-weight: 600; color: #c3cad6; }
 .el-table .cell { line-height: 1.5; }
-.el-tag { --el-tag-border-radius: 6px; }
 .el-button { font-family: inherit; }
 .el-dialog { border-radius: 14px; }
 .el-descriptions { --el-descriptions-item-bordered-label-background: rgba(255, 255, 255, .035); }
 .el-descriptions__label { color: var(--rpa-dim) !important; }
 .el-switch.is-checked .el-switch__core { border-color: var(--rpa-accent); }
+
+/* ---------------------------------------------------------------- 幽灵主题
+   实色填充的按钮与标签在深色界面上过于鲜艳、抢视线，统一改为「幽灵」：
+   透明底 + 同色描边与文字，hover / 选中时才浮出一层淡色底。
+   只覆写 EP 的 CSS 变量，不动组件结构，升级组件库也不会失配。 */
+
+/* ---- 按钮：所有语义色都走幽灵 ---- */
+.el-button {
+  --el-button-bg-color: transparent;
+  --el-button-border-color: rgba(255, 255, 255, .16);
+  --el-button-text-color: var(--rpa-text-2);
+  --el-button-hover-bg-color: rgba(255, 255, 255, .07);
+  --el-button-hover-border-color: rgba(255, 255, 255, .30);
+  --el-button-hover-text-color: var(--rpa-text);
+  --el-button-active-bg-color: rgba(255, 255, 255, .11);
+  --el-button-active-border-color: rgba(255, 255, 255, .36);
+  --el-button-disabled-bg-color: transparent;
+  --el-button-disabled-border-color: rgba(255, 255, 255, .08);
+  --el-button-disabled-text-color: rgba(255, 255, 255, .26);
+}
+.el-button--primary {
+  --el-button-text-color: var(--ghost-primary);
+  --el-button-border-color: color-mix(in srgb, var(--ghost-primary) calc(var(--ghost-line) * 100%), transparent);
+  --el-button-hover-text-color: #8cc4f8;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--ghost-primary) calc(var(--ghost-fill) * 100%), transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--ghost-primary) 78%, transparent);
+  --el-button-active-bg-color: color-mix(in srgb, var(--ghost-primary) 22%, transparent);
+  --el-button-active-border-color: var(--ghost-primary);
+  --el-button-disabled-text-color: color-mix(in srgb, var(--ghost-primary) 34%, transparent);
+  --el-button-disabled-border-color: color-mix(in srgb, var(--ghost-primary) 20%, transparent);
+}
+.el-button--success {
+  --el-button-text-color: var(--ghost-success);
+  --el-button-border-color: color-mix(in srgb, var(--ghost-success) calc(var(--ghost-line) * 100%), transparent);
+  --el-button-hover-text-color: #6ee0a6;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--ghost-success) calc(var(--ghost-fill) * 100%), transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--ghost-success) 78%, transparent);
+  --el-button-active-bg-color: color-mix(in srgb, var(--ghost-success) 22%, transparent);
+  --el-button-active-border-color: var(--ghost-success);
+  --el-button-disabled-text-color: color-mix(in srgb, var(--ghost-success) 34%, transparent);
+  --el-button-disabled-border-color: color-mix(in srgb, var(--ghost-success) 20%, transparent);
+}
+.el-button--warning {
+  --el-button-text-color: var(--ghost-warning);
+  --el-button-border-color: color-mix(in srgb, var(--ghost-warning) calc(var(--ghost-line) * 100%), transparent);
+  --el-button-hover-text-color: #ffcb75;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--ghost-warning) calc(var(--ghost-fill) * 100%), transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--ghost-warning) 78%, transparent);
+  --el-button-active-bg-color: color-mix(in srgb, var(--ghost-warning) 22%, transparent);
+  --el-button-active-border-color: var(--ghost-warning);
+  --el-button-disabled-text-color: color-mix(in srgb, var(--ghost-warning) 34%, transparent);
+  --el-button-disabled-border-color: color-mix(in srgb, var(--ghost-warning) 20%, transparent);
+}
+.el-button--danger, .el-button--error {
+  --el-button-text-color: var(--ghost-danger);
+  --el-button-border-color: color-mix(in srgb, var(--ghost-danger) calc(var(--ghost-line) * 100%), transparent);
+  --el-button-hover-text-color: #ffa2a3;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--ghost-danger) calc(var(--ghost-fill) * 100%), transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--ghost-danger) 78%, transparent);
+  --el-button-active-bg-color: color-mix(in srgb, var(--ghost-danger) 22%, transparent);
+  --el-button-active-border-color: var(--ghost-danger);
+  --el-button-disabled-text-color: color-mix(in srgb, var(--ghost-danger) 34%, transparent);
+  --el-button-disabled-border-color: color-mix(in srgb, var(--ghost-danger) 20%, transparent);
+}
+.el-button--info {
+  --el-button-text-color: var(--ghost-info);
+  --el-button-border-color: color-mix(in srgb, var(--ghost-info) calc(var(--ghost-line) * 100%), transparent);
+  --el-button-hover-text-color: #c2c9d6;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--ghost-info) calc(var(--ghost-fill) * 100%), transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--ghost-info) 78%, transparent);
+  --el-button-active-bg-color: color-mix(in srgb, var(--ghost-info) 22%, transparent);
+  --el-button-active-border-color: var(--ghost-info);
+  --el-button-disabled-text-color: color-mix(in srgb, var(--ghost-info) 34%, transparent);
+  --el-button-disabled-border-color: color-mix(in srgb, var(--ghost-info) 20%, transparent);
+}
+/* link / text 按钮本来就是无底样式，这里只保证颜色跟幽灵主题同源 */
+.el-button.is-link, .el-button.is-text { --el-button-bg-color: transparent; --el-button-border-color: transparent; }
+.el-button.is-link.el-button--primary { --el-button-text-color: var(--ghost-primary); }
+
+/* ---- 标签：统一成描边（plain）观感，即使模板里写了 effect="dark" ----
+   深色实底标签（effect="dark"）在深色界面上像一块块高亮贴纸，太扎眼。
+   这里把 dark / plain 的变量一起重新指到描边版，模板无需逐处改 effect。
+   选择器带 .el-tag--dark 前缀是为了压过 EP 自带的同名变量声明。 */
+.el-tag {
+  --el-tag-border-radius: 6px;
+  --el-tag-bg-color: transparent;
+  --el-tag-border-color: rgba(255, 255, 255, .18);
+  --el-tag-text-color: var(--rpa-text-2);
+}
+.el-tag--dark, .el-tag--plain { background-color: transparent; }
+.el-tag--primary,
+.el-tag--dark.el-tag--primary,
+.el-tag--plain.el-tag--primary {
+  --el-tag-bg-color: transparent;
+  --el-tag-text-color: var(--ghost-primary);
+  --el-tag-border-color: color-mix(in srgb, var(--ghost-primary) calc(var(--ghost-line) * 100%), transparent);
+}
+.el-tag--success,
+.el-tag--dark.el-tag--success,
+.el-tag--plain.el-tag--success {
+  --el-tag-bg-color: transparent;
+  --el-tag-text-color: var(--ghost-success);
+  --el-tag-border-color: color-mix(in srgb, var(--ghost-success) calc(var(--ghost-line) * 100%), transparent);
+}
+.el-tag--warning,
+.el-tag--dark.el-tag--warning,
+.el-tag--plain.el-tag--warning {
+  --el-tag-bg-color: transparent;
+  --el-tag-text-color: var(--ghost-warning);
+  --el-tag-border-color: color-mix(in srgb, var(--ghost-warning) calc(var(--ghost-line) * 100%), transparent);
+}
+.el-tag--danger, .el-tag--error,
+.el-tag--dark.el-tag--danger, .el-tag--dark.el-tag--error,
+.el-tag--plain.el-tag--danger, .el-tag--plain.el-tag--error {
+  --el-tag-bg-color: transparent;
+  --el-tag-text-color: var(--ghost-danger);
+  --el-tag-border-color: color-mix(in srgb, var(--ghost-danger) calc(var(--ghost-line) * 100%), transparent);
+}
+.el-tag--info,
+.el-tag--dark.el-tag--info,
+.el-tag--plain.el-tag--info {
+  --el-tag-bg-color: transparent;
+  --el-tag-text-color: var(--ghost-info);
+  --el-tag-border-color: color-mix(in srgb, var(--ghost-info) calc(var(--ghost-line) * 100%), transparent);
+}
+
+/* ---- 分段控件（项目页页签）：选中态也走幽灵，不铺实色 ---- */
+.el-radio-button__inner {
+  background: transparent;
+  border-color: rgba(255, 255, 255, .16);
+  color: var(--rpa-text-2);
+}
+.el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background: color-mix(in srgb, var(--ghost-primary) calc(var(--ghost-fill) * 100%), transparent);
+  border-color: color-mix(in srgb, var(--ghost-primary) 78%, transparent);
+  color: #8cc4f8;
+  box-shadow: none;
+}
 
 /* 数字等宽：表格里的时间/时长对齐才好看 */
 .num, .mono { font-variant-numeric: tabular-nums; }
@@ -315,13 +492,36 @@ body::after {
 .tl-feed-end { text-align: center; color: var(--rpa-dim); font-size: 11.5px; padding: 12px 0 4px; }
 
 /* ---- 分析视图 ----
-   两列网格 + 固定行高：图表卡片高度确定，ECharts 才有稳定的绘图区；
-   整页内容超出时由 .rpa-view-scroll 兜住（分析页是唯一允许整页滚动的视图）。 */
-.an-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; align-content: start; }
-.an-grid > .rpa-card { height: 236px; min-width: 0; }
-.an-grid > .rpa-card.span2 { grid-column: span 2; height: 262px; }
-.an-grid > .rpa-card .rpa-scroll { max-height: 172px; }
-.an-chart { flex: 1 1 auto; min-height: 120px; width: 100%; }
+   与旧版精调后的版式一致：12 列 × 2 行栅格压进一屏，整页不出现滚动条。
+   第一行：触发方式分布 / 状态分布 / 平均排队时长（3+3+6 列）
+   第二行：运行量热力图 / 机器人负载榜（7+5 列）
+   面板在 DOM 中的顺序与视觉顺序不同，用 grid-area 显式定位。 */
+.an-view { overflow: hidden; gap: 9px; }
+.an-grid {
+  flex: 1 1 auto; min-height: 0; display: grid; gap: 9px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+.an-grid > .rpa-card {
+  grid-column: span 12; min-height: 0; min-width: 0;
+  padding: 8px 11px; border-radius: 12px; overflow: hidden;
+}
+/* 第一行：两张饼图各 3 列（左右对称、够放标签），平均排队时长 6 列
+   —— 横向条形图的 y 轴标签本身要吃掉约 112px，给足宽度柱子才不显憋屈 */
+.an-grid > .rpa-card:nth-child(1) { grid-area: 1 / 1 / 2 / 4; }
+.an-grid > .rpa-card:nth-child(2) { grid-area: 1 / 4 / 2 / 7; }
+.an-grid > .rpa-card:nth-child(4) { grid-area: 1 / 7 / 2 / 13; }
+/* 第二行 */
+.an-grid > .rpa-card:nth-child(3) { grid-area: 2 / 1 / 3 / 8; }
+.an-grid > .rpa-card:nth-child(5) { grid-area: 2 / 8 / 3 / 13; }
+.an-grid > .rpa-card .rpa-card-head { flex: none; margin: 0 0 5px; }
+.an-grid > .rpa-card .rpa-card-title { font-size: 11.5px; letter-spacing: .05em; }
+/* 表格卡片：表格铺满面板高度，行多时在面板内滚动，不撑破栅格 */
+.an-grid > .rpa-card .rpa-scroll { flex: 1 1 auto; min-height: 0; max-height: none; }
+/* 图表容器填满面板，不再写死高度 */
+.an-chart { flex: 1 1 auto; height: auto; min-height: 0; width: 100%; }
+/* 失败记录看板：与旧版一致已下线（保留节点，删掉这条即可恢复） */
+.an-offline { display: none; }
 
 /* ---- 详情视图 ---- */
 .dt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -479,7 +679,13 @@ body::after {
 .bs-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .bs-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .bs-name { flex: 1 1 auto; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bs-state { font-size: 11px; padding: 1px 8px; border-radius: 6px; flex: none; }
+.bs-state {
+  font-size: 11px; padding: 1px 8px; border-radius: 6px; flex: none;
+  /* 幽灵主题：状态色只用在文字与描边上（底色由行内 --c 派生淡色，仅 6% 提亮） */
+  color: var(--c);
+  border: 1px solid color-mix(in srgb, var(--c) calc(var(--ghost-line) * 100%), transparent);
+  background: transparent;
+}
 .bs-task { display: flex; flex-direction: column; gap: 3px; min-height: 34px; }
 .bs-task-line { display: flex; gap: 6px; font-size: 11.5px; min-width: 0; }
 .bs-task-k { color: var(--rpa-dim); flex: none; }
@@ -512,7 +718,13 @@ body::after {
 }
 .ls-hitrow:hover { background: rgba(77, 155, 240, .10); }
 .ls-lineno { color: var(--rpa-dim); flex: none; min-width: 66px; }
-.ls-lv { flex: none; padding: 0 6px; border-radius: 5px; font-size: 11px; }
+.ls-lv {
+  flex: none; padding: 0 6px; border-radius: 5px; font-size: 11px;
+  /* 幽灵主题：级别色走文字 + 描边（旧版是实底小色块，太抢眼） */
+  color: var(--c);
+  border: 1px solid color-mix(in srgb, var(--c) calc(var(--ghost-line) * 100%), transparent);
+  background: transparent;
+}
 .ls-hit-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ls-hit-text mark { background: rgba(255, 209, 102, .35); color: #ffe6ad; border-radius: 2px; }
 
@@ -522,6 +734,15 @@ body::after {
 .cp-main { flex: 1 1 auto; min-width: 0; }
 .cp-missed { color: #ff6b6d; }
 .cp-rate-bad { color: #ffb020; }
+/* 状态徽标：幽灵主题（描边 + 同色文字），与 el-tag 观感一致。
+   颜色由行内 --c 传入，避免每个状态写一套类名。 */
+.cp-badge {
+  display: inline-block; padding: 1px 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+  color: var(--c);
+  border: 1px solid color-mix(in srgb, var(--c) calc(var(--ghost-line) * 100%), transparent);
+  background: transparent;
+}
 
 /* ---- 运行机器人选择弹窗 ---- */
 .run-sub { font-size: 12px; color: var(--rpa-text-2); margin-bottom: 8px; }
@@ -538,7 +759,9 @@ body::after {
 .run-bot-name { font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
 .run-bot-tag {
   font-style: normal; font-size: 10px; padding: 0 5px; border-radius: 4px;
-  background: rgba(52, 209, 127, .18); color: #7ee2ab;
+  color: var(--ghost-success);
+  border: 1px solid color-mix(in srgb, var(--ghost-success) calc(var(--ghost-line) * 100%), transparent);
+  background: transparent;
 }
 .run-bot-meta { font-size: 11px; color: var(--rpa-dim); }
 .run-bot-bad { color: #ff6b6d; }
@@ -579,10 +802,13 @@ body::after {
   .rpa-view, .rpa-body { display: block; }
   .rpa-card { margin-bottom: 10px; }
   .rpa-scroll { overflow: visible; max-height: none; }
+  /* 分析页：12 列栅格拆成单列堆叠，图表给固定高度（旧版手机端同样处理） */
+  .an-view { overflow: visible; gap: 0; }
   .an-grid { display: block; }
-  .an-grid > .rpa-card { height: auto; margin-bottom: 10px; }
-  .an-grid > .rpa-card .rpa-scroll { max-height: none; }
-  .an-chart { height: 240px; }
+  .an-grid > .rpa-card { height: auto; margin-bottom: 10px; padding: 10px 12px; overflow: visible; }
+  .an-grid > .rpa-card .rpa-scroll { max-height: 340px; }
+  .an-chart { flex: none; height: 264px; min-height: 264px; }
+  .an-grid > .rpa-card:nth-child(3) .an-chart { height: 340px; min-height: 340px; }
   .tl-layout { display: block; }
   .tl-top { display: none; }              /* 手机端没有甘特图：整块砍掉，只留记录流 */
   .pj-layout, .cp-layout { display: block; }
@@ -592,7 +818,5 @@ body::after {
   /* 排期日历天生比手机屏宽：横向滚动限制在卡片内部，不要顶破整页 */
   .sc-wrap { min-width: max-content; }
   .rpa-card > .rpa-scroll:has(.sc-wrap) { overflow-x: auto; }
-  .rpa-view-scroll { overflow: visible; }
-  .rpa-view-scroll > * { flex: initial; }
   .dt-logbox { min-height: 60vh; }
 }

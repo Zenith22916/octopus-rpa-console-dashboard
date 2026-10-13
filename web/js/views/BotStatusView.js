@@ -132,10 +132,7 @@ export default defineComponent({
             <span class="bs-dot" :style="{ background: (U.BS_STATE[b.state] || U.BS_STATE.idle).color }"></span>
             <span class="bs-name" :title="b.robot">{{ b.robot }}</span>
             <span class="bs-state"
-                  :style="{
-                    background: (U.BS_STATE[b.state] || U.BS_STATE.idle).bg,
-                    color: (U.BS_STATE[b.state] || U.BS_STATE.idle).color
-                  }">
+                  :style="{ '--c': (U.BS_STATE[b.state] || U.BS_STATE.idle).color }">
               {{ (U.BS_STATE[b.state] || U.BS_STATE.idle).cn }}
             </span>
           </div>
