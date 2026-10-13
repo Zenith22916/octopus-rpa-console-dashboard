@@ -670,22 +670,35 @@
     overflow: visible;
   }
 
-  .topbar {
+  /* 标题行：窄屏标题 + 项目名占一行，按钮组折到下一行并靠左
+     （靠右在窄屏会留出一大块空白，看着像没排好）。 */
+  .dt-bar {
     gap: 8px;
-    margin-bottom: 0;
+    padding-bottom: 10px;
   }
 
-  .topbar .title {
+  .dt-title {
+    flex: none;
+    font-size: 16px;
+  }
+
+  .dt-sub {
     flex: 1 1 100%;
-    margin-right: 0;
-    font-size: 18px;
+    order: 3;
+    font-size: 12px;
+    white-space: normal;      /* 窄屏允许项目名折行，不省略 */
   }
 
-  /* 三个操作按钮平分一行：基准宽度按内容算（flex:auto）而不是 0，
-     再配 white-space:nowrap —— 按钮里是中文，默认任意处可断行，
-     窄一点就会把「← 返回上一页」折成两行。 */
-  .topbar .back,
-  .topbar .btn {
+  .dt-actions {
+    flex: 1 1 100%;
+    order: 2;
+    margin-left: 0;
+    gap: 8px;
+  }
+
+  /* 五个操作按钮平分一行：基准宽度按内容算（flex:auto）而不是 0，
+     再配 white-space:nowrap —— 按钮里是中文，默认任意处可断行。 */
+  .dt-btn {
     flex: 1 1 auto;
     min-width: 0;
     padding: 8px 8px;
@@ -698,39 +711,21 @@
     display: block;
   }
 
-  /* 桌面端左右分栏（信息 400px + 日志）拆成上下两段 */
-  .detail-wrap {
-    display: block;
-  }
-
   .card {
     padding: 12px 14px;
   }
 
-  /* 同上：.card 自带 padding/border，width:100% 在 content-box 下会多出
-     28px 内边距 + 2px 边框，直接把卡片顶出屏外（实测右侧溢出 10px）。
-     凡是显式给 width:100% 的块，一律补上 border-box。 */
-  .dt-head {
+  /* 整页卡片：padding/border 自带，width:100% 在 content-box 下会多出
+     内边距 + 边框把卡片顶出屏外，所以补 border-box。 */
+  .dt-card {
     box-sizing: border-box;
     width: 100%;
-    padding: 10px 12px;
-    margin-bottom: 10px;
+    padding: 12px 12px;
+    gap: 10px;
   }
 
-  /* 指标卡：窄屏一行两张（六张排三行）。
-     基准 110px 在 390px 屏上放不下三张，两张正好。 */
-  .dt-metrics {
-    gap: 8px;
-  }
-
-  .dt-metric {
-    flex: 1 1 calc(50% - 4px);
-    padding: 7px 8px;
-  }
-
-  .dt-metric .v {
-    font-size: 14px;
-  }
+  /* 详情页指标卡已上移到顶栏，沿用 #headMetrics 的「一行两张」规则
+     （见上面 .main-bar #headMetrics .metric），这里不再需要 .dt-metric 覆盖。 */
 
   .log-card {
     box-sizing: border-box;
@@ -774,21 +769,12 @@
     max-width: 74vw;
   }
 
-  /* 复制路径：文案短，别跟着工具条里的长按钮一起被压扁 */
-  #btnCopyPath {
-    flex: none;
-    white-space: nowrap;
-  }
+  /* 刷新 / 复制路径：已并入 .dt-actions 的统一按钮组（.dt-btn），
+     不再单独钉 flex:none —— 那会让这两个按钮比同排的其他按钮窄一截。
+     五个按钮在窄屏由 .dt-btn 统一平分一行。 */
 
-  /* 刷新：同样不压缩，保证「↻ 刷新」四个字完整可点 */
-  #btnLogRefresh {
-    flex: none;
-    white-space: nowrap;
-  }
-
+  /* 轻提示：桌面端在顶部居中，窄屏同样贴顶（只是左右留白更小、允许折行） */
   #lgToast {
-    top: auto;
-    bottom: 24px;
     max-width: calc(100vw - 24px);
   }
 

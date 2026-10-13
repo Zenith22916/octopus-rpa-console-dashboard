@@ -301,11 +301,14 @@ var VIEW_NAMES = ['timeline', 'analysis', 'detail', 'schedule', 'projects',
   'botstatus', 'logsearch', 'compliance'];
 var NAV_NAMES = ['timeline', 'analysis', 'schedule', 'projects',
   'botstatus', 'logsearch', 'compliance'];
-/* 标题栏指标卡：视图 -> 容器 id。每个视图一组，切视图时只显示对应那组 */
+/* 标题栏指标卡：视图 -> 容器 id。每个视图一组，切视图时只显示对应那组。
+   详情页那六张（状态/触发方式/开始时间/排队时长/运行时长/结束时间）也在这里，
+   与其他视图统一放顶栏，而不是塞在详情卡片里。 */
 var HEAD_METRIC_BOXES = [
   ['timeline', 'tlMetrics'], ['analysis', 'anMetrics'], ['schedule', 'scMetrics'],
   ['projects', 'pjMetrics'], ['botstatus', 'bsMetrics'],
-  ['logsearch', 'lsMetrics'], ['compliance', 'cpMetrics']
+  ['logsearch', 'lsMetrics'], ['compliance', 'cpMetrics'],
+  ['detail', 'dtMetrics']
 ];
 
 function showView(name) {
@@ -316,7 +319,13 @@ function showView(name) {
   }
   // 离开详情页时释放 Monaco 日志编辑器（模型与实例随详情重建，避免常驻占内存）
   if (name !== 'detail' && typeof lgReset === 'function') lgReset();
-  if (NAV_NAMES.indexOf(name) >= 0) navSet(name);
+  /* 顶栏视图名按钮：导航页显示自己的名字；详情页不是导航项（不在 NAV_NAMES 里），
+     不处理的话会一直留着上一个导航页的名字（进详情页后还写着「任务时间轴」）。
+     这里给详情页一个固定标题。 */
+  if (name === 'detail') {
+    var dbtn = document.getElementById('navMenuBtn');
+    if (dbtn) dbtn.textContent = '运行记录详情';
+  } else if (NAV_NAMES.indexOf(name) >= 0) navSet(name);
   // 标题栏指标卡按视图切换：每个视图一组，都放在标题栏的 #headMetrics 里
   for (var vi = 0; vi < HEAD_METRIC_BOXES.length; vi++) {
     var box = document.getElementById(HEAD_METRIC_BOXES[vi][1]);
@@ -801,17 +810,62 @@ function tlRender() {
   // 泳道方向的厚度（一条泳道有多厚）= 纵向高度
   function bandOf(api) { return api.size([0, 1])[1]; }
   // 画一段块：p0/p1 为两端屏幕坐标，thick 为泳道方向厚度
-  function barOf(p0, p1, thick, style) {
+  /* clip = {l:bool, r:bool}：这一端的真实起止落在时间窗口之外（被视野截断）。
+     截断端**不画竖边** —— 那条直上直下的实线看起来像「任务正好在这里开始/结束」，
+     而实际只是被窗口切掉了。留个缺口，一眼就能看出「这边还有内容，拖过去看」。
+     所以截断时边框不能用 rect 的描边（四边一起画、没法只去掉一边），
+     改为把四条边拆成独立子路径，按 clip 决定画不画左/右那两条。
+     没被截断的块（绝大多数）仍走原来那个单 rect —— 1700 条记录下，
+     每块少建一个图形对象，性能与改版前一致。 */
+  function barOf(p0, p1, thick, style, clip) {
     var a0 = Math.min(p0[0], p1[0]);
     var a1 = Math.max(p0[0], p1[0]);
     var len = a1 - a0;
     var c = p0[1];                             // 泳道中心
+    var y0 = c - thick / 2, y1 = c + thick / 2;
+    var clipL = !!(clip && clip.l), clipR = !!(clip && clip.r);
+    if (!clipL && !clipR) {
+      var r0 = Math.min(3, len / 2, thick / 2);
+      return {
+        type: 'rect',
+        shape: { x: a0, y: y0, width: len, height: thick, r: r0 },
+        style: style
+      };
+    }
+    /* 圆角：被截断的那一端不做圆角（方口才像被切断），
+       同时夹在半个长度内，免得极短的条两个圆角叠在一起 */
     var r = Math.min(3, len / 2, thick / 2);
-    return {
+    var rl = clipL ? 0 : r, rr = clipR ? 0 : r;
+
+    /* 底色：rect 只管填充、不描边；r 用四角数组，与下面边框的圆角一一对应 */
+    var fill = {
       type: 'rect',
-      shape: { x: a0, y: c - thick / 2, width: len, height: thick, r: r },
-      style: style
+      shape: { x: a0, y: y0, width: len, height: thick, r: [rl, rr, rr, rl] },
+      style: { fill: style.fill, opacity: style.opacity }
     };
+
+    /* 边框：四条边各自成段（每段一个 M 起笔），避免收笔时连出斜线。
+       clipR 时上边直接收在 a1（rr=0）、右边整条不画；clipL 同理。 */
+    var d = 'M' + (a0 + rl) + ' ' + y0 + 'L' + (a1 - rr) + ' ' + y0;
+    if (!clipR) {
+      d += 'A' + rr + ' ' + rr + ' 0 0 1 ' + a1 + ' ' + (y0 + rr)
+        + 'M' + a1 + ' ' + (y0 + rr) + 'L' + a1 + ' ' + (y1 - rr)
+        + 'A' + rr + ' ' + rr + ' 0 0 1 ' + (a1 - rr) + ' ' + y1;
+    }
+    d += 'M' + (a1 - rr) + ' ' + y1 + 'L' + (a0 + rl) + ' ' + y1;
+    if (!clipL) {
+      d += 'A' + rl + ' ' + rl + ' 0 0 1 ' + a0 + ' ' + (y1 - rl)
+        + 'M' + a0 + ' ' + (y1 - rl) + 'L' + a0 + ' ' + (y0 + rl)
+        + 'A' + rl + ' ' + rl + ' 0 0 1 ' + (a0 + rl) + ' ' + y0;
+    }
+    var border = {
+      type: 'path', shape: { path: d },
+      style: {
+        fill: 'none', stroke: style.stroke,
+        lineWidth: style.lineWidth, opacity: style.opacity
+      }
+    };
+    return { type: 'group', children: [fill, border] };
   }
   /* 极短记录的最小可见厚度：6 秒的记录在 6 小时窗口里只有 0.1px，
      原来直接被「不足 2px 就不画」的规则吞掉 —— 记录凭空消失。
@@ -823,6 +877,32 @@ function tlRender() {
     var mid = (p0[0] + p1[0]) / 2;
     var half = MIN_BAR_PX / 2;
     return [[mid - half, p0[1]], [mid + half, p1[1]]];
+  }
+  /* 截断判定：真实起止落在时间窗口之外 = 这一端被视野切掉了。
+     trueStart/trueEnd 用**未裁剪**的真实值（不能拿裁剪后的 r0/r1 比，
+     那样永远相等、判不出截断）。
+     窗口边界必须由调用方传进来：winA 是 renderItem 里的局部变量
+     （= nowW - state.span），这个函数在 tlRender 作用域里取不到它 ——
+     曾因此在运行时报 winA is not defined，整个 custom series 画不出来。 */
+  function clipOf(trueStart, trueEnd, winA) {
+    return { l: trueStart < winA, r: trueEnd > nowW };
+  }
+  /* 把撑过的条收进绘图区：被截断的那一端精确落在窗口边界上。
+     stretch 是以中点为基准向外扩的，若不管它，被截断的短条会往视野外溢出几个像素，
+     看起来像「有个东西露在框外」。收进来之后，缺边正好落在边界，语义才干净。 */
+  function fitWindow(pair, clip, winX0, winX1) {
+    var x0 = Math.min(pair[0][0], pair[1][0]);
+    var x1 = Math.max(pair[0][0], pair[1][0]);
+    var y = pair[0][1];
+    if (clip.l) x0 = winX0;
+    if (clip.r) x1 = winX1;
+    /* 收进来之后仍要保证最小可见厚度（否则短条一贴边就细到看不见） */
+    if (x1 - x0 < MIN_BAR_PX) {
+      if (clip.l && !clip.r) x1 = Math.min(winX1, x0 + MIN_BAR_PX);
+      else if (clip.r && !clip.l) x0 = Math.max(winX0, x1 - MIN_BAR_PX);
+      else if (!clip.l && !clip.r) { var mid = (x0 + x1) / 2; x0 = mid - MIN_BAR_PX / 2; x1 = mid + MIN_BAR_PX / 2; }
+    }
+    return [[x0, y], [x1, y]];
   }
 
   tlChart.setOption({
@@ -905,6 +985,8 @@ function tlRender() {
         }
         var dim = !!hot && !isHot;
         var dimA = dim ? 0.18 : 1;
+        /* 窗口边界的屏幕坐标：截断端的收口位置 */
+        var winX0 = xy(api, winA, row)[0], winX1 = xy(api, nowW, row)[0];
         if (hasWait && showQueue) {
           var q0 = Math.max(api.value(0), winA), q1 = Math.min(exec, nowW);
           if (q1 > q0) {
@@ -918,32 +1000,42 @@ function tlRender() {
                 fill: withAlpha('rgba(55,138,221,1)', .26),
                 stroke: withAlpha('rgba(55,138,221,1)', .95),
                 lineWidth: 1, opacity: dimA
-              }));
+              }, clipOf(api.value(0), exec, winA)));
             }
           }
         }
         var rs = hasWait ? exec : api.value(0);
         var r0 = Math.max(rs, winA), r1 = Math.min(api.value(1), nowW);
         if (r1 > r0) {
-          var st2 = stretch(xy(api, r0, row), xy(api, r1, row));
+          /* 运行段的两端截断判定：左端看真实起点 rs 是否早于窗口，
+             右端看真实结束（value(1)，进行中为 0 → 不截断）是否晚于「现在」 */
+          var cRun = clipOf(rs, api.value(1), winA);
+          var st2 = fitWindow(stretch(xy(api, r0, row), xy(api, r1, row)), cRun, winX0, winX1);
           /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生：
              不要在 renderItem 里读 params.data.status —— custom series
              不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
              幽灵任务条：极淡同色底 + 实色描边，边界清楚、不糊成一片。 */
-          children.push(barOf(st2[0], st2[1], bh, ghostBar(api.value(5), dimA)));
+          children.push(barOf(st2[0], st2[1], bh, ghostBar(api.value(5), dimA), cRun));
         }
         var pv0 = xy(api, vs, row), pv1 = xy(api, ve, row);
-        var stv = stretch(pv0, pv1);
+        /* 悬浮高亮框沿用整条记录（含排队）的真实跨度判截断，
+           免得金框在窗口边上画出一条「假边界」 */
+        var cHot = clipOf(api.value(0), api.value(1), winA);
+        var stv = fitWindow(stretch(pv0, pv1), cHot, winX0, winX1);
         if (lenOf(stv[0], stv[1]) >= 1) {
           /* 悬浮中的那条：金色加粗描边 + 外扩 2px，视觉上「鼓」出来。
              任务条本身已经是描边款，这里就不再叠一层白色内描边，
              避免窄块被两层描边吃掉（浅色底会把 1.5px 的边糊掉）。 */
           if (isHot) {
             var e0 = stv[0], e1 = stv[1];
-            children.push(barOf([e0[0] - 2, e0[1]], [e1[0] + 2, e1[1]], bh + 6, {
+            /* 外扩只在没被截断的那一端做：被截断端本来就该贴住窗口边界，
+               再往外扩就露出绘图区了。 */
+            var x0 = cHot.l ? e0[0] : e0[0] - 2;
+            var x1 = cHot.r ? e1[0] : e1[0] + 2;
+            children.push(barOf([x0, e0[1]], [x1, e1[1]], bh + 6, {
               fill: 'rgba(255,209,102,0.14)',
               stroke: '#ffd166', lineWidth: 2
-            }));
+            }, cHot));
           }
         }
         if (!children.length) return null;
@@ -1822,12 +1914,8 @@ function anExport() {
 
 /* ==================== 详情视图 ==================== */
 /* 详情页指标卡：结构与标题栏那套 .metric 一致（小标题 + 大数字），
-   但走 .dt-metric 这个独立类名 —— 标题栏的 .metric 有 hover 浮起与入场动画，
-   详情页这几张是静态读数，不需要跟着动。 */
-function dtCard(k, v, color) {
-  return '<div class="dt-metric"><div class="k">' + k + '</div>'
-    + '<div class="v"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</div></div>';
-}
+   直接复用 anCard() —— 它产出的就是 .metric，与其他视图顶栏指标卡同一套皮肤。 */
+function dtCard(k, v, color) { return anCard(k, v, color); }
 function renderDetail() {
   var app = document.getElementById("app");
   if (typeof lgReset === "function") lgReset();   // 释放上一个详情的 Monaco 编辑器与模型
@@ -1836,44 +1924,35 @@ function renderDetail() {
     app.innerHTML = '<div class="empty">未找到该运行记录。</div>';
     return;
   }
-  document.getElementById("ttl").textContent = rec.name || "运行记录";
+  /* 标题固定写「运行记录详情」，具体项目名放在它右边的小字里（原来直接拿项目名
+     当标题，会和下面的日志页签、顶栏视图名混在一起，看不出这是详情页）。 */
+  var ttl = document.getElementById("ttl");
+  if (ttl) ttl.textContent = "运行记录详情";
+  var ttlSub = document.getElementById("ttlSub");
+  if (ttlSub) ttlSub.textContent = rec.name || "";
   var queueMs = (rec.execStart && rec.execStart > rec.start) ? (rec.execStart - rec.start) : 0;
   var runFrom = (rec.execStart && rec.execStart > rec.start) ? rec.execStart : rec.start;
   var runMs = (rec.end == null) ? null : (rec.end - runFrom);
-  /* 六张指标卡填进标题卡（#dtMetrics）：状态 / 触发方式 / 开始时间 / 排队时长 /
-     运行时长 / 结束时间。原先那张「基础信息」大卡片整块去掉 —— 机器人、流程 ID
-     这些字段日常排查看得少，却占掉近半屏，把日志挤到下面。
+  /* 六张指标卡与其他视图统一填进顶栏（#headMetrics 里的 #dtMetrics）：
+     状态 / 触发方式 / 开始时间 / 排队时长 / 运行时长 / 结束时间。
      时间一律 hh:mm（fmtHM），时长一律英文简写（fmtDurEn，如 2m25s）。 */
   var mBox = document.getElementById("dtMetrics");
   if (mBox) {
     mBox.innerHTML =
-      dtCard("状态", statusBadge(rec.status))
-      + dtCard("触发方式", wayCN(rec.way))
-      + dtCard("开始时间", rec.start == null ? "—" : fmtHM(rec.start))
-      + dtCard("排队时长", queueMs ? fmtDurEn(queueMs) : "—")
-      + dtCard("运行时长", runMs != null ? fmtDurEn(runMs) : "—")
+      dtCard("状态", statusBadge(rec.status), "")
+      + dtCard("触发方式", wayCN(rec.way), "")
+      + dtCard("开始时间", rec.start == null ? "—" : fmtHM(rec.start), "")
+      + dtCard("排队时长", queueMs ? fmtDurEn(queueMs) : "—", "")
+      + dtCard("运行时长", runMs != null ? fmtDurEn(runMs) : "—", "")
       + dtCard("结束时间", rec.end == null
-        ? '<span style="color:#EF9F27">进行中</span>' : fmtHM(rec.end));
+        ? '<span style="color:#EF9F27">进行中</span>' : fmtHM(rec.end), "");
   }
-  var logCard = '<div class="card log-card">'
-    + '<div class="log-head"><div class="log-title"><h3>日志内容</h3>'
-    + '<button class="chip log-refresh" id="btnLogRefresh" disabled title="只重新读取日志文件内容：新内容增量追加，滚动位置与搜索状态都保留">'
-    + '<span class="lg-spin">↻</span> 刷新</button>'
-    + '</div>'
-    + '<div class="log-tools">'
-    + '<span class="stat" id="logStat">—</span>'
-    + '<input class="find" id="logFind" type="search" placeholder="搜索关键词" disabled>'
-    + '<button class="chip" id="btnPrev" disabled>上一处</button>'
-    + '<button class="chip" id="btnNext" disabled>下一处</button>'
-    + '<button class="chip" id="btnOnlyErr" disabled>仅看异常</button>'
-    + '<button class="chip" id="btnCopyPath" disabled title="复制当前日志文件的完整共享路径">复制路径</button>'
-    + '</div>'
-    + '</div>'
+  var logCard = '<div class="log-card">'
     + '<div class="log-tabs" id="logTabs"></div>'
     + '<div class="log-body">'
     + '<div id="logbox" class="tip">正在读取日志…</div>'
     + '</div></div>';
-  app.innerHTML = '<div class="detail-wrap">' + logCard + '</div>';
+  app.innerHTML = logCard;
   lgInit();
   loadLogs();
 }
@@ -2337,7 +2416,9 @@ function logApplyHits() {
   d.hits = m.deltaDecorations(d.hits, opts);
 }
 
-/* ---- 导航：有关键词时跳匹配处，否则跳异常行 ---- */
+/* ---- 导航：跳匹配处（关键词来自深链，不再有搜索框） ----
+   原先还有「仅看异常」的异常行跳转与上一处/下一处按钮，已按需求整体去掉；
+   保留 lgGoTo 是因为深链（日志检索页跳进来带 ?kw=）仍要定位到命中行。 */
 function lgNavTargets() {
   if (LOGM.kw) return LOGM.matches;
   return (LOGM.fileMarks[LOGM.active] || []).map(function (mk) {
@@ -2354,8 +2435,6 @@ function lgGoTo(idx) {
   var monaco = window.monaco;
   LOGM.editor.revealLineInCenter(t.line);
   LOGM.editor.setSelection(new monaco.Range(t.line, t.col, t.line, t.col + (t.len || 0)));
-  var stat = document.getElementById("logStat");
-  if (stat) stat.setAttribute("title", "第 " + (idx + 1) + "/" + list.length + " 处 · 第 " + t.line + " 行");
 }
 
 /* ---- 统计与按钮状态 ---- */
@@ -2367,23 +2446,11 @@ function lgMarksTotal() {
   }
   return { total: e + w, err: e, warn: w };
 }
+/* 「共 N 处 · 错误 N · 警告 N」那行统计已按需求去掉，这里只保留
+   按钮状态的同步（复制按钮的可用态由 logSyncCopyBtn 管）。 */
 function lgStatUpdate() {
-  var el = document.getElementById("logStat");
-  var t = lgMarksTotal();
-  if (el) el.innerHTML = t.total
-    ? ('共 <b>' + t.total + '</b> 处 · 错误 <b class="s-err">' + t.err + '</b> · 警告 <b class="s-warn">' + t.warn + '</b>')
-    : '未发现异常';
-  lgStatButtons();
   logSyncCopyBtn();   // 日志读取失败/无目录等分支也会走到这里，顺手同步复制按钮
   lgRefreshSyncBtn(); // 同理：没有日志文件时刷新按钮保持不可点
-}
-function lgStatButtons() {
-  var nav = LOGM.kw ? LOGM.matches.length : (LOGM.fileMarks[LOGM.active] || []).length;
-  var b;
-  b = document.getElementById("btnPrev"); if (b) b.disabled = nav === 0;
-  b = document.getElementById("btnNext"); if (b) b.disabled = nav === 0;
-  b = document.getElementById("btnOnlyErr"); if (b) b.disabled = lgMarksTotal().total === 0;
-  b = document.getElementById("logFind"); if (b) b.disabled = false;
 }
 
 /* ---- 文件标签栏 + 加载更多按钮 ---- */
@@ -2443,7 +2510,6 @@ function logSetActive(fi) {
   logRenderTabs();
   logSyncCopyBtn();    // 切文件：复制目标跟着变，同步按钮可用态与悬停提示
   lgRefreshSyncBtn();  // 刷新按钮同样只作用于当前选中的日志文件
-  lgStatButtons();
   lgApplyLink();
 }
 
@@ -2466,12 +2532,10 @@ function lgApplyLink() {
   }
   if (LG_LINK.kw) {
     if (!LOGM.models[LOGM.active]) return;   // 目标文件还没加载完，等下一次回调
-    var inp = document.getElementById("logFind");
-    if (inp) inp.value = LG_LINK.kw;
+    /* 深链关键词：没有搜索框了，关键词只用于高亮并跳到第一处命中 */
     LOGM.kw = LG_LINK.kw;
     logApplyHits();
     if (LOGM.matches.length) lgGoTo(0);
-    lgStatButtons();
   }
   LG_LINK = null;
 }
@@ -2778,44 +2842,11 @@ function lgReloadFile(fi, tip) {
 
 /* ---- 工具栏事件绑定（每次详情渲染调用） ---- */
 function lgInit() {
-  var b, f;
-  b = document.getElementById("btnNext");
-  if (b) b.addEventListener("click", function () { lgGoTo(LOGM.cur + 1); });
-  b = document.getElementById("btnPrev");
-  if (b) b.addEventListener("click", function () { lgGoTo(LOGM.cur - 1); });
-  b = document.getElementById("btnOnlyErr");
-  if (b) b.addEventListener("click", function () {
-    LOGM.only = !LOGM.only;
-    this.className = LOGM.only ? "chip on" : "chip";
-    this.textContent = LOGM.only ? "聚焦异常" : "仅看异常";
-    var box = document.getElementById("logbox");
-    if (box) box.classList.toggle("lg-only", LOGM.only);
-    if (LOGM.only && !LOGM.kw && (LOGM.fileMarks[LOGM.active] || []).length) lgGoTo(0);
-  });
-  f = document.getElementById("logFind");
-  if (f) {
-    var timer = 0;
-    f.addEventListener("input", function () {
-      var v = this.value;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(function () {
-        LOGM.kw = v.trim();
-        LOGM.cur = -1;
-        logApplyHits();
-        if (LOGM.kw && LOGM.matches.length) lgGoTo(0);
-        lgStatButtons();
-      }, 300);
-    });
-    f.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { lgGoTo(LOGM.cur + (e.shiftKey ? -1 : 1)); e.preventDefault(); }
-    });
-  }
-  /* 复制路径：把当前日志文件的完整共享路径写进剪贴板 */
-  b = document.getElementById("btnCopyPath");
-  if (b) b.addEventListener("click", lgCopyPath);
-  /* 刷新：只重读当前日志文件内容（看实时日志不用退出重进详情页） */
-  b = lgRefreshBtn();
-  if (b) b.addEventListener("click", lgRefreshFile);
+  /* 说明：刷新 / 复制路径 / 重新运行 / 项目配置 / 返回 这五个按钮都在
+     index.html 的静态结构里，监听在页面加载时绑一次（见文件末尾的绑定区），
+     这里不再重复绑 —— 否则每次进详情页都会叠一层监听。
+     原先这里还绑过「上一处 / 下一处 / 仅看异常 / 搜索框」，
+     那四个控件已按需求整体去掉（搜索与异常跳转不再需要）。 */
   lgRefreshSyncBtn();
 }
 
@@ -2830,17 +2861,16 @@ function lgReset() {
   LOGM.cur = -1; LOGM.kw = ""; LOGM.only = false; LOGM.active = 0;
   LOG_FILES = [];
   LG_REFRESH.busy = false;
-  var el = document.getElementById("logStat");
-  if (el) { el.textContent = "—"; el.removeAttribute("title"); }
-  var ids = ["btnPrev", "btnNext", "btnOnlyErr", "logFind", "btnCopyPath", "btnLogRefresh"], b, j;
+  /* 两个按钮回到初始态：刷新/复制都先禁用，等日志清单读出来再由
+     lgRefreshSyncBtn / logSyncCopyBtn 打开（这两个按钮是静态元素，
+     不随详情页重建，所以状态必须在这里显式复位）。 */
+  var ids = ["btnLogRefresh", "btnCopyPath"], b, j;
   for (j = 0; j < ids.length; j++) {
     b = document.getElementById(ids[j]);
-    if (b) { b.disabled = true; if (ids[j] === "btnOnlyErr") { b.className = "chip"; b.textContent = "仅看异常"; } }
+    if (b) b.disabled = true;
   }
   var rb = lgRefreshBtn();
   if (rb) rb.classList.remove("busy");
-  var f = document.getElementById("logFind");
-  if (f) f.value = "";
   /* 复制按钮：清掉上一次的「已复制」高亮（LOG_FILES 已清空，可用态由 logSyncCopyBtn 接管） */
   if (LG_COPY.flash) { clearTimeout(LG_COPY.flash); LG_COPY.flash = 0; }
   var cp = document.getElementById("btnCopyPath");
@@ -3237,6 +3267,10 @@ document.getElementById('btnBack').addEventListener('click', function () {
   history.back();
   setTimeout(function () { if (location.hash === cur) location.hash = '#/timeline'; }, 300);
 });
+/* 详情页两个「日志相关」按钮：现在都在 index.html 的静态结构里，
+   监听在这里绑一次即可（原先绑在 lgInit 里，每次进详情页都会重复叠加）。 */
+document.getElementById('btnLogRefresh').addEventListener('click', lgRefreshFile);
+document.getElementById('btnCopyPath').addEventListener('click', lgCopyPath);
 /* ==================== 运行机器人选择弹窗 ==================== */
 /* 触发运行前先让用户明确选择在哪台机器人上跑（而不是盲目由平台分配）。
    详情页「重新运行」与项目控制台「运行该应用」共用本弹窗。 */
@@ -3428,6 +3462,27 @@ function glHide() {
   var o = document.getElementById('globalLoading');
   if (o) o.style.display = 'none';
 }
+/* 局部加载遮罩：只盖住正在加载的那块卡片，页面其余部分照常可用。
+   项目控制台 / 触发器合规这类「进页面先拉数据」的视图以前用全屏遮罩，
+   结果导航、指标卡、别的面板全都点不动 —— 但实际在等的只是其中一块。
+   用法：
+     var b = scopedBusy(el, '正在加载项目列表…');   // 开启
+     b.done();                                      // 关闭（幂等）
+   el 为空时退化成全屏遮罩（保证调用方不用到处判空）。 */
+function scopedBusy(el, msg) {
+  if (!el) { glShow(msg); return { done: glHide }; }
+  el.classList.add('scoped-busy', 'is-busy');
+  if (msg) el.setAttribute('data-busy', msg);
+  var closed = false;
+  return {
+    done: function () {
+      if (closed) return;
+      closed = true;
+      el.classList.remove('is-busy');
+      el.removeAttribute('data-busy');
+    }
+  };
+}
 var pjItems = [];          // 项目列表缓存
 var pjCurrent = null;      // 当前选中项目
 var pjCfgItems = [];       // 当前配置项
@@ -3442,7 +3497,10 @@ function pjFmtTime(s) {
 }
 function pjLoad(force) {
   var el = document.getElementById('pjList');
-  glShow('正在加载项目列表…');
+  /* 局部遮罩只盖住「项目列表」这张卡片（含它的表头）：
+     全屏遮罩会把导航、指标卡和右侧详情一起挡住，而那些都不在加载。
+     容器用 .pj-side（卡片本身）而不是 .pj-list，遮罩才能盖住表头与刷新按钮。 */
+  var busy = scopedBusy(document.querySelector('#view-projects .pj-side') || el, '正在加载项目列表…');
   return api('/api/projects').then(function (d) {
     if (d && Array.isArray(d.items)) {
       var keep = pjCurrent ? pjCurrent.flow_id : null;
@@ -3469,7 +3527,7 @@ function pjLoad(force) {
   }).catch(function (e) {
     if (el) el.innerHTML = '<div class="pj-loading">加载失败：' + esc(e) + '</div>';
     pjMetrics(null);
-  }).then(function (v) { glHide(); return v; });
+  }).then(function (v) { busy.done(); return v; });
 }
 function pjSortFn() {
   var v = document.getElementById('pjSort').value;
@@ -3558,7 +3616,8 @@ function pjRunsLoad() {
   var p = pjCurrent;
   var el = document.getElementById('pjRunsList');
   if (!p || !el) return;
-  glShow('正在加载运行记录…');
+  /* 局部遮罩：只盖运行记录面板 */
+  var busy = scopedBusy(document.getElementById('pjPanelRuns'), '正在加载运行记录…');
   (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(function () {
     var mine = RECORDS.filter(function (r) { return r.fid === p.flow_id; })
       .sort(function (a, b) { return (b.start || 0) - (a.start || 0); });
@@ -3582,7 +3641,7 @@ function pjRunsLoad() {
             + '</tr>';
         }).join('') + '</tbody></table>';
     }
-    glHide();
+    busy.done();
   });
 }
 function pjCfgDisplayVal(it) {
@@ -3614,7 +3673,8 @@ function pjCfgLoad() {
   var g = document.getElementById('pjGroup').value.trim();
   if (!g) { alert('请先填写配置组名'); return; }
   var tbl = document.getElementById('pjCfgTbl');
-  glShow('正在加载配置…');
+  /* 局部遮罩：只盖「飞书配置」面板 */
+  var busy = scopedBusy(document.getElementById('pjPanelCfg'), '正在加载配置…');
   return api('/api/projects/config?group=' + encodeURIComponent(g)).then(function (d) {
     if (!d || !d.ok) {
       tbl.innerHTML = '';
@@ -3623,7 +3683,7 @@ function pjCfgLoad() {
       pjCfgItems = d.items || [];
       pjCfgRender();
     }
-    glHide();
+    busy.done();
   });
 }
 function pjCfgPost(body, onOk) {
@@ -4100,13 +4160,15 @@ function cpBind() {
 function cpLoad() {
   var el = document.getElementById('cpDays');
   var days = el ? el.value : 7;
-  glShow('正在比对排期与实际运行…');
+  /* 局部遮罩：盖住合规页的两块面板（命中率 + 明细），
+     而不是全屏挡住导航与标题栏指标卡。 */
+  var busy = scopedBusy(document.querySelector('#view-compliance .cp-layout'), '正在比对排期与实际运行…');
   return api('/api/compliance?days=' + encodeURIComponent(days)).then(function (d) {
     CP_DATA = (d && d.ok) ? d : null;
     if (!CP_DATA) cpEmpty((d && d.error) || '加载失败');
     else { cpFillRobots(); cpRender(); }
-    glHide();
-  }).catch(function (e) { CP_DATA = null; cpEmpty(String(e)); glHide(); });
+    busy.done();
+  }).catch(function (e) { CP_DATA = null; cpEmpty(String(e)); busy.done(); });
 }
 function cpMetrics(s) {
   /* 触发器合规：标题栏指标卡（原先在页面内，现与其余视图统一放标题栏） */

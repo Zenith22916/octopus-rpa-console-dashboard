@@ -981,8 +981,9 @@ body {
 .pj-list > .pj-item:nth-child(8) { animation-delay: .19s; }
 
 /* ---------------------------------------------------------------- 8. 按钮 */
+/* 详情页那五个操作按钮已改用 .dt-btn（见第 12 节），这里不再列 .back
+   —— 它已无元素引用。 */
 .btn,
-.back,
 .chip,
 .btn-more,
 .pj-tab,
@@ -999,7 +1000,6 @@ body {
 
 /* 斜向扫光 */
 .btn::after,
-.back::after,
 .chip::after,
 .btn-more::after {
   content: "";
@@ -1015,7 +1015,6 @@ body {
 }
 
 .btn:hover:not(:disabled),
-.back:hover,
 .chip:hover:not(:disabled),
 .btn-more:hover:not(:disabled),
 .pj-tab:hover {
@@ -1026,14 +1025,12 @@ body {
 }
 
 .btn:hover::after,
-.back:hover::after,
 .chip:hover:not(:disabled)::after,
 .btn-more:hover:not(:disabled)::after {
   left: 130%;
 }
 
 .btn:active:not(:disabled),
-.back:active,
 .chip:active:not(:disabled),
 .pj-tab:active {
   transform: translateY(0) scale(.985);
@@ -1060,8 +1057,7 @@ body {
   box-shadow: 0 0 0 1px rgba(77, 155, 240, .2) inset, 0 16px 34px -16px rgba(77, 155, 240, 1);
 }
 
-/* 主按钮：重新运行 / 运行该应用 / 弹窗保存 */
-.back.rerun,
+/* 主按钮：运行该应用 / 弹窗保存 / 检索 */
 .btn.rerun {
   background: linear-gradient(180deg, #2ec57a, #12924f);
   border-color: rgba(52, 209, 127, .5);
@@ -1070,7 +1066,6 @@ body {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset, 0 12px 28px -14px rgba(52, 209, 127, .9);
 }
 
-.back.rerun:hover,
 .btn.rerun:hover {
   background: linear-gradient(180deg, #3ad489, #16a55a);
   border-color: rgba(90, 230, 155, .8);
@@ -1313,9 +1308,9 @@ tbody tr:hover {
 }
 
 /* --------------------------------------------------------- 12. 详情与日志 */
-/* 详情页标题卡：与 .panel / .card 同源的渐变面 + 描边 + 阴影，
-   让「标题 + 操作按钮 + 指标卡」这一整块和下方日志卡片看起来是一套。 */
-.dt-head {
+/* 详情页整页卡片：与 .panel / .card 同源的渐变面 + 描边 + 阴影。
+   指标卡 / 标题+按钮 / 日志正文三段都在这一张卡里。 */
+.dt-card {
   position: relative;
   background: var(--t-surface);
   border: 1px solid var(--t-line);
@@ -1323,24 +1318,45 @@ tbody tr:hover {
   box-shadow: var(--t-shadow);
 }
 
-/* 指标卡：深底挖空感，与标题卡拉开层次（同 .field 的处理） */
-.dt-metric {
-  background: linear-gradient(180deg, rgba(255, 255, 255, .032), rgba(255, 255, 255, .008));
-  border: 1px solid var(--t-line-soft);
-  border-radius: 10px;
-  transition: border-color .26s, background .26s;
+/* 标题行下的分隔线跟着主题层走（style.css 里是实色 #262a33） */
+.dt-bar {
+  border-bottom-color: var(--t-line-soft);
 }
 
-.dt-metric:hover {
-  border-color: rgba(77, 155, 240, .3);
+/* 操作按钮：与全局 .btn 同一套渐变面 + 悬停抬升，只是尺寸更紧凑 */
+.dt-btn {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(44, 50, 64, .95), rgba(28, 33, 43, .95));
+  border-color: var(--t-line);
+  color: #dfe5ee;
+  border-radius: 9px;
+  transition: transform .18s var(--t-ease), background .22s, border-color .22s,
+              box-shadow .3s, color .22s;
 }
 
-.dt-metric .k {
-  color: var(--t-dim);
+.dt-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(52, 59, 75, .96), rgba(32, 38, 50, .96));
+  border-color: var(--t-line-hi);
+  color: #fff;
+  box-shadow: 0 10px 24px -16px rgba(0, 0, 0, .98), 0 0 0 1px rgba(255, 255, 255, .04) inset;
 }
 
-.dt-metric .v {
-  color: var(--t-text);
+.dt-btn:active:not(:disabled) {
+  transform: translateY(0) scale(.985);
+}
+
+/* 复制成功：主题层的成功色（比 style.css 的实色更贴合暗色主题） */
+.dt-btn.ok:not(:disabled) {
+  color: #7ee2ad;
+  border-color: rgba(52, 209, 127, .5);
+  box-shadow: 0 0 0 1px rgba(52, 209, 127, .14) inset;
+}
+
+/* 指标卡已上移到顶栏，用全局 .metric 皮肤，这里不再需要 .dt-metric 规则 */
+.dt-sub {
+  color: var(--t-faint);
 }
 
 .badge {
@@ -1377,13 +1393,7 @@ tbody tr:hover {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03), inset 0 24px 48px -36px rgba(0, 0, 0, .95);
 }
 
-/* 复制路径按钮的成功反馈：与「重新运行」同一套绿色，比 chip.on 更明确 */
-.chip.ok:not(:disabled) {
-  background: linear-gradient(180deg, #2ec57a, #12924f);
-  border-color: rgba(52, 209, 127, .5);
-  color: #fff;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset, 0 12px 28px -14px rgba(52, 209, 127, .9);
-}
+/* 复制路径按钮的成功反馈已移到 .dt-btn.ok（见第 12 节）。 */
 
 /* 详情页轻提示：与 #toast 同款皮肤 */
 #lgToast {

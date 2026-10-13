@@ -320,8 +320,11 @@ a {
   --ctl-pad-x: 9px;
   --ctl-fs: 12px;
   /* 下拉框的统一基准宽度：同一行里几个下拉不再各按内容撑成不同宽度。
-     表格内的下拉要占满单元格，那里单独把 min-width 归零。 */
-  --ctl-w: 118px;
+     数值按「6 个中文字」定（实测 Maple Mono 12px 下 6 字 = 87.4px，
+     加左右内边距 9+9 与箭头位约 8+6，取整到 126px）——
+     这样所有选项文案都能一行放下，不会折行。
+     表格内的下拉要占满单元格，那里单独把宽度覆写成 100%。 */
+  --ctl-w: 126px;
   /* 让原生弹层（未支持 base-select 的浏览器）也按深色渲染，
      否则会弹出系统浅色列表，和页面完全不搭 */
   color-scheme: dark;
@@ -358,20 +361,29 @@ select:hover {
   background-color: var(--ctl-bg-hover);
 }
 
-/* 下拉弹层里的选项：深色底、行高统一。
+/* 下拉弹层里的选项：深色底、行高统一、绝不折行。
+   nowrap 是必须的：选项文案一旦折行，弹层里会出现两行高的条目，
+   整个列表高度参差、看起来像排坏了。
+   （配套约定：所有 option 文案控制在 6 个中文字以内，见 index.html。）
    支持 base-select 的浏览器里这些会被下面的 ::picker 规则接管（那里改成
    透明底 + 圆角行，让弹层自己的圆角露出来）。 */
 select option {
   background: #1a1f28;
   color: #e6e6e6;
   padding: 4px 8px;
+  white-space: nowrap;
 }
 
-/* ---------------- 下拉弹层：圆角 + 深色 + 悬停高亮 ----------------
+/* ---------------- 下拉弹层：圆角 + 深色 + 悬停高亮 + iOS 式定位 ----------------
    Edge/Chrome 135+ 起支持 appearance: base-select，它把下拉从「浏览器内部
    绘制的原生控件」变成可样式化的元素：::picker(select) 就是那个展开的弹层。
-   在此之前，弹层的圆角/配色完全无法用 CSS 控制（这正是「展开的没有圆角」）。
-   老浏览器走上面的 color-scheme: dark 兜底，行为不受影响。 */
+   在此之前，弹层的圆角/配色/位置完全无法用 CSS 控制（这正是「展开的没有圆角」）。
+   老浏览器走上面的 color-scheme: dark 兜底，行为不受影响。
+
+   注意 base-select 会把 <select> 本身变成 flex 容器（实测 display:flex、
+   align-items/justify-content 都是 normal）—— 不加约束的话文字会挤到左上角、
+   箭头紧贴文字。下面三行是必须的：align-items 垂直居中、picker-icon 用
+   margin-inline-start:auto 推到最右。 */
 @supports (appearance: base-select) {
 
   select,
@@ -384,11 +396,14 @@ select option {
   select {
     background-image: none;
     padding-right: var(--ctl-pad-x);
+    /* ① 文字垂直居中（flex 容器默认 normal = 拉伸/顶到左上） */
+    align-items: center;
   }
 
   select::picker-icon {
     color: #8b93a3;
-    margin-left: 8px;
+    /* ② 推到最右：auto 吃掉剩余空间，箭头贴着右侧内边距 */
+    margin-inline-start: auto;
     transition: transform .24s cubic-bezier(.16, .84, .32, 1), color .2s;
   }
 
@@ -404,24 +419,40 @@ select option {
     border-color: rgba(77, 155, 240, .75);
   }
 
-  /* 展开的弹层本体：与页面同一套深色 + 圆角 + 描边 + 投影 */
+  /* 展开的弹层本体：与页面同一套深色 + 圆角 + 描边 + 投影。
+     位置用 CSS anchor 定位锚到 select 自身（③）：
+       top: anchor(top)   —— 弹层上沿与控件上沿对齐（iOS 风格：就地展开、盖住原控件）
+       left: anchor(left) —— 左沿对齐
+       width: anchor-size(width) —— 与控件等宽
+     默认行为是「贴在控件下方」（top: anchor(bottom) + margin-top），
+     这里全部改掉；bottom/right 置 auto 避免两边同时约束把高度压扁。 */
   select::picker(select) {
+    top: anchor(top);
+    left: anchor(left);
+    bottom: auto;
+    right: auto;
+    width: anchor-size(width);
+    margin: 0;
     background: #1a1f28;
     border: 1px solid var(--ctl-border-hover);
     border-radius: 12px;
     box-shadow: 0 20px 44px -18px rgba(0, 0, 0, .96), 0 0 0 1px rgba(255, 255, 255, .04) inset;
     padding: 6px;
-    margin-top: 6px;
     color: #e6e6e6;
   }
 
-  /* 弹层内的选项：透明底 + 圆角行（圆角由弹层的 padding 衬出来） */
+  /* 弹层内的选项：透明底 + 圆角行（圆角由弹层的 padding 衬出来）。
+     nowrap 同样必须：弹层宽度锁定为控件宽度（anchor-size(width)），
+     文案一旦折行就会把条目撑成两行高。 */
   select option {
     background: transparent;
     color: #cfd6e2;
     border-radius: 8px;
     padding: 7px 10px;
     font-size: var(--ctl-fs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     transition: background-color .14s, color .14s;
   }
 
@@ -725,111 +756,110 @@ tbody tr:hover {
 }
 
 /* ==================== 详情视图 ==================== */
-/* 标题卡：标题 + 三个操作按钮 + 指标卡行，收进同一张卡片。
-   底色/描边/圆角与 .card 同源（theme.css 里再换成渐变面 + 阴影）。 */
-.dt-head {
-  flex: none;
+/* 整页合并成一张卡片：指标卡 → 标题+操作按钮 → 日志正文，自上而下三段。
+   底色/描边/圆角与 .card 同源（theme.css 里再换成渐变面 + 阴影）。
+   日志区要吃掉剩余高度，所以这张卡是纵向 flex 容器。 */
+.dt-card {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  margin-bottom: 12px;
+  gap: 12px;
+  padding: 14px 16px;
   background: #181b21;
   border: 1px solid #262a33;
   border-radius: 10px;
   box-sizing: border-box;
 }
 
-/* 详情页指标卡：一行铺开，窄屏自动折行（每张最小 110px）。
-   六张卡在 1600 宽下正好一行；手机上折成两列。 */
-.dt-metrics {
+/* 详情页指标卡已与其他视图统一上移到顶栏 #headMetrics（.metric 那套皮肤），
+   .dt-metrics / .dt-metric 两组规则随之删除。 */
+
+/* 标题行：左边固定标题「运行记录详情」+ 项目名小字，右边一排操作按钮。
+   按钮全部靠右（margin-left:auto 把整组推到底），顺序由 HTML 决定：
+   刷新 → 重新运行 → 项目配置 → 复制路径 → 返回。 */
+.dt-bar {
+  flex: none;
   display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
-  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #262a33;
 }
 
-.dt-metric {
-  flex: 1 1 110px;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 7px 12px;
-  background: #0f1115;
-  border: 1px solid #262a33;
-  border-radius: 8px;
-  text-align: center;
-}
-
-.dt-metric .k {
-  font-size: 11px;
-  color: #8b8f98;
-  letter-spacing: .04em;
-  margin-bottom: 3px;
-}
-
-.dt-metric .v {
-  font-size: 15px;
-  font-weight: 500;
+.dt-title {
+  flex: none;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
   color: #e6e6e6;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 项目名：跟在固定标题后面，字号小一档、颜色淡一档，不跟标题抢注意力 */
+.dt-sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #8b8f98;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 指标卡里放的是状态徽章（statusBadge），它自带底色与内边距，
-   居中放一行就好，不要再叠 .v 的字号 */
-.dt-metric .v .badge {
-  font-size: 12px;
-}
-
-.topbar {
+.dt-actions {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  margin-bottom: 0;
+  gap: 8px;
+  margin-left: auto;     /* 整组按钮推到最右 */
   flex-wrap: wrap;
-  flex: none;
-}
-.topbar .title {
-  margin-right: auto;
 }
 
-.title {
-  font-size: 20px;
-  font-weight: 500;
-}
-
-.title small {
-  font-size: 12px;
-  color: #8b8f98;
-  font-weight: 400;
-  margin-left: 8px;
-}
-
-.back {
+/* 详情页操作按钮：五个按钮同一套外观、不带图标。
+   原来它们分别是 .back / .back.rerun / .chip，绿色主色只给「重新运行」，
+   现在统一成中性色，靠位置和文案区分，不再用颜色抢注意力。 */
+.dt-btn {
+  appearance: none;
+  -webkit-appearance: none;
   background: #22262e;
-  color: #e6e6e6;
+  color: #cfd6e2;
   border: 1px solid #333a45;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 14px;
   font-size: 13px;
-  cursor: pointer;
   font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .18s, border-color .18s, color .18s;
 }
 
-.back:hover {
-  background: #2c313a;
-}
-
-.back.rerun {
-  background: #1f6f43;
+.dt-btn:hover:not(:disabled) {
+  background: #2b3038;
+  border-color: #3f4756;
   color: #fff;
-  border-color: #2e9e5c;
 }
 
-.back.rerun:hover {
-  background: #278a52;
+.dt-btn:active:not(:disabled) {
+  background: #1e222a;
+}
+
+.dt-btn:disabled {
+  opacity: .42;
+  cursor: default;
+}
+
+/* 刷新进行中：按钮变暗（请求结束由 lgRefreshFile 移除 busy） */
+.dt-btn.busy {
+  opacity: .7;
+}
+
+/* 复制成功：短暂染成成功色（由 lgCopyPath 加 .ok） */
+.dt-btn.ok:not(:disabled) {
+  color: #7ee2ad;
+  border-color: rgba(52, 209, 127, .5);
 }
 
 .card {
@@ -846,22 +876,14 @@ tbody tr:hover {
   font-weight: 500;
 }
 
-/* 详情页：日志卡片占满剩余高度。
-   （原来的「基础信息卡片 + 日志卡片」两段式已去掉 —— 信息改由 .dt-head
-   里的指标卡承载，见文件开头的详情视图样式；.info-card / .grid-detail / .field
-   这三组规则随之删除，不再有元素引用它们。） */
-.detail-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  align-items: stretch;
-  min-height: 0;
-}
-
+/* 详情页：日志区占满卡片剩余高度（#app 是 .dt-card 的第三个孩子）。
+   .detail-wrap 那层包装已随改版去掉，样式直接落在 .log-card 上。 */
 .log-card {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 #logbox {
@@ -968,77 +990,10 @@ tbody tr:hover {
   cursor: default;
 }
 
-.log-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-
-.log-head h3 {
-  margin: 0;
-}
-
-/* 标题 + 刷新按钮：刷新只作用于「日志内容」，所以挨着标题放，与右侧工具条分开 */
-.log-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.log-refresh {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 9px;
-}
-
-.log-refresh .lg-spin {
-  display: inline-block;
-  font-size: 13px;
-  line-height: 1;
-}
-
-/* 刷新中：图标转圈 + 按钮变暗（请求结束由 lgRefreshFile 移除 busy） */
-.log-refresh.busy {
-  opacity: .7;
-}
-
-.log-refresh.busy .lg-spin {
-  animation: lgSpin .8s linear infinite;
-}
-
-@keyframes lgSpin {
-  to { transform: rotate(360deg); }
-}
-
-.log-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.stat {
-  font-size: 12px;
-  color: #8b8f98;
-  white-space: nowrap;
-}
-
-.stat b {
-  font-weight: 500;
-}
-
-.stat .s-err {
-  color: #FF6B6D;
-}
-
-.stat .s-warn {
-  color: #FFB020;
-}
-
+/* ---- 以下为「日志内容」小标题 + 工具条那套样式，已随详情页改版整体移除：
+   .log-head / .log-title / .log-tools / .log-refresh / .stat / .find 都不再有
+   元素引用（标题改用 .dt-title，按钮改用 .dt-btn，统计行与搜索框已删除）。
+   .chip 仍被「加载更多」以外的少量地方使用，保留。 ---- */
 .chip {
   font-size: 12px;
   color: #c9cdd4;
@@ -1065,10 +1020,6 @@ tbody tr:hover {
   color: #ffb3b3;
 }
 
-.find {
-  width: 150px;
-}
-
 /* 复制路径按钮：复制成功后的短暂反馈（染绿 1.4 秒，文案与尺寸都不变，见 app.js 的 lgCopyPath） */
 .chip.ok {
   background: #1f6f43;
@@ -1077,12 +1028,13 @@ tbody tr:hover {
 }
 
 /* 详情页轻提示（index.html 里的 #toast 在时间轴视图内，详情页复用不了）。
-   走屏幕底部：提示里带完整 UNC 路径会折成两行，放顶部会压住详情页标题栏。 */
+   走屏幕顶部居中：底部弹出会被日志正文的滚动条和「加载更多」挡住视线，
+   而刷新/复制的反馈本来就和顶部那排按钮有关，从上方出现更贴近操作位置。 */
 #lgToast {
   position: fixed;
-  bottom: 26px;
+  top: 24px;
   left: 50%;
-  transform: translateX(-50%) translateY(16px);
+  transform: translateX(-50%) translateY(-16px);
   z-index: 10000;
   background: #2a2f38;
   color: #e6e6e6;
@@ -1217,30 +1169,19 @@ tbody tr:hover {
 
 /* 详情页桌面布局。断点用 881（= mobile.css 的 880 + 1）：
    曾经写 901，与手机断点 880 之间留下 881~900 的缝隙 —— 那段宽度里
-   mobile.css 已失效、这套桌面规则又没生效，.detail-wrap 只剩「上下堆叠」
-   却没有任何高度分配，日志区被压到 151px 且挤出视口（手机横屏正落在这里）。 */
+   mobile.css 已失效、这套桌面规则又没生效，日志区被压到 151px 且挤出视口
+   （手机横屏正落在这里）。 */
 @media (min-width: 881px) {
   #view-detail {
     overflow: hidden;
   }
 
+  /* #app 是 .dt-card 的第三个孩子：吃掉指标卡与标题行之外的全部高度 */
   #app {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
-  }
-
-  .detail-wrap {
-    flex: 1 1 auto;
-    min-height: 0;
-    align-items: stretch;
-    overflow: hidden;
-  }
-
-  .log-card {
-    display: flex;
     flex-direction: column;
-    min-height: 0;
   }
 
   #logbox {
@@ -1779,6 +1720,45 @@ tbody tr:hover {
   color: #6f7480;
   font-size: 12px;
 }
+
+/* 局部加载遮罩：盖在某个卡片/容器内部，而不是整个页面。
+   全屏遮罩的代价是「加载项目列表时连导航和别的卡片都点不动」，
+   而实际在加载的只是那一块。用法见 app.js 的 scopedBusy()：
+   给容器加 .is-busy + data-busy 文案，这里用 ::after 画遮罩层，
+   不用额外插 DOM（容器 position 由这条规则接管为 relative）。 */
+.scoped-busy {
+  position: relative;
+}
+
+.scoped-busy.is-busy {
+  /* 加载中禁止与内容交互（遮罩本身也吃掉点击） */
+  pointer-events: none;
+}
+
+.scoped-busy.is-busy::after {
+  content: attr(data-busy);
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #9aa3b3;
+  text-align: center;
+  padding: 12px;
+  border-radius: inherit;
+  background: rgba(8, 10, 15, .62);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: scopedFade .18s ease backwards;
+}
+
+@keyframes scopedFade {
+  from { opacity: 0; }
+}
+
 
 .pj-spinner {
   display: inline-block;

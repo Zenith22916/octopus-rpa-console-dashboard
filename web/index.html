@@ -93,11 +93,14 @@
         </div>
         <!-- 分析页指标：由 app.js 的 anMetrics() 填充，只在分析视图显示 -->
         <div class="metrics" id="anMetrics" style="display:none;"></div>
-        <!-- 以下四组同样只在对应视图显示，填充逻辑见 app.js 的各 Render -->
+        <!-- 以下各组同样只在对应视图显示，填充逻辑见 app.js 的各 Render -->
         <div class="metrics" id="cpMetrics" style="display:none;"></div>
         <div class="metrics" id="bsMetrics" style="display:none;"></div>
         <div class="metrics" id="lsMetrics" style="display:none;"></div>
         <div class="metrics" id="pjMetrics" style="display:none;"></div>
+        <!-- 详情页指标：状态/触发方式/开始时间/排队时长/运行时长/结束时间，
+             由 renderDetail() 填充。与其他视图一致放在顶栏，不占卡片内的高度。 -->
+        <div class="metrics" id="dtMetrics" style="display:none;"></div>
       </div>
       <div class="auto-bar">
         <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不用等后端每分钟的那轮自动抓取）">立刻更新</button>
@@ -204,20 +207,27 @@
 
       <!-- ==================== 详情视图 ==================== -->
       <div id="view-detail" class="view" style="display:none;">
-        <!-- 标题 + 操作按钮 + 指标卡收进同一张卡片（.dt-head）：
-             原来这行按钮直接落在页面黑底上，与下方日志卡片不像一套；
-             指标卡由 renderDetail() 填进 #dtMetrics（状态/触发方式/开始时间/
-             排队时长/运行时长/结束时间），基础信息大卡片已去掉。 -->
-        <div class="dt-head">
-          <div class="topbar">
-            <div class="title"><span id="ttl">运行记录详情</span></div>
-            <button class="back rerun" id="btnRerun" title="选择执行机器人后触发一次运行">↻ 重新运行</button>
-            <button class="back" id="btnToProjects" title="跳转到项目控制台并选中该项目">⚙ 项目配置</button>
-            <button class="back" id="btnBack">← 返回上一页</button>
+        <!-- 整页合并成一张卡片（.dt-card）：标题+操作按钮 → 日志正文。
+             指标卡已与其他视图统一上移到顶栏 #headMetrics（dtMetrics），
+             不再占卡片内的高度。标题固定为「运行记录详情」（#ttl 由 renderDetail
+             填具体项目名，见 app.js）；操作按钮全部靠右、同一套外观、不带图标。
+             #app 里只放日志页签与日志正文。
+             按钮留在静态 HTML 里（不在 renderDetail 的 innerHTML 中重建），
+             否则每次进详情页都会丢掉加载时绑好的监听。 -->
+        <div class="dt-card">
+          <div class="dt-bar">
+            <h2 class="dt-title" id="ttl">运行记录详情</h2>
+            <span class="dt-sub" id="ttlSub"></span>
+            <div class="dt-actions">
+              <button type="button" class="dt-btn" id="btnLogRefresh" disabled title="只重新读取当前日志文件内容：新内容增量追加，滚动位置与搜索状态都保留">刷新</button>
+              <button type="button" class="dt-btn" id="btnRerun" title="选择执行机器人后触发一次运行">重新运行</button>
+              <button type="button" class="dt-btn" id="btnToProjects" title="跳转到项目控制台并选中该项目">项目配置</button>
+              <button type="button" class="dt-btn" id="btnCopyPath" disabled title="复制当前日志文件的完整共享路径">复制路径</button>
+              <button type="button" class="dt-btn" id="btnBack" title="返回上一页">返回</button>
+            </div>
           </div>
-          <div class="dt-metrics" id="dtMetrics"></div>
+          <div id="app"></div>
         </div>
-        <div id="app"></div>
       </div>
 
       <!-- ==================== 日程视图 ==================== -->
@@ -290,9 +300,9 @@
           <div class="toolbar">
             <h2 style="margin:0;">机器人实时状态</h2>
             <span class="filter-label">筛选：</span>
-            <select id="bsFilter">
+            <select id="bsFilter" title="仅忙 = 运行中或排队中">
               <option value="__ALL__" selected>全部</option>
-              <option value="__BUSY__">仅忙（运行中/排队中）</option>
+              <option value="__BUSY__">仅忙</option>
               <option value="__IDLE__">仅空闲</option>
             </select>
             <button class="btn" id="bsReload">刷新</button>
@@ -322,7 +332,7 @@
             <span class="filter-label">级别：</span>
             <select id="lsLvl" title="「超时」这类词会命中大量等待进度行，只看异常可直接过滤掉噪声">
               <option value="all" selected>全部行</option>
-              <option value="warn">异常 + 警告</option>
+              <option value="warn">异常警告</option>
               <option value="err">仅错误</option>
             </select>
             <button class="btn rerun" id="lsGo">检索</button>
@@ -351,10 +361,10 @@
               <span class="filter-label">机器人：</span>
               <select id="cpRobot"></select>
               <span class="filter-label">只看：</span>
-              <select id="cpOnly">
-                <option value="problem" selected>漏跑 + 应用不符 + 延迟</option>
+              <select id="cpOnly" title="只看异常 = 漏跑 + 应用不符 + 延迟">
+                <option value="problem" selected>只看异常</option>
                 <option value="missed">只看漏跑</option>
-                <option value="__ALL__">全部（含按时）</option>
+                <option value="__ALL__">全部</option>
               </select>
               <button class="btn" id="cpReload">刷新</button>
               <span class="datatime" id="cpInfo">—</span>
