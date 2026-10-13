@@ -778,10 +778,7 @@ function tlRender() {
                  外边界 = 该行的上边缘；
        - 翻转后：下标向下增长（row 越大越靠下），末行变成该组最下面一行，
                  外边界 = 该行的下边缘。
-     曾经这里写死「上边缘」，翻转后整条虚线就往上错开了一整个泳道高
-     （实测：分组边界应在 y=240.5，虚线画在 209.7）。
-     这里改成把「取哪条边」算成一个 ±0.5 的行偏移，交给 renderItem 用 api.coord 取。 */
-  var sepEdge = Y_INVERSE ? 0.5 : -0.5;
+     取边在 renderItem 里按 Y_INVERSE 算（见那里的说明：不能用 api.coord(row±0.5)）。 */
   var sepData = [];
   lastRows.forEach(function (r) { if (r !== topGroupRow) sepData.push({ value: [r] }); });
   var recIds = {};
@@ -1119,14 +1116,19 @@ function tlRender() {
       type: 'custom', data: sepData, zlevel: 1, silent: true,
       renderItem: function (params, api) {
         var row = api.value(0);
+        var band = bandOf(api);
         var c0 = xy(api, nowW - state.span, row);
         var c1 = xy(api, nowW, row);
         var lo = Math.min(c0[0], c1[0]);
         var hi = Math.max(c0[0], c1[0]);
-        /* 分隔线画在分组的外边界上：翻转后取该行的下边缘（+0.5 行），
-           不翻转取上边缘（-0.5 行）。直接用 api.coord 取那条边，
-           不再用 band/2 手算 —— 手算容易和 axis 的实际行高差一点点。 */
-        var edge = xy(api, nowW, row + sepEdge)[1];
+        /* 分隔线画在「分组末行朝外的那条边」上：
+             不翻转时下标向上增长，末行是该组最上面一行，朝外的边 = 上边缘（center - band/2）；
+             翻转后下标向下增长，末行变成该组最下面一行，朝外的边 = 下边缘（center + band/2）。
+           注意：这里必须用 band/2 从行中心推算，**不能**写 api.coord(row ± 0.5) ——
+           category 轴会把小数行号四舍五入到整数索引（实测 coord(row+0.5) 返回的是
+           row+1 那一行的中心），取回来的是相邻行的中心而不是边界，只差半条泳道，
+           看起来「像对上了又没对上」，比错一整条更难发现。 */
+        var edge = c0[1] + (Y_INVERSE ? band / 2 : -band / 2);
         // 机器人分组之间的分隔虚线：横轴布局下画横线
         return {
           type: 'line', shape: { x1: lo, y1: edge, x2: hi, y2: edge },
