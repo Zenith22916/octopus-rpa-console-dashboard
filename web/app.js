@@ -706,6 +706,12 @@ function layout(segs) {
   layout.groupLastRows = groupLastRows;
   return info;
 }
+/* 纵轴是否翻转显示。ECharts 的 category 轴默认把 data[0] 放在轴的起点，
+   而 y 轴起点在下方 —— 不翻的话 robotList() 排好的顺序在屏幕上整个倒过来。
+   抽成常量是因为「泳道分隔线画在分组末行的哪条边」取决于它（见 tlRender 的 sepData），
+   两处必须同步翻，否则分隔线会整整错开一行。 */
+var Y_INVERSE = true;
+
 function tlRender() {
   if (!tlChart) return;
   var nowW = Math.min(state.end + state.offset, state.end);
@@ -765,6 +771,17 @@ function tlRender() {
       });
     }
   });
+  /* 分组之间的分隔虚线。
+     lastRows 是每个分组「最后一行」的数组下标；分隔线要画在分组的**外边界**上，
+     而「最后一行」的哪条边是外边界取决于纵轴有没有翻转（Y_INVERSE）：
+       - 不翻转：数组下标向上增长（row 越大越靠上），末行是该组最上面一行，
+                 外边界 = 该行的上边缘；
+       - 翻转后：下标向下增长（row 越大越靠下），末行变成该组最下面一行，
+                 外边界 = 该行的下边缘。
+     曾经这里写死「上边缘」，翻转后整条虚线就往上错开了一整个泳道高
+     （实测：分组边界应在 y=240.5，虚线画在 209.7）。
+     这里改成把「取哪条边」算成一个 ±0.5 的行偏移，交给 renderItem 用 api.coord 取。 */
+  var sepEdge = Y_INVERSE ? 0.5 : -0.5;
   var sepData = [];
   lastRows.forEach(function (r) { if (r !== topGroupRow) sepData.push({ value: [r] }); });
   var recIds = {};
@@ -958,8 +975,10 @@ function tlRender() {
          在屏幕上整个翻了过来（B💎宝实-03 跑到最上面）。
          加 inverse 让 data[0] 落在顶部，视觉顺序才与排序键一致。
          注意只翻转「显示顺序」，不改 data：泳道行号仍按数组下标走，
-         下面所有 api.coord / renderItem 都不受影响。 */
-      inverse: true,
+         下面所有 api.coord / renderItem 都不受影响。
+         注意二：翻转后「分组末行」在视觉上变成该组最下面一行，
+         分隔线的取边要跟着翻（见 sepData 的构造）。 */
+      inverse: Y_INVERSE,
       axisLabel: {
         color: '#c9cdd4', fontSize: 12,
         width: 95, overflow: 'truncate'
@@ -1100,14 +1119,17 @@ function tlRender() {
       type: 'custom', data: sepData, zlevel: 1, silent: true,
       renderItem: function (params, api) {
         var row = api.value(0);
-        var band = bandOf(api);
         var c0 = xy(api, nowW - state.span, row);
         var c1 = xy(api, nowW, row);
         var lo = Math.min(c0[0], c1[0]);
         var hi = Math.max(c0[0], c1[0]);
-        // 机器人分组之间的分隔虚线：横轴布局下画横线（每组的底边）
+        /* 分隔线画在分组的外边界上：翻转后取该行的下边缘（+0.5 行），
+           不翻转取上边缘（-0.5 行）。直接用 api.coord 取那条边，
+           不再用 band/2 手算 —— 手算容易和 axis 的实际行高差一点点。 */
+        var edge = xy(api, nowW, row + sepEdge)[1];
+        // 机器人分组之间的分隔虚线：横轴布局下画横线
         return {
-          type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
+          type: 'line', shape: { x1: lo, y1: edge, x2: hi, y2: edge },
           /* 原来是 rgba(255,255,255,0.65) 的亮白虚线，抢眼到像数据本身；
              改成中性灰细虚线，退成背景网格，让任务条成为主角。 */
           style: { stroke: 'rgba(255,255,255,0.15)', lineWidth: 1, lineDash: [5, 5] }
