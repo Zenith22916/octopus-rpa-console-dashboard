@@ -814,7 +814,13 @@ function tlRender() {
      截断端**不画竖边** —— 那条直上直下的实线看起来像「任务正好在这里开始/结束」，
      而实际只是被窗口切掉了。留个缺口，一眼就能看出「这边还有内容，拖过去看」。
      所以截断时边框不能用 rect 的描边（四边一起画、没法只去掉一边），
-     改为把四条边拆成独立子路径，按 clip 决定画不画左/右那两条。
+     改为用 polyline 画一条「开口的折线」，按 clip 决定两端要不要收口。
+
+     注意这里必须用 polyline，不能用 type:'path'：
+     echarts 的 custom series 不渲染 path 图元（它会被塞进显示列表，
+     但画布上什么都不画）—— 曾因此出现「被截断的块整个没有边框」。
+     实测 polyline / 多条 line / rect 都能正常渲染，polyline 一次成型最省。
+
      没被截断的块（绝大多数）仍走原来那个单 rect —— 1700 条记录下，
      每块少建一个图形对象，性能与改版前一致。 */
   function barOf(p0, p1, thick, style, clip) {
@@ -832,37 +838,36 @@ function tlRender() {
         style: style
       };
     }
-    /* 圆角：被截断的那一端不做圆角（方口才像被切断），
-       同时夹在半个长度内，免得极短的条两个圆角叠在一起 */
+    /* 底色：rect 只管填充、不描边；被截断的一端不做圆角（方口才像被切断） */
     var r = Math.min(3, len / 2, thick / 2);
     var rl = clipL ? 0 : r, rr = clipR ? 0 : r;
-
-    /* 底色：rect 只管填充、不描边；r 用四角数组，与下面边框的圆角一一对应 */
     var fill = {
       type: 'rect',
       shape: { x: a0, y: y0, width: len, height: thick, r: [rl, rr, rr, rl] },
       style: { fill: style.fill, opacity: style.opacity }
     };
 
-    /* 边框：四条边各自成段（每段一个 M 起笔），避免收笔时连出斜线。
-       clipR 时上边直接收在 a1（rr=0）、右边整条不画；clipL 同理。 */
-    var d = 'M' + (a0 + rl) + ' ' + y0 + 'L' + (a1 - rr) + ' ' + y0;
-    if (!clipR) {
-      d += 'A' + rr + ' ' + rr + ' 0 0 1 ' + a1 + ' ' + (y0 + rr)
-        + 'M' + a1 + ' ' + (y0 + rr) + 'L' + a1 + ' ' + (y1 - rr)
-        + 'A' + rr + ' ' + rr + ' 0 0 1 ' + (a1 - rr) + ' ' + y1;
-    }
-    d += 'M' + (a1 - rr) + ' ' + y1 + 'L' + (a0 + rl) + ' ' + y1;
-    if (!clipL) {
-      d += 'A' + rl + ' ' + rl + ' 0 0 1 ' + a0 + ' ' + (y1 - rl)
-        + 'M' + a0 + ' ' + (y1 - rl) + 'L' + a0 + ' ' + (y0 + rl)
-        + 'A' + rl + ' ' + rl + ' 0 0 1 ' + (a0 + rl) + ' ' + y0;
+    /* 边框：一条沿四边走一圈的开口折线（起点/终点都落在「开口」那一侧，
+       中间不闭合，所以不会自动补出那条被截断的竖边）。
+       圆角用折线的圆角处理：这里直接用直角端点 —— 被截断的块本来就贴边，
+       再画圆角反而与窗口边界错开 1~2px，看起来像没对齐。 */
+    var pts = [];
+    if (clipL) {
+      /* 左边被截断：从左上角起笔，绕右边一圈回到左下角，左边留空 */
+      pts = [[a0, y0], [a1 - rr, y0], [a1, y0 + rr], [a1, y1 - rr],
+             [a1 - rr, y1], [a0, y1]];
+    } else {
+      /* 右边被截断：从右上角起笔，绕左边一圈回到右下角，右边留空 */
+      pts = [[a1, y0], [a0 + rl, y0], [a0, y0 + rl], [a0, y1 - rl],
+             [a0 + rl, y1], [a1, y1]];
     }
     var border = {
-      type: 'path', shape: { path: d },
+      type: 'polyline',
+      shape: { points: pts, smooth: 0 },
       style: {
         fill: 'none', stroke: style.stroke,
-        lineWidth: style.lineWidth, opacity: style.opacity
+        lineWidth: style.lineWidth, opacity: style.opacity,
+        lineJoin: 'round'
       }
     };
     return { type: 'group', children: [fill, border] };
