@@ -151,7 +151,10 @@ h2 {
 
 .hint .legend i {
   border-radius: 3px;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .13) inset, 0 2px 8px -3px rgba(0, 0, 0, .9);
+  /* 图例色块与甘特任务条同款幽灵观感：淡同色底 + 同色描边（颜色由行内 --c 传入） */
+  background: color-mix(in srgb, var(--c, #8b8f98) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c, #8b8f98) 85%, transparent);
+  box-shadow: none;
 }
 
 .empty,
@@ -346,6 +349,7 @@ body {
   flex: none;
   display: flex;
   align-items: center;
+  gap: 9px;
   height: 34px;
   box-sizing: border-box;
   padding: 0 12px;
@@ -357,6 +361,31 @@ body {
   opacity: 1;
   transform: none;
   transition: background .22s, color .22s, border-color .22s, box-shadow .28s;
+}
+
+/* 导航项前的线性小图标：纯描边（stroke 用 currentColor），
+   颜色跟着文字走 —— hover / 选中时自动变亮，不用单独写一套状态 */
+.sidebar .navmenu-list .nv-ico {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .78;
+  transition: opacity .22s;
+}
+
+.sidebar .navmenu-list li:hover .nv-ico,
+.sidebar .navmenu-list li.cur .nv-ico {
+  opacity: 1;
+}
+
+/* 选中项图标带一点光晕，与左侧高亮竖条呼应 */
+.sidebar .navmenu-list li.cur .nv-ico {
+  filter: drop-shadow(0 0 6px rgba(77, 155, 240, .55));
 }
 
 .sidebar .navmenu-list li::before {
@@ -1043,16 +1072,25 @@ body {
 }
 
 /* ------------------------------------------------------- 9. 表单与开关控件 */
+/* 外观（底色/描边/圆角/高度/内边距）由 style.css 的全局令牌统一给，
+   这里只补主题层的动效与悬停态 —— 两处都写外观会导致同一界面上
+   下拉框圆角/高矮不一致（theme.css 后加载，会盖掉 style.css）。 */
 select,
 input[type="search"],
 input[type="text"],
 input[type="password"],
 textarea {
-  background: rgba(11, 14, 20, .88);
-  border: 1px solid var(--t-line);
-  border-radius: 8px;
+  background: var(--ctl-bg, rgba(11, 14, 20, .88));
+  border: 1px solid var(--ctl-border, var(--t-line));
+  border-radius: var(--ctl-radius, 8px);
   color: var(--t-text);
   transition: border-color .22s, box-shadow .3s, background .22s;
+}
+
+/* 下拉框的底色/箭头/内边距由 style.css 统一（含自绘箭头），
+   这里不覆写，避免把箭头又盖回原生样式 */
+select {
+  background-color: var(--ctl-bg, rgba(11, 14, 20, .88));
 }
 
 select:hover,

@@ -68,8 +68,10 @@
   /* ==========================================================================
    * 2. 顶栏：品牌 + 数据时间 + 常显横向导航（吸顶）
    * ======================================================================== */
-  /* 桌面端左栏是 214px 固定竖排；移动端压成吸顶条：
-     第一行 品牌 / 数据时间，第二行 导航 tab（横向可滑动） */
+  /* 桌面端左栏是 214px 固定竖排；移动端收成一张置顶卡片：
+     第一行 品牌 / 数据时间，第二行 导航 tab（卡片内换行平铺）。
+     卡片内布局 = 保留左右外边距与圆角，不再贴边铺满整宽，
+     与下方的内容卡片视觉上成为一套。 */
   .sidebar {
     position: sticky;
     top: 0;
@@ -81,11 +83,11 @@
     align-items: center;
     column-gap: 10px;
     row-gap: 6px;
-    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
-    border: none;
-    border-bottom: 1px solid var(--t-line);
-    border-radius: 0 0 14px 14px;
-    background: linear-gradient(180deg, rgba(16, 20, 28, .97) 0%, rgba(11, 14, 20, .94) 100%);
+    margin: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left));
+    padding: 10px 12px;
+    border: 1px solid var(--t-line);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(22, 27, 37, .97) 0%, rgba(13, 17, 24, .95) 100%);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
     backdrop-filter: blur(16px) saturate(140%);
     box-shadow: 0 14px 30px -22px rgba(0, 0, 0, 1);

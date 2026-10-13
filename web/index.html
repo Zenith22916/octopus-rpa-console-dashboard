@@ -31,19 +31,40 @@
     <nav class="navmenu" id="navMenu">
       <div class="side-group">运行监控</div>
       <ul class="navmenu-list" id="navMenuList">
-        <li data-hash="#/analysis">运行数据分析</li>
-        <li data-hash="#/timeline">任务时间轴</li>
-        <li data-hash="#/botstatus">机器人状态</li>
+        <li data-hash="#/analysis">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10M10 19V5M16 19v-6M22 19H2"/></svg>
+          <span>运行数据分析</span>
+        </li>
+        <li data-hash="#/timeline">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h11M3 12h7M3 18h14"/><circle cx="17" cy="6" r="2"/><circle cx="13" cy="12" r="2"/><circle cx="20" cy="18" r="2"/></svg>
+          <span>任务时间轴</span>
+        </li>
+        <li data-hash="#/botstatus">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="7" width="14" height="11" rx="2.5"/><path d="M12 7V4M9 12h.01M15 12h.01M9 16h6"/></svg>
+          <span>机器人状态</span>
+        </li>
       </ul>
       <div class="side-group split">问题排查</div>
       <ul class="navmenu-list">
-        <li data-hash="#/logsearch">日志检索</li>
-        <li data-hash="#/compliance">触发器合规</li>
+        <li data-hash="#/logsearch">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.6-3.6"/></svg>
+          <span>日志检索</span>
+        </li>
+        <li data-hash="#/compliance">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>
+          <span>触发器合规</span>
+        </li>
       </ul>
       <div class="side-group split">配置管理</div>
       <ul class="navmenu-list">
-        <li data-hash="#/schedule">触发器排期</li>
-        <li data-hash="#/projects">项目控制台</li>
+        <li data-hash="#/schedule">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+          <span>触发器排期</span>
+        </li>
+        <li data-hash="#/projects">
+          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3.2l1.6 2H17.5A2.5 2.5 0 0 1 20 9.5v7A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>
+          <span>项目控制台</span>
+        </li>
       </ul>
     </nav>
 
@@ -134,11 +155,13 @@
           </div>
           <div class="hint">
             <span class="tl-span-info" id="tlSpanInfo">—</span>
-            <span class="legend"><i style="background:rgba(29,158,117,0.6)"></i>已完成</span>
-            <span class="legend"><i style="background:rgba(239,159,39,0.6)"></i>运行中</span>
-            <span class="legend" id="lgQueue"><i style="background:rgba(55,138,221,0.6)"></i>排队中</span>
-            <span class="legend"><i style="background:rgba(226,75,74,0.6)"></i>失败</span>
-            <span class="legend"><i style="background:rgba(95,94,90,0.6)"></i>已停止</span>
+            <!-- 图例色块与甘特任务条同款：淡底 + 同色描边（幽灵款），
+                 不再是实心色块，避免和图上的任务条观感对不上 -->
+            <span class="legend"><i style="--c:#1D9E75"></i>已完成</span>
+            <span class="legend"><i style="--c:#EF9F27"></i>运行中</span>
+            <span class="legend" id="lgQueue"><i style="--c:#378ADD"></i>排队中</span>
+            <span class="legend"><i style="--c:#E24B4A"></i>失败</span>
+            <span class="legend"><i style="--c:#8b8f98"></i>已停止</span>
           </div>
         </div>
         <!-- 运行记录：桌面端六列表格（点行让甘特图对齐该条记录的结束时间）；
@@ -197,7 +220,6 @@
             <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select><button class="btn" id="scExport" title="按当前筛选条件（视图 / 机器人 / 状态）导出 xlsx">导出 Excel</button><span class="datatime" id="scInfo">—</span></h2>
             <!-- sc-wrap 只负责给「当前时刻横线」提供定位基准；sc-nowline 是覆盖层，压在应用标签下面 -->
             <div class="scroll sc-scroll"><div class="sc-wrap" id="scWrap"><table id="scTbl" class="sc-tbl"></table><div class="sc-nowline" id="scNowLine" style="display:none"><span class="sc-now-lab"></span></div></div></div>
-            <div class="hint">视图：每周=周一~周日（每天/每周任务），每月=当月有任务的日期（每月任务）；行=执行时刻，格子内列出该时刻运行的应用；悬停某个应用会点亮同一应用的全部排期，<b>点击标签直达项目控制台该项目的运行记录</b>。红色虚线=当前时刻，红色底色列=今天。「导出 Excel」按当前筛选生成 xlsx，含「排期日历」（版式同原图，同应用的排期日合并成色块）、「排期明细」与「触发器汇总」三张表。</div>
           </div>
         </div>
       </div>
@@ -241,7 +263,6 @@
                     <button class="btn" id="pjCfgAdd">＋ 新增配置</button>
                   </div>
                   <div class="scroll"><table id="pjCfgTbl" class="pj-cfg-tbl"></table></div>
-                  <div class="hint" id="pjCfgHint">配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置；点「编辑」或「＋ 新增配置」在弹窗中修改。</div>
                 </div>
                 <div class="pj-tab-panel" id="pjPanelRuns" style="display:none;">
                   <div class="toolbar">
@@ -301,7 +322,6 @@
             <span class="datatime" id="lsInfo">—</span>
           </div>
           <div class="scroll ls-scroll" id="lsResult"></div>
-          <div class="hint" id="lsHint">在机器人本机共享日志目录里检索关键词（只扫本机可访问的目录）。点命中行直达该条运行记录的日志，并自动带上关键词与文件定位。</div>
         </div>
       </div>
 
@@ -312,7 +332,6 @@
           <div class="panel cp-side">
             <h2>各机器人命中率</h2>
             <div class="scroll"><table id="cpRobotTbl"></table></div>
-            <div class="hint">「应用不符」= 触发到了、但跑的是别的应用（触发器指向与实跑应用不一致）。</div>
           </div>
           <div class="panel cp-main">
             <div class="toolbar">
@@ -334,7 +353,6 @@
               <span class="datatime" id="cpInfo">—</span>
             </div>
             <div class="scroll"><table id="cpTbl"></table></div>
-            <div class="hint" id="cpHint">—</div>
           </div>
         </div>
       </div>

@@ -154,7 +154,8 @@ function scUnhighlight() {
   for (var i = 0; i < tags.length; i++) tags[i].classList.remove('hot');
 }
 
-var WAIT_FILL = shadeGrad(statusRGB('Waiting', .72), 'v', .12, .14);
+/* 排队段的填充色由 tlRender 里的幽灵描边直接给（见 withAlpha 调用），
+   原来的 WAIT_FILL 渐变已不再使用，故移除。 */
 
 /* 饼图在小面板里的比例：标签只留百分比（名称+数值交给图例），引导线缩短，
    否则扇区外侧的标签会顶出容器被裁掉 */
@@ -166,12 +167,29 @@ var PIE_LINE = { length: 6, length2: 6, lineStyle: { color: 'rgba(255,255,255,.1
    放在这里做单一出处，所有图表（时间轴/分析/排期）都从这里拼，避免漏一个又变回白底。 */
 var TIP_SKIN = {
   confine: true, backgroundColor: '#1c2027', borderColor: '#333a45',
-  borderWidth: 1, textStyle: { color: '#e6e6e6', fontSize: 12 }
+  borderWidth: 1, textStyle: { color: '#e6e6e6', fontSize: 12, fontFamily: null }
 };
 function tipOpt(extra) {
   var o = {}, k;
   for (k in TIP_SKIN) o[k] = TIP_SKIN[k];
   for (k in extra) o[k] = extra[k];
+  /* 提示窗字体跟着图表统一字体走（见 chartTextStyle） */
+  o.textStyle = o.textStyle || {};
+  if (!o.textStyle.fontFamily) o.textStyle.fontFamily = chartFont();
+  return o;
+}
+/* 图表内统一字体：ECharts 的轴标签/图例/提示窗默认走 sans-serif，
+   不会继承 body 的 Maple Mono。这里集中一处，所有 setOption 都从它取。 */
+function chartFont() {
+  try {
+    var f = getComputedStyle(document.body).fontFamily;
+    return f || 'sans-serif';
+  } catch (e) { return 'sans-serif'; }
+}
+/* 顶层 textStyle：一次设好全局字体，各系列不必逐个再写 fontFamily */
+function chartTextStyle(extra) {
+  var o = { fontFamily: chartFont() };
+  for (var k in (extra || {})) o[k] = extra[k];
   return o;
 }
 function pieLegend(data) {
@@ -288,7 +306,10 @@ function navSet(name) {
   var label = null;
   for (var i = 0; i < items.length; i++) {
     if (items[i].getAttribute('data-hash') === hash) {
-      label = items[i].textContent;
+      /* 取 <span> 里的文字而不是 li.textContent：导航项现在带 SVG 图标，
+         textContent 会把图标里的空白也算进去，标题按钮会被撑出多余空隙 */
+      var sp = items[i].querySelector('span');
+      label = sp ? sp.textContent : items[i].textContent;
       items[i].classList.add('cur');
     } else {
       items[i].classList.remove('cur');
@@ -471,6 +492,24 @@ function buildSegs() {
   });
   return segs;
 }
+/* 把任意合法颜色改成指定透明度（甘特块幽灵底用；解析失败就原样返回） */
+function withAlpha(c, a) {
+  var p = parseColor(c);
+  if (!p) return c;
+  return 'rgba(' + p.r + ',' + p.g + ',' + p.b + ',' + a + ')';
+}
+/* 甘特块 = 幽灵任务条：极淡的同色底 + 实色描边。
+   原来是 0.6 半透明实心块，在深底上偏灰、相邻块容易糊成一片；
+   描边款边界清楚，也更接近常见甘特图的「任务条」观感。 */
+function ghostBar(color, dimA) {
+  var solid = withAlpha(color, 1);
+  return {
+    fill: withAlpha(solid, .16),
+    stroke: solid,
+    lineWidth: 1.5,
+    opacity: dimA
+  };
+}
 function segColor(s) { if (s.kind === 'wait') return 'rgba(55,138,221,0.6)'; return statusColor(s.r); }
 var FONT_STACK = (function () {
   try { return getComputedStyle(document.body).fontFamily || 'sans-serif'; }
@@ -507,12 +546,17 @@ function lgViewOptions() {
     }
   };
 }
-// 单行文字：放得下整串显示；放不下则截断并在末尾加 "..."
-function truncateLabel(name, maxW, fs) {
+/* 单行文字：放得下整串显示；放不下则截断并在末尾加省略后缀。
+   默认后缀 "..."，调用方可传 ell 换（甘特任务条用 "~"）。
+   只要还剩得下一个字 + 后缀，就至少给一个字 —— 以前 maxW 偏小时
+   直接返回空串，块里就一个字都没有了。 */
+function truncateLabel(name, maxW, fs, ell) {
   if (!name) return '';
-  if (maxW < 6) return '';                 // 太窄，连省略号都放不下
+  ell = (ell == null) ? '...' : ell;
+  var ellW = measureW(ell, fs);
+  if (maxW < ellW + 4) return '';          // 连「一个字 + 后缀」都放不下，才放弃
   if (measureW(name, fs) <= maxW) return name;
-  var ell = '...', ellW = measureW(ell, fs), budget = maxW - ellW;
+  var budget = maxW - ellW;
   if (budget <= 0) return '';
   var cur = '', curW = 0;
   for (var i = 0; i < name.length; i++) {
@@ -520,6 +564,7 @@ function truncateLabel(name, maxW, fs) {
     if (curW + cw > budget) break;
     cur += name[i]; curW += cw;
   }
+  if (!cur) return '';                     // 一个字都塞不下
   return cur + ell;
 }
 function effEnd(s) { return s.end == null ? state.end : s.end; }
@@ -712,6 +757,7 @@ function tlRender() {
   tlChart.setOption({
     backgroundColor: 'transparent',
     animation: false,
+    textStyle: chartTextStyle(),
     tooltip: tipOpt({
       trigger: 'item',
       formatter: function (p) {
@@ -783,10 +829,15 @@ function tlRender() {
           if (q1 > q0) {
             /* 排队段不撑最小厚度：它只是运行块前面的一小截蓝头，
                当前缩放级别看不见就说明「排队时间短到无关紧要」，不必硬挤出来。
-               （运行块本身必须可见 —— 那代表「这条记录跑过」，语义不同） */
+               （运行块本身必须可见 —— 那代表「这条记录跑过」，语义不同）
+               排队段也走幽灵描边，但底色更实一点，好和运行段区分。 */
             var pq0 = xy(api, q0, row), pq1 = xy(api, q1, row);
             if (lenOf(pq0, pq1) >= 1) {
-              children.push(barOf(pq0, pq1, bh, { fill: WAIT_FILL, opacity: dimA }));
+              children.push(barOf(pq0, pq1, bh, {
+                fill: withAlpha('rgba(55,138,221,1)', .26),
+                stroke: withAlpha('rgba(55,138,221,1)', .95),
+                lineWidth: 1, opacity: dimA
+              }));
             }
           }
         }
@@ -794,28 +845,24 @@ function tlRender() {
         var r0 = Math.max(rs, winA), r1 = Math.min(api.value(1), nowW);
         if (r1 > r0) {
           var st2 = stretch(xy(api, r0, row), xy(api, r1, row));
-          /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生渐变：
+          /* 用 value(5)（数据构造时由 segColor 算好的状态色）派生：
              不要在 renderItem 里读 params.data.status —— custom series
              不保证保留附加字段，取不到就会全部落到兜底色（全变绿）。
-             横条一律「上亮下暗」竖向渐变。 */
-          children.push(barOf(st2[0], st2[1], bh, {
-            fill: shadeGrad(api.value(5), 'v', .07, .09), opacity: dimA
-          }));
+             幽灵任务条：极淡同色底 + 实色描边，边界清楚、不糊成一片。 */
+          children.push(barOf(st2[0], st2[1], bh, ghostBar(api.value(5), dimA)));
         }
         var pv0 = xy(api, vs, row), pv1 = xy(api, ve, row);
         var stv = stretch(pv0, pv1);
         if (lenOf(stv[0], stv[1]) >= 1) {
-          /* 悬浮中的那条：白描边换成金色加粗描边 + 外扩 2px，视觉上「鼓」出来；
-             其余保持原来的白细边（淡出时描边也一起淡）。 */
+          /* 悬浮中的那条：金色加粗描边 + 外扩 2px，视觉上「鼓」出来。
+             任务条本身已经是描边款，这里就不再叠一层白色内描边，
+             避免窄块被两层描边吃掉（浅色底会把 1.5px 的边糊掉）。 */
           if (isHot) {
             var e0 = stv[0], e1 = stv[1];
             children.push(barOf([e0[0] - 2, e0[1]], [e1[0] + 2, e1[1]], bh + 6, {
               fill: 'rgba(255,209,102,0.14)',
               stroke: '#ffd166', lineWidth: 2
             }));
-          } else {
-            children.push(barOf(stv[0], stv[1], bh,
-              { fill: 'rgba(0,0,0,0)', stroke: 'rgba(255, 255, 255, 0.5)', lineWidth: 1.5, cursor: 'pointer', opacity: dimA }));
           }
         }
         if (!children.length) return null;
@@ -845,13 +892,18 @@ function tlRender() {
         var pc = xy(api, vc, row);
         var avail = lenOf(xy(api, vStart, row), xy(api, vEnd, row));
 
-        // 数据块文字：单行、字号与大标题一致、居中、放不下截断加 "..."、少于 8 字不显示
-        var label = truncateLabel(raw, Math.max(2, avail - 4), BAR_FS);
-        if (!label || label.length < 8) return null;
+        /* 数据块文字：单行、居中、放不下截断。
+           后缀用 "~"（比 "..." 省宽度，窄块里能多留一个字）；
+           只要放得下「一个字 + ~」就显示，不再要求至少 8 个字 ——
+           以前少于 8 字直接不画，短块等于完全没有标签。 */
+        var label = truncateLabel(raw, Math.max(2, avail - 4), BAR_FS, '~');
+        if (!label) return null;
         return {
           type: 'text', style: {
             text: label, x: pc[0], y: pc[1], textAlign: 'center',
-            textVerticalAlign: 'middle', fill: '#10141a', fontSize: BAR_FS,
+            /* 任务条改成幽灵款（淡底 + 描边）后，原来的深色字（#10141a）
+               在深色底上几乎看不见，改为浅色字。 */
+            textVerticalAlign: 'middle', fill: '#dbe3ee', fontSize: BAR_FS,
             fontWeight: 500, fontFamily: FONT_STACK
           }
         };
@@ -865,10 +917,12 @@ function tlRender() {
         var c1 = xy(api, nowW, row);
         var lo = Math.min(c0[0], c1[0]);
         var hi = Math.max(c0[0], c1[0]);
-        // 机器人分组之间的白色虚线：横轴布局下画横线（每组的底边）
+        // 机器人分组之间的分隔虚线：横轴布局下画横线（每组的底边）
         return {
           type: 'line', shape: { x1: lo, y1: c0[1] - band / 2, x2: hi, y2: c0[1] - band / 2 },
-          style: { stroke: 'rgba(255,255,255,0.65)', lineWidth: 1.5, lineDash: [6, 4] }
+          /* 原来是 rgba(255,255,255,0.65) 的亮白虚线，抢眼到像数据本身；
+             改成中性灰细虚线，退成背景网格，让任务条成为主角。 */
+          style: { stroke: 'rgba(255,255,255,0.15)', lineWidth: 1, lineDash: [5, 5] }
         };
       }
     }, {
@@ -1561,6 +1615,7 @@ function anPie(byWay) {
     };
   });
   anCharts.pie.setOption({
+    textStyle: chartTextStyle(),
     tooltip: tipOpt({ trigger: 'item', formatter: '{b}: {c} ({d}%)' }),
     legend: pieLegend(data),
     series: pieSeries(data)
@@ -1572,6 +1627,7 @@ function anStatus(sc) {
   });
   data.sort(function (a, b) { return b.value - a.value; });
   anCharts.statusPie.setOption({
+    textStyle: chartTextStyle(),
     tooltip: tipOpt({ trigger: 'item', formatter: '{b}: {c} ({d}%)' }),
     legend: pieLegend(data),
     series: pieSeries(data)
@@ -1585,6 +1641,7 @@ function anWaitBar(byRobot) {
   var leftPad = IS_MOBILE ? Math.max(40, Math.min(86, Math.ceil(labelW) + 8))
     : Math.max(44, Math.min(132, Math.ceil(labelW) + 12));
   anCharts.waitBar.setOption({
+    textStyle: chartTextStyle(),
     grid: { left: leftPad, right: 20, top: 8, bottom: 28 },
     tooltip: tipOpt({ trigger: 'axis', formatter: function (p) { return p[0].name + '：' + fmtDurM(p[0].value); } }),
     xAxis: { type: 'value', axisLabel: { color: '#8b8f98', fontSize: 11, formatter: function (v) { return (v / 60000).toFixed(0) + '分'; } }, splitLine: { lineStyle: { color: '#20242c' } } },
@@ -1606,6 +1663,7 @@ function anHeat(heat) {
   var data = [], maxV = 0;
   for (var w = 0; w < 7; w++) for (var h = 0; h < 24; h++) { var v = heat[w][h]; if (v > maxV) maxV = v; data.push([h, w, v]); }
   anCharts.heat.setOption({
+    textStyle: chartTextStyle(),
     tooltip: tipOpt({ position: 'top', formatter: function (p) { return '周' + days[p.value[1]] + ' ' + pad(p.value[0]) + '时：' + p.value[2] + ' 次'; } }),
     /* 手机上绘图区只有 300px 左右，24 个小时刻度必须缩号，否则标签互相叠字 */
     grid: { left: IS_MOBILE ? 36 : 42, right: 16, top: 8, bottom: 78 },
@@ -3375,7 +3433,6 @@ function pjSelect(fid) {
     + ' · 更新: ' + pjFmtTime(pjCurrent.update_time)
     + (pjCurrent.owner ? ' · 负责人: ' + pjCurrent.owner : '');
   document.getElementById('pjGroup').value = pjCurrent.group || '';
-  document.getElementById('pjCfgHint').textContent = '配置组用于关联该项目的飞书多维表格配置（group 列）。先保存映射，再加载配置。';
   document.getElementById('pjCfgTbl').innerHTML = '';
   pjCfgItems = [];
   /* 带 ?tab=runs 进入（排期页点标签跳转）：直接落在「运行记录」tab 上 */
@@ -3461,7 +3518,6 @@ function pjCfgLoad() {
       alert((d && d.error) || '加载配置失败');
     } else {
       pjCfgItems = d.items || [];
-      document.getElementById('pjCfgHint').textContent = '配置组「' + g + '」共 ' + pjCfgItems.length + ' 个配置项；点「编辑」修改，或「＋ 新增配置」添加。';
       pjCfgRender();
     }
     glHide();
@@ -3571,7 +3627,6 @@ function pjInit() {
     pjCfgPost({ group: 'project', key: 'p.' + p.flow_id, value: g, type: 'string' }, function () {
       p.group = g;
       pjRenderList();
-      document.getElementById('pjCfgHint').textContent = '映射已保存：项目 ↔ 配置组「' + (g || '（未关联）') + '」。';
     });
   });
   document.getElementById('pjCfgLoad').addEventListener('click', pjCfgLoad);
@@ -3873,12 +3928,6 @@ function lsRender() {
   var info = document.getElementById('lsInfo');
   if (info) info.textContent = '扫描 ' + (sc.records || 0) + ' 条记录 / '
     + (sc.files || 0) + ' 个文件 · 最近 ' + d.days + ' 天';
-  var hint = document.getElementById('lsHint');
-  if (hint) hint.textContent = '候选 ' + (d.candidates || 0) + ' 条记录（最近 ' + d.days
-    + ' 天内且本机日志目录可访问），级别筛选「' + (LS_LVL_CN[d.lvl] || '全部行') + '」。'
-    + (d.truncated ? '已扫满上限（扫描 ' + (sc.records || 0) + '/' + (d.candidates || 0)
-      + ' 条记录）：请缩小机器人范围或时间窗，或改用「异常 + 警告」。' : '')
-    + ' 点组头或任一行直达该条运行记录的日志，自动带上关键词与文件定位。';
   if (!d.hits.length) {
     box.innerHTML = '<div class="ls-empty">最近 ' + d.days + ' 天内没有匹配「' + esc(kw) + '」的日志行。</div>';
     return;
@@ -3993,11 +4042,6 @@ function cpRender() {
   var info = document.getElementById('cpInfo');
   if (info) info.textContent = '可判定 ' + (s.evaluated || 0) + ' 次 · 延迟 ' + (s.late || 0)
     + ' · 待定 ' + (s.pending || 0) + ' · 超出数据范围 ' + (s.unknown || 0);
-  var hint = document.getElementById('cpHint');
-  if (hint) hint.textContent = '口径：计划时刻起（含前后 2 分钟容差）'
-    + CP_DATA.window + ' 分钟内、同机器人 + 同应用有运行记录即算命中；'
-    + '「应用不符」= 触发到了但跑的是别的应用。早于运行记录最早时刻（'
-    + (CP_DATA.coverageFrom ? fmtFull(CP_DATA.coverageFrom) : '—') + '）的排期点无法判定，已排除。';
 
   /* 各机器人命中率（始终展示全量总览，不随机器人筛选收窄） */
   var rt = document.getElementById('cpRobotTbl');
