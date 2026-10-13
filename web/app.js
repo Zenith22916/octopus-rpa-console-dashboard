@@ -433,8 +433,11 @@ var tlPanMoved = false;     // 本次拖拽是否真的移动过：拖完那一�
 var tlScrollTrackEl = null, tlScrollWinEl = null;   // 底部滚动条（只反映窗口，不负责缩放）
 
 /* 时间轴的绘图区边距（tlRender 的 grid 与 1:1 拖动换算共用一处，避免两边对不上）。
-   甘特图只在桌面端渲染（手机端整块砍掉，只留记录流），所以这里只有一套桌面值。 */
-var TL_GRID = { left: 100, right: 20, top: 20, bottom: 30 };
+   甘特图只在桌面端渲染（手机端整块砍掉，只留记录流），所以这里只有一套桌面值。
+   top 比原来多留了一截：横轴（时间）刻度移到上方（见 tlRender 的 position:'top'），
+   11px 的刻度文字加上默认间距要占掉 20 多 px，不给够空间会被画布裁掉；
+   bottom 相应收小 —— 刻度搬上去之后，下面只剩泳道内容，不需要再给刻度留位。 */
+var TL_GRID = { left: 100, right: 20, top: 34, bottom: 18 };
 function tlGrid() { return TL_GRID; }
 /* 数据块的最小可见厚度（px）：6 秒的记录在 6 小时窗口里只有 0.1px，不撑一下就等于没画，
    「这台机器人跑过一次」这件事就看不见了。 */
@@ -470,8 +473,36 @@ function robotList(segs) {
     if (rb && rb !== "(未指定机器人)" && arr.indexOf(rb) < 0) arr.push(rb);
   });
   /* 两端都是横向布局（时间在横轴），机器人是纵向的泳道组，行序与时间流向无关，
-     统一按名称排序 —— 行序稳定，不随窗口平移抖动，肌肉记忆才好用。 */
-  return arr.sort();
+     统一按名称排序 —— 行序稳定，不随窗口平移抖动，肌肉记忆才好用。
+
+     排序键 = robotSortKey()：机器人名形如「A🍩硕晞-01 / B💎宝实-02」，
+     A/B 是分组字母、中间是 emoji。默认 sort() 按码点比大小：先是分组字母，
+     再比 emoji（A 组全部排在 B 组前），最后才轮到中文名 —— 也就是「组内顺序」看运气，
+     而且只要 emoji 不同，中文名根本不参与比较。改成显式的三段键：
+       ① 分组字母（A 组在前、B 组在后）
+       ② 去掉前缀后的中文名（按中文读音排，localeCompare 而非码点）
+       ③ 编号数字（同名的 -01 / -02 / -03，按大小而不是字符串）
+     这样行序在任何数据下都可预期，同组内就是「宝实-00 → 硕晞-01」这种读音序。 */
+  return arr.sort(function (a, b) {
+    var ka = robotSortKey(a), kb = robotSortKey(b);
+    if (ka.g !== kb.g) return ka.g < kb.g ? -1 : 1;
+    if (ka.name !== kb.name) return ka.name.localeCompare(kb.name, 'zh-Hans-CN');
+    return ka.no - kb.no;
+  });
+}
+/* 机器人名拆成排序键（见 robotList 的说明）：
+   g=分组字母（A/B，非字母开头视为 ''）、name=去前缀中文名、no=末尾编号（没有则为 -1）。 */
+function robotSortKey(n) {
+  var s = String(n == null ? '' : n);
+  var m = /^([A-Za-z])\s*/.exec(s);
+  var g = m ? m[1] : '';
+  var rest = s.slice(m ? m[0].length : 0).replace(/[^\u4e00-\u9fa5A-Za-z0-9-]/g, '');
+  var nm = /^(.*?)[-_]?(\d+)$/.exec(rest);
+  return {
+    g: g,
+    name: nm ? nm[1] : rest,
+    no: nm ? parseInt(nm[2], 10) : -1
+  };
 }
 /* 手机端纵轴/记录流用的机器人短名：8 字全名（「A🍩硕晞-01」）在手机上太长，
    去掉组前缀（A/B）与 emoji，只留「硕晞-01」；完整名在提示窗与详情页里都有。 */
@@ -679,9 +710,12 @@ function tlRender() {
     }
     if (s.kind === 'run' && s.r.name && (merge.max - merge.min) >= minVisibleMs) {
       /* value(2) 应用名：两端都用（手机端只放得下缩写版，见 renderItem 里按 IS_MOBILE 分流）。
-         门槛用 minVisibleMs：屏幕上太窄的块连字都排不下，画上去只是糊。 */
+         门槛用 minVisibleMs：屏幕上太窄的块连字都排不下，画上去只是糊。
+         value(5) 带上 rid：文字是独立的 series（zlevel 2，压在块之上），
+         必须自己知道归属才能跟着悬浮联动淡出 —— 否则悬浮某一行时，
+         其余块的文字还清清楚楚地浮在半透明的块上（见下方 renderItem 的 dimT）。 */
       textData.push({
-        value: [0, li.row, s.r.name, merge.min, merge.max]
+        value: [0, li.row, s.r.name, merge.min, merge.max, rid]
       });
     }
   });
@@ -781,13 +815,16 @@ function tlRender() {
       }
     }),
     grid: tlGrid(),
-    /* 横轴 = 时间 */
+    /* 横轴 = 时间（刻度放上方：先看到时间、再看泳道，和「现在」红线的阅读顺序一致） */
     xAxis: {
       type: 'time', min: nowW - state.span, max: nowW,
+      position: 'top',
       axisLabel: {
         color: '#8b8f98', fontSize: 11, hideOverlap: true,
         formatter: function (v) { return fmtTime(v); }
       },
+      /* 刻度文字朝上对齐轴线，别悬在图与轴线之间 */
+      axisTick: { alignWithLabel: true },
       axisLine: { lineStyle: { color: '#333' } },
       splitLine: { show: true, lineStyle: { color: '#20242c' } }
     },
@@ -898,13 +935,23 @@ function tlRender() {
            以前少于 8 字直接不画，短块等于完全没有标签。 */
         var label = truncateLabel(raw, Math.max(2, avail - 4), BAR_FS, '~');
         if (!label) return null;
+        /* 悬浮联动：有悬浮行时，非对应块的文字跟着块一起淡出。
+            文字压在块之上（zlevel 2），只把块调淡的话，这些字会变成
+            「浮在一团灰影上的白字」，反而比不淡出时更显眼。
+            按 value(5) 的 rid 判定归属：目标块文字保持原色，
+            其余降到 18% 不透明度，与块的 dimA 同源、同步消退。 */
+        var dimT = 1;
+        if (hot) {
+          var own = api.value(5) != null && String(api.value(5)) === String(hot);
+          dimT = own ? 1 : 0.18;
+        }
         return {
           type: 'text', style: {
             text: label, x: pc[0], y: pc[1], textAlign: 'center',
             /* 任务条改成幽灵款（淡底 + 描边）后，原来的深色字（#10141a）
-               在深色底上几乎看不见，改为浅色字。 */
-            textVerticalAlign: 'middle', fill: '#dbe3ee', fontSize: BAR_FS,
-            fontWeight: 500, fontFamily: FONT_STACK
+               在深色底上几乎看不见，改为浅色字；再降一档明度 —— 亮白在密集图里太抢眼，会和状态描边抢注意力，文字只是标签，退到「读得清但不扎眼」的一档。 */
+            textVerticalAlign: 'middle', fill: '#a8b4c4', fontSize: BAR_FS,
+            fontWeight: 500, fontFamily: FONT_STACK, opacity: dimT
           }
         };
       }

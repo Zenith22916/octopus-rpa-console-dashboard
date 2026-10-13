@@ -1508,9 +1508,25 @@ tbody tr:hover {
   overflow: hidden;
 }
 
+/* 项目大标题区（标题 + 页签 + 运行按钮 + meta 行）。
+   原来是 .pj-detail 下光秃秃的一块，直接落在页面黑底上；下方 .pj-tab-panel
+   才有面板底色，标题区和配置面板明显是两截。这里补成一张卡片：
+   底色/描边/圆角沿用 .panel / .pj-tab-panel 那组值，内边距与面板一致（10px 14px），
+   页签与面板之间再用 12px 的外边距接上，视觉上连成一套。 */
 .pj-detail-head {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #181b21;
+  border: 1px solid #262a33;
+  border-radius: 10px;
 }
+
+/* 主题层已把 .panel / .pj-tab-panel 换成渐变面 + 阴影，标题卡片跟着换同源外观。
+   这里单独写而不是把 .pj-detail-head 加进上面那组选择器，是为了让回退 theme.css
+   时这张卡片自动回到 style.css 的实色底（两侧互相覆盖，不打架）。 */
 
 .pj-title-row {
   display: flex;

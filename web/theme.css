@@ -1190,6 +1190,21 @@ tbody tr:hover {
 }
 
 /* ------------------------------------------------------- 11. 项目控制台侧栏 */
+/* 右侧「项目大标题」卡片：背景/描边/圆角/阴影与 .pj-tab-panel 同源，
+   让标题区和下方配置面板看起来是同一套（原来是光秃秃的黑底一块）。 */
+.pj-detail-head {
+  position: relative;
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+  border-radius: 14px;
+  box-shadow: var(--t-shadow);
+  transition: border-color .32s, box-shadow .32s;
+}
+
+.pj-detail-head:hover {
+  border-color: var(--t-line-hi);
+}
+
 .pj-side {
   border-radius: 14px;
 }
