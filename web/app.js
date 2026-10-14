@@ -20,6 +20,10 @@ function esc(s) {
 }
 function pad(n) { return String(n).padStart(2, "0"); }
 function fmtTime(ms) { if (ms == null) return "-"; var d = new Date(ms); return (d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+/* 只到「月-日」的短日期（时间轴窗口左右边界的日期角标、跨天时的刻度用）。
+   月与日都补零（08-14）：等宽才好和刻度对齐，月份从 9 跳到 10 时也不会把
+   右对齐的角标挤歪。 */
+function fmtDateMD(ms) { if (ms == null) return "-"; var d = new Date(ms); return pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
 /* 时长口语化：用于时间窗口大小提示 */
 function fmtSpanLabel(ms) {
   var m = ms / 60000;
@@ -538,6 +542,36 @@ var tlScrollTrackEl = null, tlScrollWinEl = null;   // 底部滚动条（只反�
    bottom 相应收小 —— 刻度搬上去之后，下面只剩泳道内容，不需要再给刻度留位。 */
 var TL_GRID = { left: 100, right: 20, top: 34, bottom: 18 };
 function tlGrid() { return TL_GRID; }
+/* 时间轴的网格线颜色：**泳道分隔线（横、实线）与时间刻度竖线（纵、虚线）共用一色**，
+   横竖两个方向才是同一张网。原来竖线是 #20242c，在深底上几乎看不出刻度落在哪，
+   调成和泳道分隔线一致的 rgba(255,255,255,0.15) 提亮一档。
+   方向靠「实 / 虚」区分：横向的分组边界是实体结构（实线），
+   纵向的时间刻度是背景参考（虚线）。 */
+var TL_GRID_COLOR = 'rgba(255,255,255,0.15)';
+/* 横轴（时间）刻度的文字：平时只给 HH:mm —— 日期交给左右两端的日期角标（见 tlRender 的 dateData 系列）；
+   走到午夜那一格时把 00:00 换成「MM-dd」——跨天的窗口里刻度全是 HH:mm 会分不清落在哪天，
+   而午夜正是天与天的分界，拿它当日期锚点最自然（用户口径：跨天就把那天的 00:00 换成日期）。 */
+function tlTickLabel(t) {
+  var d = new Date(t);
+  if (d.getHours() === 0 && d.getMinutes() === 0) return fmtDateMD(t);
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+/* 横轴刻度文字与轴线的间距（px）。抽成常量是因为两端的日期角标要和刻度文字**同一行**
+   且底边对齐（用户要求：同一行、不许字体重叠）—— 角标的基线必须按同一个值反推，
+   写死两处数字迟早会错开。 */
+var TL_TICK_LABEL_MARGIN = 8;
+/* 左右两端日期角标与时间刻度文字共用的纵向锚点：**文字底边**。
+   刻度文字由 ECharts 摆在上方轴线上方 margin 处（verticalAlign 为 bottom），
+   角标要跟它同一行且不叠字，就必须把底边钉在同一个 y 上。 */
+function tlTopLabelBottomY() { return tlGrid().top - TL_TICK_LABEL_MARGIN; }
+/* 当前窗口左右日期角标各占的横向宽度（px，含与刻度之间的间隙）。
+   由 tlRender 每次渲染时写入，供 xAxis.axisLabel.formatter 判定
+   「这个刻度的文字会不会压到角标上」——
+   formatter 是 ECharts 回调，拿不到 tlRender 的局部变量，只能走这个模块级中转。
+   初值给个够大的数：tlRender 之前（理论上不会发生）宁可多挡一个刻度，也不要叠字。 */
+var tlDateBox = { l: 46, r: 46 };
+/* 日期角标与「保留带」外缘之间的间隙（px）：确保紧挨着的刻度文字不贴着日期。 */
+var TL_DATE_GAP_PX = 7;
 /* 数据块的最小可见厚度（px）：6 秒的记录在 6 小时窗口里只有 0.1px，不撑一下就等于没画，
    「这台机器人跑过一次」这件事就看不见了。 */
 var MIN_BAR_PX = 4;
@@ -547,6 +581,19 @@ function tlTimeLenPx() {
   var g = tlGrid();
   var len = (chartEl ? chartEl.clientWidth || 0 : 0) - g.left - g.right;
   return Math.max(50, len || 900);
+}
+/* 时刻 -> 图表容器的像素横坐标（含 grid 左留白）。
+   用于「刻度文字会不会撞上两端日期角标」的判定（见 xAxis.axisLabel.formatter）——
+   容器的坐标系与 tlTimeLenPx 同一套（clientWidth，不含 theme.js 的 CSS 缩放），
+   两边换算必须同源，否则判定会整体偏掉。
+   图表还没建好（chartEl 为空）时返回 null，调用方按「不判定」处理。 */
+function tlTimeX(t) {
+  if (!chartEl) return null;
+  var g = tlGrid();
+  var plotW = (chartEl.clientWidth || 0) - g.left - g.right;
+  if (!(plotW > 0) || !(state.span > 0)) return null;
+  var nowW = Math.min(state.end + state.offset, state.end);
+  return g.left + (t - (nowW - state.span)) / state.span * plotW;
 }
 /* 指针在「时间方向」上的位置：横向布局取横坐标 */
 function tlPointerPos(e) { return e.clientX; }
@@ -749,14 +796,25 @@ function layout(segs) {
        交给绘制阶段的 stretch（见下），两件事分开管。 */
     idxs.forEach(function (ri) {
       var u = recs[ri], lane = -1;
-      /* 与泳道逐段比对：所有占用段都不与该泳道已有占用相交才可入住 */
-      for (var l = 0; l < lanes.length; l++) {
+      /* 与泳道逐段比对：所有占用段都不与该泳道已有占用相交才可入住。
+         注意 lanes[l] 是「该泳道已占用区间」的**数组**（每段是 [start, end]），
+         不是 {start, end} 单个区间 —— 这里曾写成 lanes[l].start / lanes[l].end，
+         数组上取到的是 undefined，两个比较恒为 false，于是永远判定「不冲突」，
+         同一台机器人的记录条条都落在第 0 条泳道（表现：开着「显示排队」，
+         重叠任务也不再避让，一台机器人永远只有一条泳道）。
+         必须逐段与泳道内已占用的每一段两两比。 */
+      for (var l = 0; l < lanes.length && lane < 0; l++) {
+        var occ = lanes[l];
         var clash = false;
-        for (var k = 0; k < u.spans.length; k++) {
+        for (var k = 0; k < u.spans.length && !clash; k++) {
           var st = u.spans[k][0], en = u.spans[k][1];
-          if (st < lanes[l].end && en > lanes[l].start) { clash = true; break; }
+          for (var q = 0; q < occ.length; q++) {
+            /* 半开区间判交：[st,en) 与 [occ.start,occ.end) 有交集才算冲突。
+               A 结束 == B 开始（首尾相接的排队等位）不算冲突，仍住同一条泳道。 */
+            if (st < occ[q][1] && en > occ[q][0]) { clash = true; break; }
+          }
         }
-        if (!clash) { lane = l; break; }
+        if (!clash) lane = l;
       }
       if (lane < 0) { lane = lanes.length; lanes.push([]); }
       u.spans.forEach(function (sp) { lanes[lane].push(sp); });
@@ -852,6 +910,23 @@ function tlRender() {
      取边在 renderItem 里按 Y_INVERSE 算（见那里的说明：不能用 api.coord(row±0.5)）。 */
   var sepData = [];
   lastRows.forEach(function (r) { if (r !== topGroupRow) sepData.push({ value: [r] }); });
+  /* 窗口左右两端的日期角标：刻度只读 HH:mm，「这是哪天」交给这两个角标。
+     放在绘图区左上 / 右上（与时间刻度同一行——都用 TL_GRID.top - TL_TICK_LABEL_MARGIN
+     作为文字底边，两边的基线因此天然对齐）。
+     两端都照常画：窗口只有 1 小时（同一天）时左右日期相同也照画，
+     位置固定、读的时候不用找（曾考虑「相同就只画一个」，但那样左右哪边显示
+     得额外定规则，角标会随窗口跳动）。 */
+  var dateL = fmtDateMD(winStart), dateR = fmtDateMD(nowW);
+  /* 左右日期角标各自占用的横向宽度（不取 max 对称：月底跨月时左右日期宽度可能不同，
+     比如 09-30 与 10-01 —— 取 max 只是让两边看着一样宽，却会白白吃掉一个刻度）。
+     文字宽 + 一点间隙。写进模块级的 tlDateBox，给 xAxis.axisLabel.formatter 用
+     （它拿不到 tlRender 的局部变量）。 */
+  tlDateBox.l = measureW(dateL, 11) + TL_DATE_GAP_PX;
+  tlDateBox.r = measureW(dateR, 11) + TL_DATE_GAP_PX;
+  var dateData = [
+    { value: [winStart, 0, dateL, 'left'] },
+    { value: [nowW, 0, dateR, 'right'] }
+  ];
   var recIds = {};
   visible.forEach(function (s) { recIds[s.r.id] = 1; });
   var recCount = Object.keys(recIds).length;
@@ -1022,18 +1097,38 @@ function tlRender() {
       }
     }),
     grid: tlGrid(),
-    /* 横轴 = 时间（刻度放上方：先看到时间、再看泳道，和「现在」红线的阅读顺序一致） */
+    /* 横轴 = 时间（刻度放上方：先看到时间、再看泳道，和「现在」红线的阅读顺序一致）
+       刻度只给 HH:mm（跨天的午夜那格给日期）；窗口两端的日期由下面的
+       dateData 系列画成角标（那是 custom series，不是 graphic 组件） */
     xAxis: {
       type: 'time', min: nowW - state.span, max: nowW,
       position: 'top',
       axisLabel: {
         color: '#8b8f98', fontSize: 11, hideOverlap: true,
-        formatter: function (v) { return fmtTime(v); }
+        margin: TL_TICK_LABEL_MARGIN,
+        formatter: function (v) {
+          /* 落进左右「日期角标」地带的刻度不给文字：角标与刻度在轴线上方同一行，
+             同时画就是叠字。判定用**刻度文字自身占的宽度**（以刻度为中心左右各半），
+             只挡日期本身不够 —— 紧挨着的那个刻度会有半截压在角标上。 */
+          var px = tlTimeX(v);
+          if (px == null) return tlTickLabel(v);
+          var half = measureW('00:00', 11) / 2;
+          if (px - half < TL_GRID.left + tlDateBox.l) return '';
+          var xr = tlTimeX(nowW);
+          if (xr != null && px + half > xr - tlDateBox.r) return '';
+          return tlTickLabel(v);
+        }
       },
       /* 刻度文字朝上对齐轴线，别悬在图与轴线之间 */
       axisTick: { alignWithLabel: true },
       axisLine: { lineStyle: { color: '#333' } },
-      splitLine: { show: true, lineStyle: { color: '#20242c' } }
+      /* 时间刻度竖线：与泳道分隔线同色（TL_GRID_COLOR），用**虚线**区分方向 ——
+         纵向是背景参考，横向的泳道边界才是实体结构（见底色系列的实线）。
+         密度不变（还是 ECharts 按 time 轴自动分的格）。 */
+      splitLine: {
+        show: true,
+        lineStyle: { color: TL_GRID_COLOR, width: 1, type: [5, 5] }
+      }
     },
     /* 纵轴 = 机器人泳道 */
     yAxis: {
@@ -1200,12 +1295,16 @@ function tlRender() {
            row+1 那一行的中心），取回来的是相邻行的中心而不是边界，只差半条泳道，
            看起来「像对上了又没对上」，比错一整条更难发现。 */
         var edge = c0[1] + (Y_INVERSE ? band / 2 : -band / 2);
-        // 机器人分组之间的分隔虚线：横轴布局下画横线
+        // 机器人分组之间的分隔线：横轴布局下画横向实线
         return {
           type: 'line', shape: { x1: lo, y1: edge, x2: hi, y2: edge },
-          /* 原来是 rgba(255,255,255,0.65) 的亮白虚线，抢眼到像数据本身；
-             改成中性灰细虚线，退成背景网格，让任务条成为主角。 */
-          style: { stroke: 'rgba(255,255,255,0.15)', lineWidth: 1, lineDash: [5, 5] }
+          /* 与时间刻度竖线同色（TL_GRID_COLOR），但画**实线**：
+             横向的分组边界是"结构"（谁属于哪台机器人），实线才立得住；
+             纵向的时间刻度是背景参考，交给虚线。方向靠虚实区分，不靠深浅。
+             颜色沿革：原来是最早的亮白虚线（0.65，抢眼到像数据本身），
+             后来退到中性灰细虚线；现在与竖线统一到同一档透明度，
+             横竖合成一张网格，任务条仍是画面主角。 */
+          style: { stroke: TL_GRID_COLOR, lineWidth: 1, type: 'solid' }
         };
       }
     }, {
@@ -1257,6 +1356,37 @@ function tlRender() {
           }
         }];
         return { type: 'group', children: out };
+      }
+    }, {
+      /* 窗口左右两端的日期角标（zlevel 2 = 压在时间刻度那一行之上，静默不吃事件）。
+         刻度只读 HH:mm，「这是哪天」由左右两端各一个日期承担：
+         左端贴绘图区左边界、右端贴右边界，与刻度同一行、同一基线。
+         必须 clip:false —— 这条文字画在绘图区**上方**（留给刻度的那一条带里），
+         默认裁剪会把它整个裁掉（graphic 元素没这个问题，custom series 有）。 */
+      type: 'custom', data: dateData, zlevel: 2, silent: true, clip: false,
+      renderItem: function (params, api) {
+        /* value = [时刻, 0(占位的泳道维度), 日期文本, 左/右]。
+           字符串必须放在下标 ≥2：ECharts 把 custom series 的 v(0)/v(1) 当作
+           坐标维度强制转成数字，字符串放下标 1 会被读成 NaN（实测：
+           [t,"08-14","left"] 读 v(1) 得 NaN，整个角标画不出来）。
+           工程里另外两个文字系列（应用名、悬浮气泡）同样是字符串而后置的。 */
+        var txt = String(api.value(2) || '');
+        if (!txt) return null;
+        var side = String(api.value(3) || 'left');
+        /* 横坐标走 ECharts 自己的换算（api.coord），与刻度文字用的是同一套变换，
+           两端才对得齐；纵坐标用固定像素：与刻度文字底边同一条线。 */
+        var x = api.coord([api.value(0), 0])[0];
+        return {
+          type: 'text',
+          style: {
+            text: txt, x: x, y: tlTopLabelBottomY(),
+            /* 左端左对齐（往右长）、右端右对齐（往左长）：角标永远长在绘图区内侧，
+               不会顶出画布，也不会压到左侧的机器人名。 */
+            textAlign: side === 'right' ? 'right' : 'left',
+            textVerticalAlign: 'bottom',
+            fill: '#a8b4c4', fontSize: 11, fontWeight: 600, fontFamily: FONT_STACK
+          }
+        };
       }
     }]
   }, { lazyUpdate: true });
