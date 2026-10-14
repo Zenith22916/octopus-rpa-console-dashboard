@@ -109,7 +109,7 @@ web/（纯前端，hash 路由八视图）
 | GET | `/echarts.min.js` | 本地 ECharts（离线可用） |
 | GET | `/monaco/vs/...` | Monaco Editor 静态资源（日志高亮） |
 | GET / POST | `/login` | 登录页 / 提交访问密码（Cookie 30 天） |
-| GET | `/api/runs` | 运行记录（时间轴、分析视图共用，按需查 MySQL） |
+| GET | `/api/runs` | 运行记录（`?limit=N` 最新 N 条 / `?since=ms` 时间范围 / `?pnos=p1,p2` 精确增量，可叠加；响应带 `rev` 供前端比对） |
 | GET | `/api/run?id=` | 单条记录详情（含日志目录解析） |
 | GET | `/api/bots?flow_id=` | 可选执行机器人清单（本流程跑过的 / 在线可用 / 离线停用 + 历史与推荐） |
 | GET | `/api/schedule` | 触发器日程（周/月视图 + 统计） |
@@ -133,8 +133,9 @@ web/（纯前端，hash 路由八视图）
 | 机制 | 说明 |
 |---|---|
 | 静态资源长缓存 | js/css/图片一律 `Cache-Control: public, max-age=31536000, immutable`，版本号由服务器按文件 mtime 自动注入（index.html 写 `?v=auto`，`_serve_index` 实时替换成 `?v=<mtime>`）——文件一改 URL 即变、缓存自动失效，无需手动 bump；二次打开页面**零下载** |
-| SSE 变更推送 | `/api/events` 长连接：库有变动（poller upsert / 全量抓取 / 每日更新）才广播 `{kind, rev}`，空闲时只有 30 秒一个心跳——取代原「每 6s 一次完整请求」轮询，无变动零流量 |
+| SSE 变更推送 | `/api/events` 长连接：库有变更（poller upsert / 全量抓取 / 每日更新）才广播 `{kind, rev, pnos}`，`pnos` 是**实际变更行的 process_no 列表**；空闲时只有 30 秒一个心跳——取代原「每 6s 一次完整请求」轮询，无变更零流量 |
 | rev 版本号比对 | 每次写库 `DATA_REV` 自增；`/api/runs`、`/api/botstatus`、`/api/schedule` 响应都带 `rev`，前端只在落后时才拉数据，重复/乱序事件被天然去重 |
+| pnos 精确增量拉取 | 前端收到带 `pnos` 的广播后只请求 `?pnos=p1,p2` 这几条（几条变更就是几条的流量），并按 id 合并进本地数据；无 `pnos`（每日全量更新）时退回范围拉取。`/api/runs` 的 `pnos` 参数与 `limit`/`since` 可叠加 |
 | gzip 压缩 | JSON 接口对 >1KB 的响应按请求 `Accept-Encoding: gzip` 压缩（记录列表压缩率约 80~90%） |
 | 低频兜底轮询 | SSE 断线/漏事件时前端每 60s 拉一次 `?limit=1` 的轻请求做 rev 比对，不再高频全量轮询 |
 

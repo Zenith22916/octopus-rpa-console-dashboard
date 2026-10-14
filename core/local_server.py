@@ -65,16 +65,18 @@ SSE_LOCK = threading.Lock()
 SSE_PING_SEC = 30                    # SSE 心跳间隔：保活穿透隧道空闲连接，同时防代理断链
 
 
-def bump_data_rev(reason=""):
+def bump_data_rev(reason="", pnos=None):
     """任何写库点调用：版本号 +1，并向所有 SSE 客户端广播变更信号。
 
-    事件体只带 kind + rev（几十字节），数据由前端收到后按需拉取——
-    推信号不推数据，避免双通道内容不一致，也把推送流量压到最低。
+    事件体只带 kind + rev + pnos（变更行的 process_no 列表，几十~几百字节），
+    数据由前端收到后按 pnos 精确拉取——推信号不推数据，避免双通道内容不一致，
+    也把推送流量压到最低；没有 pnos（如每日全量更新）时前端退回范围拉取。
     """
     with DATA_REV_LOCK:
         DATA_REV[0] += 1
         rev = DATA_REV[0]
-    sse_broadcast("data", {"kind": reason or "runs", "rev": rev})
+    sse_broadcast("data", {"kind": reason or "runs", "rev": rev,
+                           "pnos": pnos or []})
 
 
 def sse_broadcast(event, data):
@@ -176,15 +178,15 @@ def _db_records_from_rows(rows):
     return out
 
 
-def _db_records(limit=None, since_ms=None):
+def _db_records(limit=None, since_ms=None, pnos=None):
     """从 MySQL 查运行记录并组装成前端/dashboard 同构的记录列表。
 
     数据库是唯一真相源：在途记录（end 为空）与终态由轮询线程写入，
     同 process_no 永远只有一行、且是最新状态。
-    limit 给定时只取最新 N 条（前端 5s 轻量刷新用）；
-    since_ms 给定时只取与「now-since_ms ~ now」有交集的记录（前端总长范围刷新用）。
+    limit 给定时只取最新 N 条；since_ms 给定时只取与「now-since_ms ~ now」
+    有交集的记录；pnos 给定时只取这些 process_no（SSE 精确增量拉取）。
     """
-    return _db_records_from_rows(db.fetch_records(limit=limit, since_ms=since_ms))
+    return _db_records_from_rows(db.fetch_records(limit=limit, since_ms=since_ms, pnos=pnos))
 
 
 def load_log_roots():
@@ -1062,9 +1064,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_runs(self):
-        """GET /api/runs[?limit=N][?since=ms]：返回运行记录（时间轴/分析视图共用），按需查 MySQL。
-        limit：只返回最新 N 条（前端 5s 轻量刷新）。
-        since：只返回与 now-since 有交集的记录（前端按「总长」范围刷新）。"""
+        """GET /api/runs[?limit=N][?since=ms][?pnos=p1,p2,...]：返回运行记录（按需查 MySQL）。
+        limit：只返回最新 N 条。
+        since：只返回与 now-since 有交集的记录（前端按「总长」范围刷新）。
+        pnos：只返回这些 process_no 的记录（SSE 精确增量：广播说哪几条变了就拉哪几条），
+        与 limit/since 可叠加。"""
         q = parse_qs(urlparse(self.path).query)
         limit = None
         try:
@@ -1076,7 +1080,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             since_ms = int(q.get("since", [""])[0]) or None
         except ValueError:
             pass
-        records = _db_records(limit=limit, since_ms=since_ms)
+        pnos = [p for p in unquote(q.get("pnos", [""])[0]).split(",") if p]
+        records = _db_records(limit=limit, since_ms=since_ms, pnos=pnos or None)
         self._send_json({"ok": True, "records": records, "count": len(records),
                          "rev": DATA_REV[0],
                          "time": LAST_UPDATE_TIME[0] or now_text()})
@@ -1493,10 +1498,11 @@ def records_poller():
             with open(os.path.join(BASE, "config.json"), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             page = octo_api.fetch_recent_records(cfg, take=50)
-            n = db.upsert_raw_runs(_raw_rows(page), source="desktop")
-            if n:
+            changed = db.upsert_raw_runs(_raw_rows(page), source="desktop")
+            if changed:
                 stamp_data_time()   # 有改库：刷新「数据获取」时间
-                bump_data_rev("runs")   # 通知 SSE 客户端：库有变动（拉取由前端按需发起）
+                # 带变更 pno 广播：前端只拉这几条，不盲拉最新 N 条
+                bump_data_rev("runs", pnos=changed)
             LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
         except Exception as e:

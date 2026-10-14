@@ -403,8 +403,9 @@ def main():
     # 入库：MySQL 是唯一真相源，无论增量还是全量都直接 upsert（幂等，在途->终态覆盖）
     import db as _db
     n_up = _db.upsert_raw_runs(run_rows, source="crawler")
-    print(f"[+] 运行记录已入库 MySQL: 变更 {n_up if isinstance(n_up, int) and n_up else 0} / 共 {len(run_rows)} 条"
-          if isinstance(n_up, int) and n_up is not None
+    n_up = len(n_up) if isinstance(n_up, list) else 0   # 返回值为变更 pno 列表
+    print(f"[+] 运行记录已入库 MySQL: 变更 {n_up} / 共 {len(run_rows)} 条"
+          if n_up is not None
           else "[!] 运行记录入库失败/未配置（详见上方 [mysql] 日志）")
 
     # 增量模式到此为止：不写 CSV（runs_normalized.csv 保留最后一次全量快照，供

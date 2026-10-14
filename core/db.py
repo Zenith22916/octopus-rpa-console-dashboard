@@ -167,14 +167,13 @@ def upsert_raw_runs(rows, source="crawler"):
           （flow_id/process_no/flow_name/bot_name/trigger_name/start_way/
             status/start_time/end_time/execution_start_time）。
     幂等：同 process_no 以最后一次写入为准（在途 -> 终态覆盖）。
-    返回「实际发生变更的行数」——executemany 的 rowcount 对 ON DUPLICATE KEY
-    会把"没变化的重放"也计入，因此用每行 rowcount 语义（1=新写/变更，
-    2=... 不适用；0=内容与库中完全一致）汇总：变更行 > 0 才算库真的变了，
-    records_poller 据此决定要不要 bump DATA_REV / 广播 SSE。
+    返回「实际发生变更的 process_no 列表」（新写或内容有更新；与库中完全
+    一致的重放行不算）——空列表 = 库无变化。records_poller 据此决定要不要
+    bump DATA_REV / 广播 SSE，并把 pno 随事件带给前端做精确增量拉取。
     """
     cfg = _cfg()
     if not cfg or not rows:
-        return 0
+        return []
     out, now = [], datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
     for r in rows:
         pno = str(r.get("process_no") or "")
@@ -189,26 +188,28 @@ def upsert_raw_runs(rows, source="crawler"):
             source, now,
         ))
     if not out:
-        return 0
+        return []
     try:
         conn, _ = _connect(cfg)
         if conn is None:
-            return 0
-        changed = 0
+            return []
+        changed = []
         with conn.cursor() as cur:
             # 逐行执行而非 executemany：executemany 的合并 rowcount 无法区分
-            # 「每行没变化（affected=0）」，逐行才能精确知道库有没有真的变。
+            # 「每行没变化（affected=0）」，逐行才能精确知道哪些行真的变了。
+            # rowcount 语义：1=新插入，2=更新且有变化，0=内容与库中完全一致。
             for row in out:
                 cur.execute(_UPSERT_SINGLE.format(db=cfg["database"], table=TABLE), row)
-                changed += cur.rowcount if cur.rowcount > 0 else 0
+                if cur.rowcount and cur.rowcount > 0:
+                    changed.append(row[0])
         conn.close()
         return changed
     except ImportError:
         _err("未安装 pymysql，入库跳过")
-        return 0
+        return []
     except Exception as e:
         _err("写入失败：%s" % e)
-        return 0
+        return []
 
 
 def UPSERT_SQL(cfg):
@@ -221,10 +222,12 @@ _UPSERT_SINGLE = _UPSERT   # 逐行执行与批量共用同一条 SQL 模板
 _COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"
 
 
-def fetch_records(limit=None, since_ms=None):
+def fetch_records(limit=None, since_ms=None, pnos=None):
     """按 start_ms 倒序查询（最新在前）。
     limit 给定时只取最新 N 条；since_ms 给定时只取「在途或 end >= since_ms」的行
-    （按与时间范围的 overlapped 判定，覆盖跨界的长任务）。"""
+    （按与时间范围的 overlapped 判定，覆盖跨界的长任务）；
+    pnos 给定时只取这些 process_no 的行（SSE 精确增量拉取：变更了哪几条就取哪几条），
+    与 limit/since_ms 可叠加（取交叠行后仍按 start_ms 倒序 + limit 截断）。"""
     cfg = _cfg()
     if not cfg:
         return []
@@ -234,14 +237,21 @@ def fetch_records(limit=None, since_ms=None):
             return []
         sql = "SELECT {cols} FROM `{db}`.`{table}`".format(
             cols=_COLS, db=cfg["database"], table=TABLE)
-        params = []
+        conds, params = [], []
+        if pnos:
+            # 分批拼占位符（process_no 是主键，一批 pnos 数量有限）
+            ph = ",".join(["%s"] * len(pnos))
+            conds.append("process_no IN (%s)" % ph)
+            params.extend(str(p) for p in pnos)
         if since_ms:
-            sql += " WHERE end_ms IS NULL OR end_ms >= %s"
+            conds.append("(end_ms IS NULL OR end_ms >= %s)")
             params.append(int(since_ms))
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
         if limit:
             sql += " ORDER BY start_ms DESC LIMIT %s"
             params.append(int(limit))
-        elif since_ms:
+        elif conds:
             sql += " ORDER BY start_ms DESC"
         with conn.cursor(pymysql_ss()) as cur:
             cur.execute(sql, params or None)

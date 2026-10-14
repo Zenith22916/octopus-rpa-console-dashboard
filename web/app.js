@@ -3293,15 +3293,38 @@ var lastFallbackTick = 0;
 function revBehind(rev) { return typeof rev === 'number' && rev > DATA_REV; }
 
 /* 按当前视图应用一次数据刷新（收到变更信号后调用）。
-   排期/合规页走各自的重载链路；timeline/analysis 走 refreshData 的
-   range 增量合并；botstatus 直接重拉。 */
-function applyDataChange(kind) {
+   ev.pnos 非空 = 精确增量：只拉变更的那几条（/api/runs?pnos=），按 id 合并进
+   RECORDS，几条变更就是几条的流量；空 = 无 pno 信息（每日全量更新/兜底），
+   退回范围拉取。排期/合规/机器人状态页数据面小，直接整页重拉。 */
+function applyDataChange(kind, pnos) {
   if (curView !== 'timeline' && curView !== 'analysis' && curView !== 'botstatus'
     && curView !== 'compliance' && curView !== 'schedule') return;
   if (curView === 'botstatus') { bsLoad().then(bsRender); return; }
   if (curView === 'compliance') { cpLoad(); return; }
   if (curView === 'schedule') {
     loadSchedule().then(function () { scReload(); });
+    return;
+  }
+  /* 精确增量：timeline/analysis 只需把变更行并进 RECORDS 再重渲染 */
+  if (Array.isArray(pnos) && pnos.length && (curView === 'timeline' || curView === 'analysis')) {
+    api('/api/runs?pnos=' + encodeURIComponent(pnos.join(','))).then(function (d) {
+      if (!(d && d.ok && Array.isArray(d.records))) return;
+      if (typeof d.rev === 'number') DATA_REV = d.rev;
+      var seen = {};
+      for (var i = 0; i < d.records.length; i++) seen[d.records[i].id] = true;
+      var merged = RECORDS.filter(function (r) { return !seen[r.id]; });   // 旧行被同 id 新行替换
+      merged = merged.concat(d.records);
+      merged.sort(function (a, b) { return (b.start || '') < (a.start || '') ? -1 : 1; });
+      RECORDS = merged;
+      if (curView === 'timeline') {
+        records = RECORDS.slice();
+        recomputeBounds();
+        if (IS_MOBILE) tlFeedSync();
+        else tlRender();
+      } else if (anReady) {
+        anRenderAll(RECORDS);
+      }
+    }).catch(function () { });
     return;
   }
   if (Date.now() - lastFullTick >= AUTO_FULL_MS) {
@@ -3323,10 +3346,10 @@ function sseConnect() {
     applyDataChange('runs');
   };
   sseSource.addEventListener('hello', function (e) {
-    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind); } catch (err) { }
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos); } catch (err) { }
   });
   sseSource.addEventListener('data', function (e) {
-    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind); } catch (err) { }
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos); } catch (err) { }
   });
   /* onerror 不需要处理：EventSource 自动重连，期间由兜底轮询保证数据新鲜 */
 }
