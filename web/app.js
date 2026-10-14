@@ -3365,9 +3365,10 @@ function sseConnect() {
 }
 
 /* 兜底轮询：每 FALLBACK_MS 拉一次 /api/runs?limit=1（最小请求），用返回的 rev
-   判断是否落后；落后才做真正的刷新。SSE 正常时这只是个 1 条记录的轻请求。 */
-function fallbackTick() {
-  if (Date.now() - lastFallbackTick < FALLBACK_MS) return;
+   判断是否落后；落后才做真正的刷新。SSE 正常时这只是个 1 条记录的轻请求。
+   force=true 跳过节流（回前台恢复时用）。 */
+function fallbackTick(force) {
+  if (!force && Date.now() - lastFallbackTick < FALLBACK_MS) return;
   lastFallbackTick = Date.now();
   api('/api/runs?limit=1').then(function (d) {
     if (d && revBehind(d.rev)) applyDataChange('runs');
@@ -3378,6 +3379,21 @@ function autoTick() {
   sseConnect();
   fallbackTick();
 }
+/* 回前台立即恢复：切后台/锁屏时浏览器会冻结定时器并挂起 SSE（连接不断开就
+   不会触发 onopen/onerror），回前台后如果干等兜底轮询，最长要 60s 才恢复。
+   visibilitychange 回到前台时：SSE 已死则立即重连；无论死活都强制做一次
+   兜底检查（绕过 lastFallbackTick 节流），当场补齐离开期间错过的变更。 */
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState !== 'visible') return;
+  if (!document.getElementById('chkAuto').checked) return;
+  /* EventSource 状态 readyState: 0=连接中 1=已连接 2=已关闭。挂起恢复后
+     浏览器通常自己重连（readyState 0），连接被彻底杀掉时是 2 —— 主动重建。 */
+  if (!sseSource || sseSource.readyState === 2) {
+    sseSource = null;
+    sseConnect();
+  }
+  fallbackTick(true);        // 跳过节流，当场补齐离开期间错过的变更
+});
 /* 机器人状态页快刷改由 SSE 驱动（applyDataChange('runs') 里的 botstatus 分支），
    这里不再单独轮询。勾选「自动更新」时生效。 */
 document.getElementById('chkAuto').addEventListener('change', function () {
