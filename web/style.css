@@ -1217,6 +1217,12 @@ tbody tr:hover {
 }
 
 /* ---- 排期表（方案 B：行=时刻，列=周几/日期，格子内为应用标签） ---- */
+/* h2 里的按钮不参与 .toolbar 的 gap，直接贴着前一个 select；
+   这里给它们补左间距（原先后接的那个「导出 Excel」也贴，只是不明显）。 */
+#view-schedule h2 .btn {
+  margin-left: 12px;
+}
+
 .sc-scroll {
   flex: 1;
   min-height: 0;

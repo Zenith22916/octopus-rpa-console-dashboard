@@ -465,7 +465,10 @@ function route() {
     else { pjLoad(); }
   } else if (name === 'botstatus') {
     if (!bsReady) { bsBind(); bsReady = true; }
-    ensureRecords().then(bsRender);
+    /* 必须先 bsLoad() 把 RECORDS 算成 BS_DATA 再 bsRender：只 await 记录、
+       不调用 bsLoad 的话 BS_DATA 仍是 null，首屏会误报「加载失败」
+       （点刷新能好，是因为刷新那条路径调了 bsLoad）。 */
+    ensureRecords().then(function () { return bsLoad(); }).then(bsRender);
   }
 }
 /* 确保本地有记录（首次进入任意依赖记录的视图时用） */
