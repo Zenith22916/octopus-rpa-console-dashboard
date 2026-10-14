@@ -1217,6 +1217,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             with open(path, "r", encoding="utf-8-sig") as f:
                 rows = list(csv.DictReader(f))
             payload = dashboard.build_compliance(rows, _db_records(), days=days, window_min=window)
+            payload["rev"] = DATA_REV[0]
         except Exception as e:
             payload = {"ok": False, "error": "命中率聚合失败：%s" % e}
         self._send_json(payload)

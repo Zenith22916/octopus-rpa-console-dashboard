@@ -419,22 +419,26 @@ function route() {
       loadSchedule().then(function () { scInit(); scReady = true; });
     } else {
       scResize();
-      loadSchedule().then(function () { scReload(); });   // 数据可能在别处被刷新过：进入时同步最新
+      reconcilePending(function () { loadSchedule().then(function () { scReload(); }); });   // 先对账（排期数据可能已被全量更新改写）
+      loadSchedule().then(function () { scReload(); });   // 进入时也同步最新（原逻辑保留）
     }
   } else if (name === 'projects') {
     pjPendingFid = getParam('fid');   // 带 ?fid= 进入时选中对应项目（无则 null）
     /* 带 ?tab=runs 进入（排期页点应用标签跳过来）：选中项目后直接打开「运行记录」tab */
     pjPendingTab = getParam('tab');
     if (!pjReady) { pjInit(); pjReady = true; }
-    else { pjLoad(); }
+    else { pjLoad(); }   // 项目列表来自云端实时接口，不依赖本地 RECORDS，无需对账
   } else if (name === 'botstatus') {
     if (!bsReady) { bsBind(); bsReady = true; }
+    reconcilePending(function () { bsLoad().then(bsRender); });   // 先对账再拉（bsLoad 响应带 rev 会同步版本号）
     bsLoad().then(bsRender);
   } else if (name === 'logsearch') {
     if (!lsReady) { lsBind(); lsReady = true; }
+    reconcilePending(function () { lsFillRobots(); });   // 检索页机器人下拉来自 RECORDS，先对账再填
     (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(lsFillRobots);
   } else if (name === 'compliance') {
     if (!cpReady) { cpBind(); cpReady = true; }
+    reconcilePending(function () { cpLoad(); });
     cpLoad();
   }
 }
@@ -3314,21 +3318,26 @@ function mergePnos(a, b) {
   return out;
 }
 
-/* 回到数据视图时的对账：离开期间（详情页/项目页等）积累的变更补齐后再渲染。
-   PENDING.rev > DATA_REV 说明有未应用的变更：有 pnos 就精确拉，没有就 range 拉，
-   拉完清账。route() 在进入 timeline/analysis 时调用。 */
-function reconcilePending() {
-  if (PENDING.rev <= DATA_REV) return;
+/* 回到任意数据视图时的对账：离开期间（详情页/项目页等）积累的变更补齐。
+   PENDING.rev > DATA_REV 说明有未应用的变更：
+   - after（可选回调）：视图自有的进入加载（bsLoad/cpLoad/scReload/lsFillRobots），
+     对账触发新一轮数据拉取时由 applyDataChange 内部完成渲染，回调无需再执行——
+     传进来是为了「无欠账时也保证视图至少刷新一次」（由调用方决定是否同时调）。
+   - 拉完清账；拉取期间的新事件由 revBehind 兜住不会重复应用。 */
+function reconcilePending(after) {
+  if (PENDING.rev <= DATA_REV) return false;
   var pnos = PENDING.pnos;
-  PENDING.rev = 0; PENDING.pnos = null;      // 先清账：拉取期间的重复事件由 revBehind 兜住
-  applyDataChange('runs', pnos);
+  PENDING.rev = 0; PENDING.pnos = null;      // 先清账
+  applyDataChange('runs', pnos);             // 内部按 curView 分流：增量合并或整页重拉
+  return true;
 }
 
 /* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
    先记在这里，回数据视图（route）时先对账补齐再渲染。pendingRev 比 DATA_REV
    新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。 */
-var PENDING = { rev: 0, pnos: null };
-
+/* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
+   先记在这里，回任意数据视图（route 各分支）时先对账补齐再渲染。PENDING.rev
+   比 DATA_REV 新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。 */
 var PENDING = { rev: 0, pnos: null };
 
 /* 按当前视图应用一次数据刷新（收到变更信号后调用）。
