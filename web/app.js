@@ -659,7 +659,12 @@ function truncateLabel(name, maxW, fs, ell) {
 }
 function effEnd(s) { return s.end == null ? state.end : s.end; }
 /* 泳道分配：同一机器人时间重叠的记录分到不同泳道（横着叠开，互不遮挡）。
-   只按真实时间重叠判定 —— 与窗口大小无关，泳道数在任何缩放下都稳定。 */
+   按记录「实际占用的时间段」判定（不是 start~end 大区间）：
+   - 显示排队时占用段 = [排队起, 终态]（wait+run 连续占用）；
+   - 关闭排队时占用段 = [执行起, 终态]（排队不算占用）。
+   这样「A 在执行、B 在排队等 A」的交叉段不算重叠（B 的执行起点在 A 结束
+   之后，物理上就是串行衔接），不再凭空多出一条泳道——RPA 单机不并行，
+   排队只是等位，视觉上应接在同一条泳道上首尾相接。 */
 function layout(segs) {
   var recs = [];
   var recOfSeg = {};
@@ -668,22 +673,24 @@ function layout(segs) {
     var rid = String(s.r.id);
     if (!(rid in recOfSeg)) {
       recOfSeg[rid] = recs.length;
-      var u = { rid: rid, robot: s.r.robot, start: s.start, end: effEnd(s), segIdxs: [] };
+      var u = { rid: rid, robot: s.r.robot, spans: [], segIdxs: [] };
       recs.push(u);
       (byRobot[s.r.robot] = byRobot[s.r.robot] || []).push(recs.length - 1);
     }
     var u = recs[recOfSeg[rid]];
     u.segIdxs.push(i);
-    if (s.start < u.start) u.start = s.start;
-    var en = effEnd(s);
-    if (en > u.end) u.end = en;
+    /* 每个段的实际占用区间：wait 段=start~exec，run 段=exec(或 start)~end */
+    u.spans.push([s.start, effEnd(s)]);
   });
   var info = {};
   var yLabels = [];
   var groupLastRows = [];
   var rowCursor = 0;
   robots.forEach(function (rb) {
-    var idxs = (byRobot[rb] || []).slice().sort(function (a, b) { return recs[a].start - recs[b].start; });
+    /* 排序键改用首段起点（u.start 字段已随 spans 重构移除） */
+    var idxs = (byRobot[rb] || []).slice().sort(function (a, b) {
+      return recs[a].spans[0][0] - recs[b].spans[0][0];
+    });
     var lanes = [];
     var laneOfRec = {};
     /* 泳道分配按「真实时间重叠」算，不按拉伸后的视觉厚度算。
@@ -693,18 +700,21 @@ function layout(segs) {
        真实重叠的判定与窗口大小无关，泳道数始终稳定；短记录怎么画得看得见，
        交给绘制阶段的 stretch（见下），两件事分开管。 */
     idxs.forEach(function (ri) {
-      var u = recs[ri], st = u.start, en = u.end, lane = -1;
+      var u = recs[ri], lane = -1;
+      /* 与泳道逐段比对：所有占用段都不与该泳道已有占用相交才可入住 */
       for (var l = 0; l < lanes.length; l++) {
-        if (st >= lanes[l].end || en <= lanes[l].start) { lane = l; break; }
+        var clash = false;
+        for (var k = 0; k < u.spans.length; k++) {
+          var st = u.spans[k][0], en = u.spans[k][1];
+          if (st < lanes[l].end && en > lanes[l].start) { clash = true; break; }
+        }
+        if (!clash) { lane = l; break; }
       }
-      if (lane < 0) { lane = lanes.length; lanes.push({ start: st, end: en }); }
-      else {
-        if (st < lanes[lane].start) lanes[lane].start = st;
-        if (en > lanes[lane].end) lanes[lane].end = en;
-      }
+      if (lane < 0) { lane = lanes.length; lanes.push([]); }
+      u.spans.forEach(function (sp) { lanes[lane].push(sp); });
       laneOfRec[ri] = lane;
     });
-    if (lanes.length === 0) lanes.push({ start: state.end, end: state.end });
+    if (lanes.length === 0) lanes.push([]);
     var base = rowCursor;
     rowCursor += lanes.length;
     idxs.forEach(function (ri) {
