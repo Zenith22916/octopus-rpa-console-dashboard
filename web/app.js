@@ -85,7 +85,10 @@ function statusColor(r) {
   if (r.status === "Executing") return "rgba(239,159,39,0.6)";
   if (r.status === "Waiting") return "rgba(55,138,221,0.6)";
   if (r.status === "Stopped") return "rgba(95,94,90,0.6)";
-  return "rgba(29,158,117,0.6)";
+  if (r.status === "Finished") return "rgba(29,158,117,0.6)";
+  /* 未知状态（如 Delivered 等八爪鱼新增/客户端特有状态）默认当「运行中」画黄色，
+     不要落成绿色的「已完成」—— 那会把没见过的状态伪装成成功。 */
+  return "rgba(239,159,39,0.6)";
 }
 /* 状态色的实色版：时间轴数据块用 0.6 透明度（半透明便于看重叠），
    但手机端卡片里的「时长」是正文文字，0.6 在深色底上偏灰、读起来费劲 —— 文字用实色。 */
@@ -94,7 +97,9 @@ function statusColorSolid(r) {
   if (r.status === "Executing") return "#EF9F27";
   if (r.status === "Waiting") return "#378ADD";
   if (r.status === "Stopped") return "#8b8f98";
-  return "#1D9E75";
+  if (r.status === "Finished") return "#1D9E75";
+  /* 未知状态兜底 = 运行中的橙黄色（与 statusColor 的口径一致） */
+  return "#EF9F27";
 }
 /* ==================== 图表视觉：渐变填充与圆角 ====================
    纯样式层：只影响图形怎么画，不参与任何数据计算与交互逻辑。 */
@@ -149,8 +154,9 @@ var STATUS_HUE = {
   Finished: [29, 158, 117]
 };
 function statusRGB(k, alpha) {
-  /* 未知状态兜底用中性灰，不要落成「已完成」的绿色 —— 那会把失败/新状态伪装成成功 */
-  var c = STATUS_HUE[k] || STATUS_HUE.Stopped;
+  /* 未知状态兜底用「运行中」的橙黄色（Executing 同色），
+     不要落成「已完成」的绿色 —— 那会把失败/新状态伪装成成功。 */
+  var c = STATUS_HUE[k] || STATUS_HUE.Executing;
   return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')';
 }
 /* 注意：时间轴数据块不走这里 —— 它的颜色在数据构造时由 segColor() 算好存进 value(5)，
@@ -248,7 +254,10 @@ function statusBadge(st) {
     Waiting: ["排队中", "rgba(55,138,221,0.18)", "#378ADD"],
     Stopped: ["已停止", "rgba(95,94,90,0.18)", "#8b8f98"]
   };
-  var m = map[st] || ["已完成", "rgba(29,158,117,0.18)", "#1D9E75"];
+  /* 未知状态（如 Delivered）徽章默认显示「运行中」+ 橙黄色，与时间轴/颜色兜底口径一致 */
+  var m = map[st] || (st === "Finished"
+    ? ["已完成", "rgba(29,158,117,0.18)", "#1D9E75"]
+    : ["运行中", "rgba(239,159,39,0.18)", "#EF9F27"]);
   return '<span class="badge" style="background:' + m[1] + ';color:' + m[2] + '">' + m[0] + '</span>';
 }
 function getParam(name) {
@@ -932,7 +941,7 @@ function tlRender() {
       trigger: 'item',
       formatter: function (p) {
         var d = p.data;
-        var stName = STATUS_CN[d.status] || d.status || '已完成';
+        var stName = STATUS_CN[d.status] || d.status || '运行中';
         var stColor = statusColor({ status: d.status, app: d.app });
         var s = '<b>' + esc(d.name) + '</b>'
           + '<br/>机器人：' + esc(d.robot)
