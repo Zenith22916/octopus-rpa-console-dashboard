@@ -152,6 +152,19 @@ def _normalize_token(resp):
     return None
 
 
+def _mark_token_dead():
+    """把缓存 token 标成「刚失效」：gotAt 回拨一个完整有效期，下次 ensure_token
+    必定走 refresh/重登。用于带 Bearer 的请求收到 401 时——token 内容真伪
+    ensure_token 判断不了（它只看时间窗），必须由 401 现场反馈。"""
+    try:
+        tok = _load_cached()
+        if tok:
+            tok["gotAt"] = time.time() - float(tok.get("expiresIn", 7200))
+            _save_cache(tok)
+    except Exception:
+        pass
+
+
 def ensure_token(cfg, force=False):
     """返回有效 accessToken；缓存 -> refresh -> 登录。"""
     cached = None if force else _load_cached()
@@ -177,8 +190,10 @@ def _authed_post(cfg, path, body):
     token = ensure_token(cfg)
     ent = resolve_enterprise(cfg, token)
     code, resp = _req("POST", path, cfg, body=body, token=token, enterprise_id=ent)
-    if code == 401:   # token 失效，强制重登再试一次
+    if code == 401:   # token 失效：标死缓存并强制重登，本调用内立即再试一次
+        _mark_token_dead()
         token = ensure_token(cfg, force=True)
+        ent = resolve_enterprise(cfg, token, force=True)   # 企业列表也可能被旧 token 401 挡过，强制重取
         code, resp = _req("POST", path, cfg, body=body, token=token, enterprise_id=ent)
     return code, resp
 
@@ -348,6 +363,12 @@ def list_flows(cfg):
         })
         code, resp = _req("GET", "/desktop/v2/flows/flows?" + qs, cfg,
                           token=token, enterprise_id=ent)
+        if code == 401:   # token 提前失效：标死缓存重登一次，本调用内立即重试
+            _mark_token_dead()
+            token = ensure_token(cfg, force=True)
+            ent = resolve_enterprise(cfg, token, force=True)   # 企业接口也用旧 token 挂过，强制重取
+            code, resp = _req("GET", "/desktop/v2/flows/flows?" + qs, cfg,
+                              token=token, enterprise_id=ent)
         if code not in (200, 201):
             raise RuntimeError("拉取项目列表失败(%s): %s" % (code, resp))
         batch = resp.get("items") or []
@@ -421,10 +442,11 @@ def fetch_recent_records(cfg, take=20):
     60 秒增量轮询用：只取最新 take 条 upsert 入库，终态与在途一次拿全，
     且不依赖网页版 Cookie 会话（Bearer token 自主续期）。
     """
-    def _get(tk):
+    def _get(tk, ent=None):
         req = urllib.request.Request(
             BASE + "/desktop/bots/runningRecords?startWay=&status=&search=&start=0&take=%d" % take,
-            headers={"Authorization": f"Bearer {tk}", "EnterpriseId": resolve_enterprise(cfg, tk),
+            headers={"Authorization": f"Bearer {tk}",
+                     "EnterpriseId": ent or resolve_enterprise(cfg, tk),
                      "User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -434,7 +456,11 @@ def fetch_recent_records(cfg, take=20):
     except urllib.error.HTTPError as e:
         if e.code != 401:
             raise
-        return _get(ensure_token(cfg, force=True)).get("items") or []
+        # token 被服务端判死（提前过期/被顶下线）：把缓存标死，本轮立即重登重取，
+        # 不留到下个轮询周期；企业列表也可能被旧 token 401 挡过，一并强制重取。
+        _mark_token_dead()
+        tk = ensure_token(cfg, force=True)
+        return _get(tk, resolve_enterprise(cfg, tk, force=True)).get("items") or []
 
 
 def list_underway(cfg):
