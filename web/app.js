@@ -550,12 +550,34 @@ function tlGrid() { return TL_GRID; }
 var TL_GRID_COLOR = 'rgba(255,255,255,0.15)';
 /* 横轴（时间）刻度的文字：平时只给 HH:mm —— 日期交给左右两端的日期角标（见 tlRender 的 dateData 系列）；
    走到午夜那一格时把 00:00 换成「MM-dd」——跨天的窗口里刻度全是 HH:mm 会分不清落在哪天，
-   而午夜正是天与天的分界，拿它当日期锚点最自然（用户口径：跨天就把那天的 00:00 换成日期）。 */
+   而午夜正是天与天的分界，拿它当日期锚点最自然（用户口径：跨天就把那天的 00:00 换成日期）。
+   返回的是「富文本片段」：午夜那格包一层 {md|...}，由 xAxis.axisLabel.rich 把它画成加粗 ——
+   它代表的是「新的一天开始了」，比普通时刻重一档，扫一眼就能找到天的分界。
+   ECharts 的轴标签只有 rich 能做到「同一个轴、逐标签不同字重」（单个 formatter 里
+   拿不到画笔；axisLabel.fontWeight 是整轴共用的）。 */
 function tlTickLabel(t) {
   var d = new Date(t);
-  if (d.getHours() === 0 && d.getMinutes() === 0) return fmtDateMD(t);
+  if (d.getHours() === 0 && d.getMinutes() === 0) return '{md|' + fmtDateMD(t) + '}';
   return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
+/* 午夜日期片段的富文本样式（名字 md 与 tlTickLabel 里的 {md|...} 对应）。
+   只改字重 + 显式继承字号，颜色跟整轴一致（不写 color 就继承 axisLabel.color），
+   免得那一格比别处跳出来太多。
+   注意 fontSize 必须显式给：rich 片段不继承 axisLabel.fontSize（见 TL_AXIS_FS 的说明）。 */
+function tlTickRich() {
+  return { md: { fontWeight: 'bold', fontSize: TL_AXIS_FS } };
+}
+/* 判断一个刻度值在视觉上是不是「午夜那格」。formatter 里要按它决定是否用富文本，
+   也得按它决定「宽度」用哪个 —— 让判定只有一处出处。 */
+function tlIsMidnight(t) {
+  var d = new Date(t);
+  return d.getHours() === 0 && d.getMinutes() === 0;
+}
+/* 横轴刻度与两端日期角标的字号（px）。抽成常量：这两行文字必须**同字号**才在一行上
+   基线对齐，而「午夜那格的富文本」还要再显式继承一次 —— ECharts 的 rich 片段
+   不吃 axisLabel.fontSize，不写就回落到富文本默认的 12px，
+   结果午夜那格比别的刻度大一号、基线还差半像素（踩过）。 */
+var TL_AXIS_FS = 11;
 /* 横轴刻度文字与轴线的间距（px）。抽成常量是因为两端的日期角标要和刻度文字**同一行**
    且底边对齐（用户要求：同一行、不许字体重叠）—— 角标的基线必须按同一个值反推，
    写死两处数字迟早会错开。 */
@@ -921,8 +943,8 @@ function tlRender() {
      比如 09-30 与 10-01 —— 取 max 只是让两边看着一样宽，却会白白吃掉一个刻度）。
      文字宽 + 一点间隙。写进模块级的 tlDateBox，给 xAxis.axisLabel.formatter 用
      （它拿不到 tlRender 的局部变量）。 */
-  tlDateBox.l = measureW(dateL, 11) + TL_DATE_GAP_PX;
-  tlDateBox.r = measureW(dateR, 11) + TL_DATE_GAP_PX;
+  tlDateBox.l = measureW(dateL, TL_AXIS_FS) + TL_DATE_GAP_PX;
+  tlDateBox.r = measureW(dateR, TL_AXIS_FS) + TL_DATE_GAP_PX;
   var dateData = [
     { value: [winStart, 0, dateL, 'left'] },
     { value: [nowW, 0, dateR, 'right'] }
@@ -1104,15 +1126,18 @@ function tlRender() {
       type: 'time', min: nowW - state.span, max: nowW,
       position: 'top',
       axisLabel: {
-        color: '#8b8f98', fontSize: 11, hideOverlap: true,
+        color: '#8b8f98', fontSize: TL_AXIS_FS, hideOverlap: true,
         margin: TL_TICK_LABEL_MARGIN,
+        rich: tlTickRich(),
         formatter: function (v) {
           /* 落进左右「日期角标」地带的刻度不给文字：角标与刻度在轴线上方同一行，
              同时画就是叠字。判定用**刻度文字自身占的宽度**（以刻度为中心左右各半），
-             只挡日期本身不够 —— 紧挨着的那个刻度会有半截压在角标上。 */
+             只挡日期本身不够 —— 紧挨着的那个刻度会有半截压在角标上。
+             宽度要按这一格实际会画出来的串算：午夜那格是 MM-dd、其余是 HH:mm，
+             两者宽度不同（11px 等宽下 5 字符 vs 5 字符，但字号不同时就会差开）。 */
           var px = tlTimeX(v);
           if (px == null) return tlTickLabel(v);
-          var half = measureW('00:00', 11) / 2;
+          var half = measureW(tlIsMidnight(v) ? fmtDateMD(v) : '00:00', TL_AXIS_FS) / 2;
           if (px - half < TL_GRID.left + tlDateBox.l) return '';
           var xr = tlTimeX(nowW);
           if (xr != null && px + half > xr - tlDateBox.r) return '';
@@ -1384,7 +1409,7 @@ function tlRender() {
                不会顶出画布，也不会压到左侧的机器人名。 */
             textAlign: side === 'right' ? 'right' : 'left',
             textVerticalAlign: 'bottom',
-            fill: '#a8b4c4', fontSize: 11, fontWeight: 600, fontFamily: FONT_STACK
+            fill: '#a8b4c4', fontSize: TL_AXIS_FS, fontWeight: 600, fontFamily: FONT_STACK
           }
         };
       }
