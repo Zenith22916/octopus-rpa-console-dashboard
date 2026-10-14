@@ -205,6 +205,48 @@ def _migrate(conn, cfg):
         _err("结构补齐跳过：%s" % e)
 
 
+def heal_stale_timestamps():
+    """自愈：把 updated_ms 落后于记录自身事件时刻的行修回来，返回修复行数。
+
+    为什么需要：增量拉取依赖 `updated_ms > 游标`。若某个写库者没刷新 updated_ms
+    （典型情况——**还有旧版本进程在跑，它的 UPSERT 不含这一列**），该行就会被
+    「最后修改时间」判成旧的、永远不再送达前端，表现为「开始能看见、结束看不见」。
+
+    updated_ms 语义上必然 >= 记录的最后事件时刻（写库发生在事件之后，不可能提前
+    知道 endTime），所以「updated_ms < IFNULL(end_ms, start_ms)」就是异常铁证。
+    修法：把它提到事件时刻 +1ms——保持时间语义正确，也不会把大量老数据一次性
+    全变「新」而让前端一次拉爆。
+
+    启动时调一次；日常由 6s 轮询覆盖不到的历史行也能被纠正。
+    """
+    cfg = _cfg()
+    if not cfg:
+        return 0
+    T = "`%s`.`%s`" % (cfg["database"], TABLE)
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM %s WHERE updated_ms < IFNULL(end_ms, start_ms)" % T)
+            n = cur.fetchone()[0]
+            if not n:
+                conn.close()
+                return 0
+            cur.execute(
+                "UPDATE %s SET updated_ms = IFNULL(end_ms, start_ms) + 1, "
+                "updated_at = FROM_UNIXTIME(IFNULL(end_ms, start_ms)/1000) "
+                "WHERE updated_ms < IFNULL(end_ms, start_ms)" % T)
+            fixed = cur.rowcount
+        conn.close()
+        if fixed:
+            print("[mysql] 已修正 %d 行滞留的 updated_ms（否则这些行不会被增量送达）" % fixed)
+        return fixed
+    except Exception as e:
+        _err("时间戳自愈跳过：%s" % e)
+        return 0
+
+
 def init_db():
     """建库建表（幂等；含老库结构补齐）。未配置/失败返回 False，不抛错。"""
     cfg = _cfg()
@@ -224,6 +266,7 @@ def init_db():
         _migrate(conn, cfg)
         conn.close()
         print("[mysql] 就绪：%s.%s + %s" % (cfg["database"], TABLE, TRIGGER_TABLE))
+        heal_stale_timestamps()   # 修正被旧写库者留下的滞留 updated_ms
         return True
     except ImportError:
         _err("未安装 pymysql（pip install pymysql），入库跳过")
