@@ -789,15 +789,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
 
-    def handle_error(self, request, client_address):
-        import sys
-        exc = sys.exc_info()[1]
-        # 客户端中途断开连接（关标签页 / 网络中断 / 跨设备访问时对方关闭）属正常情况，
-        # 典型为 WinError 10053 / BrokenPipe / ConnectionReset；静默忽略，避免控制台刷满 traceback
-        if isinstance(exc, (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)):
-            return
-        super().handle_error(request, client_address)
-
     def handle_log_fetch(self):
         """详情页实时读取日志，支持分段获取：
         - 列表模式 ?dir=<目录>：返回该目录下所有 .log 文件的元数据（名称/大小/行数），不含内容；
@@ -1315,6 +1306,24 @@ def main():
 
     class Server(socketserver.ThreadingTCPServer):
         daemon_threads = True   # SSE 是长连接：线程随主进程退出，不等连接关闭
+
+        def handle_error(self, request, client_address):
+            """抑制「客户端中途断开」的噪声 traceback。
+
+            必须定义在 **Server** 上而不是 Handler 上：socketserver 的
+            ThreadingMixIn.process_request_thread 调用的是 self.handle_error()，
+            那里的 self 是 Server 实例，Handler 上的同名方法是永远不会被调用的死代码
+            （踩过：抑制逻辑写在 Handler 里，控制台照样被 WinError 10053 刷屏）。
+
+            客户端正常关页 / 切网 / 锁屏会让请求处理线程在 readline 或 write 时
+            抛 ConnectionAbortedError(10053) / ConnectionResetError(10054) /
+            BrokenPipeError(32)，这些是预期内的，不是服务端故障。
+            """
+            exc = sys.exc_info()[1]
+            if isinstance(exc, (ConnectionAbortedError, ConnectionResetError,
+                                BrokenPipeError)):
+                return
+            super().handle_error(request, client_address)
 
     with Server(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
