@@ -46,17 +46,6 @@
           <span>机器人状态</span>
         </li>
       </ul>
-      <div class="side-group split">问题排查</div>
-      <ul class="navmenu-list">
-        <li data-hash="#/logsearch">
-          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.6-3.6"/></svg>
-          <span>日志检索</span>
-        </li>
-        <li data-hash="#/compliance">
-          <svg class="nv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>
-          <span>触发器合规</span>
-        </li>
-      </ul>
       <div class="side-group split">配置管理</div>
       <ul class="navmenu-list">
         <li data-hash="#/schedule">
@@ -96,24 +85,13 @@
         <!-- 分析页指标：由 app.js 的 anMetrics() 填充，只在分析视图显示 -->
         <div class="metrics" id="anMetrics" style="display:none;"></div>
         <!-- 以下各组同样只在对应视图显示，填充逻辑见 app.js 的各 Render -->
-        <div class="metrics" id="cpMetrics" style="display:none;"></div>
         <div class="metrics" id="bsMetrics" style="display:none;"></div>
-        <div class="metrics" id="lsMetrics" style="display:none;"></div>
         <div class="metrics" id="pjMetrics" style="display:none;"></div>
         <!-- 详情页指标：状态/触发方式/开始时间/排队时长/运行时长/结束时间，
              由 renderDetail() 填充。与其他视图一致放在顶栏，不占卡片内的高度。 -->
         <div class="metrics" id="dtMetrics" style="display:none;"></div>
       </div>
-      <div class="auto-bar">
-        <button class="btn refresh-now" id="btnRefreshNow" title="立即全量抓取：运行记录 + 触发器排期（不用等后端每分钟的那轮自动抓取）">立刻更新</button>
-        <span id="autoCtl" style="display:flex;align-items:center;gap:8px;">
-          <span class="auto-update-label">自动更新：</span>
-          <label class="switch"><input type="checkbox" id="chkAuto" checked><span class="slider"></span></label>
-        </span>
-      </div>
     </header>
-
-    <div class="warn-bar" id="refreshWarn" style="display:none;">刷新失败，登录态可能已过期，请检查 output/update_log.txt</div>
 
     <div class="main-body">
 
@@ -236,7 +214,7 @@
       <div id="view-schedule" class="view" style="display:none;">
         <div class="panels">
           <div class="panel">
-            <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select><button class="btn" id="scExport" title="按当前筛选条件（视图 / 机器人 / 状态）导出 xlsx">导出 Excel</button><span class="datatime" id="scInfo">—</span></h2>
+            <h2><span class="filter-label">视图：</span><select id="selView"></select><span class="filter-label">机器人：</span><select id="selRobot"></select><span class="filter-label">状态：</span><select id="selStatus"></select><button class="btn" id="scRefresh" title="立刻从八爪鱼云端抓取最新触发器排期（抓完自动刷新本页）">立刻更新</button><button class="btn" id="scExport" title="按当前筛选条件（视图 / 机器人 / 状态）导出 xlsx">导出 Excel</button><span class="datatime" id="scInfo">—</span></h2>
             <!-- sc-wrap 只负责给「当前时刻横线」提供定位基准；sc-nowline 是覆盖层，压在应用标签下面 -->
             <div class="scroll sc-scroll"><div class="sc-wrap" id="scWrap"><table id="scTbl" class="sc-tbl"></table><div class="sc-nowline" id="scNowLine" style="display:none"><span class="sc-now-lab"></span></div></div></div>
           </div>
@@ -313,66 +291,6 @@
           </div>
           <!-- 一个机器人一张卡片：横屏一行 3 张、竖屏一行 1 张，多了在容器内往下滚动 -->
           <div class="scroll bs-scroll"><div class="bs-grid" id="bsGrid"></div></div>
-        </div>
-      </div>
-
-      <!-- ==================== 全局日志检索视图 ==================== -->
-      <div id="view-logsearch" class="view" style="display:none;">
-        <div class="panel ls-panel">
-          <div class="toolbar">
-            <h2 style="margin:0;">全局日志检索</h2>
-            <span class="filter-label">关键词：</span>
-            <input type="search" id="lsKw" class="ls-kw" placeholder="如 超时 / Timeout / 异常 / 未找到元素">
-            <span class="filter-label">机器人：</span>
-            <select id="lsRobot"></select>
-            <span class="filter-label">范围：</span>
-            <select id="lsDays">
-              <option value="1">最近 1 天</option>
-              <option value="3">最近 3 天</option>
-              <option value="7" selected>最近 7 天</option>
-            </select>
-            <span class="filter-label">级别：</span>
-            <select id="lsLvl" title="「超时」这类词会命中大量等待进度行，只看异常可直接过滤掉噪声">
-              <option value="all" selected>全部行</option>
-              <option value="warn">异常警告</option>
-              <option value="err">仅错误</option>
-            </select>
-            <button class="btn rerun" id="lsGo">检索</button>
-            <span class="datatime" id="lsInfo">—</span>
-          </div>
-          <div class="scroll ls-scroll" id="lsResult"></div>
-        </div>
-      </div>
-
-      <!-- ==================== 触发器合规视图 ==================== -->
-      <div id="view-compliance" class="view" style="display:none;">
-        <!-- 指标卡已上移到标题栏 #headMetrics（cpMetrics），这里只留主体 -->
-        <div class="cp-layout">
-          <div class="panel cp-side">
-            <h2>各机器人命中率</h2>
-            <div class="scroll"><table id="cpRobotTbl"></table></div>
-          </div>
-          <div class="panel cp-main">
-            <div class="toolbar">
-              <span class="filter-label">范围：</span>
-              <select id="cpDays">
-                <option value="3">最近 3 天</option>
-                <option value="7" selected>最近 7 天</option>
-                <option value="14">最近 14 天</option>
-              </select>
-              <span class="filter-label">机器人：</span>
-              <select id="cpRobot"></select>
-              <span class="filter-label">只看：</span>
-              <select id="cpOnly" title="只看异常 = 漏跑 + 应用不符 + 延迟">
-                <option value="problem" selected>只看异常</option>
-                <option value="missed">只看漏跑</option>
-                <option value="__ALL__">全部</option>
-              </select>
-              <button class="btn" id="cpReload">刷新</button>
-              <span class="datatime" id="cpInfo">—</span>
-            </div>
-            <div class="scroll"><table id="cpTbl"></table></div>
-          </div>
         </div>
       </div>
 
