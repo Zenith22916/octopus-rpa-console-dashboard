@@ -394,8 +394,10 @@ function route() {
     } else {
       if (IS_MOBILE) { tlFeedObserve(); tlFeedTick(); }
       else tlResize();
-      if (prevView === 'detail') refreshData(false, null, 'range');   // 从日志详情页返回：自动更新在详情页停更了，按「总长」范围补拉一次
-      reconcilePending();   // 离开期间（任意视图）积累的 SSE 变更：对账补齐（与上一行互补，覆盖绕路返回的场景）
+      /* 两种情况都只需拉一次：有欠账走对账（精确增量优先），否则从详情页返回时补拉范围 */
+      if (!reconcilePending() && prevView === 'detail') {
+        refreshData(false, null, 'range');   // 自动更新在详情页停更了，按「总长」范围补拉一次
+      }
     }
   } else if (name === 'analysis') {
     if (!anReady) {
@@ -419,27 +421,32 @@ function route() {
       loadSchedule().then(function () { scInit(); scReady = true; });
     } else {
       scResize();
-      reconcilePending(function () { loadSchedule().then(function () { scReload(); }); });   // 先对账（排期数据可能已被全量更新改写）
-      loadSchedule().then(function () { scReload(); });   // 进入时也同步最新（原逻辑保留）
+      /* 有欠账时对账已触发 scReload，不再重复拉；无欠账则按原逻辑同步最新 */
+      if (!reconcilePending()) loadSchedule().then(function () { scReload(); });
     }
   } else if (name === 'projects') {
     pjPendingFid = getParam('fid');   // 带 ?fid= 进入时选中对应项目（无则 null）
     /* 带 ?tab=runs 进入（排期页点应用标签跳过来）：选中项目后直接打开「运行记录」tab */
     pjPendingTab = getParam('tab');
     if (!pjReady) { pjInit(); pjReady = true; }
-    else { pjLoad(); }   // 项目列表来自云端实时接口，不依赖本地 RECORDS，无需对账
+    else { pjLoad(); }
+    /* 项目列表来自云端实时接口（不依赖 RECORDS），无需对账；「运行记录」tab 读 RECORDS，
+       由 pjSwitchTab 打开该 tab 时补欠账（深链 ?tab=runs 也走同一条路）。 */
   } else if (name === 'botstatus') {
     if (!bsReady) { bsBind(); bsReady = true; }
-    reconcilePending(function () { bsLoad().then(bsRender); });   // 先对账再拉（bsLoad 响应带 rev 会同步版本号）
-    bsLoad().then(bsRender);
+    /* 有欠账时 reconcilePending 已触发重载，不再重复拉一次 */
+    if (!reconcilePending()) bsLoad().then(bsRender);
   } else if (name === 'logsearch') {
     if (!lsReady) { lsBind(); lsReady = true; }
-    reconcilePending(function () { lsFillRobots(); });   // 检索页机器人下拉来自 RECORDS，先对账再填
-    (RECORDS.length ? Promise.resolve(RECORDS) : loadRuns()).then(lsFillRobots);
+    /* 检索页的机器人下拉来自 RECORDS：有欠账时对账内部会拉增量并重填下拉，
+       不再重复发请求；无欠账且本地已有 RECORDS 就直接填。 */
+    if (!reconcilePending()) {
+      if (RECORDS.length) lsFillRobots();
+      else loadRuns().then(lsFillRobots);
+    }
   } else if (name === 'compliance') {
     if (!cpReady) { cpBind(); cpReady = true; }
-    reconcilePending(function () { cpLoad(); });
-    cpLoad();
+    if (!reconcilePending()) cpLoad();
   }
 }
 window.addEventListener('hashchange', route);
@@ -3318,69 +3325,97 @@ function mergePnos(a, b) {
   return out;
 }
 
-/* 回到任意数据视图时的对账：离开期间（详情页/项目页等）积累的变更补齐。
-   PENDING.rev > DATA_REV 说明有未应用的变更：
-   - after（可选回调）：视图自有的进入加载（bsLoad/cpLoad/scReload/lsFillRobots），
-     对账触发新一轮数据拉取时由 applyDataChange 内部完成渲染，回调无需再执行——
-     传进来是为了「无欠账时也保证视图至少刷新一次」（由调用方决定是否同时调）。
-   - 拉完清账；拉取期间的新事件由 revBehind 兜住不会重复应用。 */
-function reconcilePending(after) {
+/* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
+   先记在这里，回任意数据视图（route 各分支）时先对账补齐再渲染。PENDING.rev
+   比 DATA_REV 新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。
+   pnos 为 null = 存在无 pno 的变更（每日全量更新），只能走范围拉取。 */
+var PENDING = { rev: 0, pnos: null };
+
+/* 记一笔欠账（视图用不上这个信号时调用） */
+function notePending(pnos, rev) {
+  if (typeof rev === 'number') PENDING.rev = Math.max(PENDING.rev, rev);
+  else PENDING.rev = Math.max(PENDING.rev, DATA_REV + 1);   // 无 rev（兜底路径）：至少标记有变更
+  PENDING.pnos = mergePnos(PENDING.pnos, pnos);
+}
+
+/* 精确增量：只拉这些 pnos 的行并合并进 RECORDS（只合数据，渲染交给 renderRecordsView） */
+function fetchPnosInto(pnos) {
+  return api('/api/runs?pnos=' + encodeURIComponent(pnos.join(','))).then(function (d) {
+    if (!(d && d.ok && Array.isArray(d.records))) return;
+    if (typeof d.rev === 'number') DATA_REV = d.rev;
+    var seen = {};
+    for (var i = 0; i < d.records.length; i++) seen[d.records[i].id] = true;
+    var merged = RECORDS.filter(function (r) { return !seen[r.id]; });   // 旧行被同 id 新行替换
+    merged = merged.concat(d.records);
+    merged.sort(function (a, b) { return (b.start || '') < (a.start || '') ? -1 : 1; });
+    RECORDS = merged;
+  }).catch(function () { });
+}
+
+/* 项目控制台「运行记录」tab 是否正显示（该 tab 也读 RECORDS，配置 tab 不读） */
+function pjRunsVisible() {
+  var el = document.getElementById('pjPanelRuns');
+  return !!(el && el.style.display !== 'none');
+}
+
+/* RECORDS 变了之后，按当前视图重渲染——覆盖所有消费 RECORDS 的界面：
+   时间轴 / 分析 / 日志检索的机器人下拉 / 项目控制台的「运行记录」tab。 */
+function renderRecordsView() {
+  if (curView === 'timeline') {
+    records = RECORDS.slice();
+    recomputeBounds();
+    if (IS_MOBILE) tlFeedSync();
+    else tlRender();
+  } else if (curView === 'analysis') {
+    if (anReady) anRenderAll(RECORDS);
+  } else if (curView === 'logsearch') {
+    lsFillRobots();   // 机器人下拉来自 RECORDS
+  } else if (curView === 'projects' && pjRunsVisible()) {
+    pjRunsLoad();
+  }
+}
+
+/* 回到任意数据视图时的对账：把离开期间（详情页/项目页等）积累的变更补齐。
+   返回 true = 有欠账且已发起补齐（调用方不必再重复拉同一份数据）。
+
+   两条硬约束：
+   - 分流必须与 applyDataChange 的视图白名单一致（含 logsearch）——否则对账交过去的
+     欠账会被当成「视图用不上」又记回来，PENDING 永远清不掉；
+   - 只有「确实会渲染出来」的视图才清账：项目控制台在配置 tab 下不读 RECORDS，
+     此时保留欠账，等回到真正的数据视图再补（避免账清了、界面还是旧的）。
+   先清账再拉取：拉取期间新到的事件由 revBehind 挡掉，不会重复应用。 */
+function reconcilePending() {
   if (PENDING.rev <= DATA_REV) return false;
+  if (curView === 'projects' && !pjRunsVisible()) return false;   // 配置 tab 不读 RECORDS：留着欠账
   var pnos = PENDING.pnos;
-  PENDING.rev = 0; PENDING.pnos = null;      // 先清账
-  applyDataChange('runs', pnos);             // 内部按 curView 分流：增量合并或整页重拉
+  PENDING.rev = 0; PENDING.pnos = null;
+  applyDataChange('runs', pnos);
   return true;
 }
 
-/* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
-   先记在这里，回数据视图（route）时先对账补齐再渲染。pendingRev 比 DATA_REV
-   新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。 */
-/* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
-   先记在这里，回任意数据视图（route 各分支）时先对账补齐再渲染。PENDING.rev
-   比 DATA_REV 新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。 */
-var PENDING = { rev: 0, pnos: null };
-
 /* 按当前视图应用一次数据刷新（收到变更信号后调用）。
-   ev.pnos 非空 = 精确增量：只拉变更的那几条（/api/runs?pnos=），按 id 合并进
+   pnos 非空 = 精确增量：只拉变更的那几条（/api/runs?pnos=），按 id 合并进
    RECORDS，几条变更就是几条的流量；空 = 无 pno 信息（每日全量更新/兜底），
-   退回范围拉取。排期/合规/机器人状态页数据面小，直接整页重拉。
-   当前视图用不上这个信号（详情页/项目页等）时不丢弃——记入 PENDING，
-   回到数据视图时 reconcilePending() 补齐。 */
+   退回范围拉取。botstatus/compliance/schedule 数据面小，直接整页重拉。
+   当前视图确实用不上这个信号时不丢弃——记入 PENDING，回数据视图时补齐。 */
 function applyDataChange(kind, pnos, rev) {
-  /* 视图用不上：先记真账（广播的真实 rev + pnos），回数据视图时 reconcilePending 补齐 */
-  if (curView !== 'timeline' && curView !== 'analysis' && curView !== 'botstatus'
-    && curView !== 'compliance' && curView !== 'schedule') {
-    if (typeof rev === 'number') PENDING.rev = Math.max(PENDING.rev, rev);
-    else PENDING.rev = Math.max(PENDING.rev, DATA_REV + 1);   // 无 rev 的调用（兜底路径）：至少标记有变更
-    PENDING.pnos = mergePnos(PENDING.pnos, pnos);
+  /* 消费 RECORDS 的视图（含 logsearch、项目页运行记录 tab）走下面的通用分支；
+     其余视图：botstatus/compliance/schedule 各自重载，其他一律记账。 */
+  var consumesRecords = (curView === 'timeline' || curView === 'analysis'
+    || curView === 'logsearch'
+    || (curView === 'projects' && pjRunsVisible()));
+  if (!consumesRecords) {
+    if (curView === 'botstatus') { bsLoad().then(bsRender); return; }
+    if (curView === 'compliance') { cpLoad(); return; }
+    if (curView === 'schedule') {
+      loadSchedule().then(function () { scReload(); });
+      return;
+    }
+    notePending(pnos, rev);   // 详情页 / 项目配置 tab 等：记欠账，回数据视图时补
     return;
   }
-  if (curView === 'botstatus') { bsLoad().then(bsRender); return; }
-  if (curView === 'compliance') { cpLoad(); return; }
-  if (curView === 'schedule') {
-    loadSchedule().then(function () { scReload(); });
-    return;
-  }
-  /* 精确增量：timeline/analysis 只需把变更行并进 RECORDS 再重渲染 */
-  if (Array.isArray(pnos) && pnos.length && (curView === 'timeline' || curView === 'analysis')) {
-    api('/api/runs?pnos=' + encodeURIComponent(pnos.join(','))).then(function (d) {
-      if (!(d && d.ok && Array.isArray(d.records))) return;
-      if (typeof d.rev === 'number') DATA_REV = d.rev;
-      var seen = {};
-      for (var i = 0; i < d.records.length; i++) seen[d.records[i].id] = true;
-      var merged = RECORDS.filter(function (r) { return !seen[r.id]; });   // 旧行被同 id 新行替换
-      merged = merged.concat(d.records);
-      merged.sort(function (a, b) { return (b.start || '') < (a.start || '') ? -1 : 1; });
-      RECORDS = merged;
-      if (curView === 'timeline') {
-        records = RECORDS.slice();
-        recomputeBounds();
-        if (IS_MOBILE) tlFeedSync();
-        else tlRender();
-      } else if (anReady) {
-        anRenderAll(RECORDS);
-      }
-    }).catch(function () { });
+  if (Array.isArray(pnos) && pnos.length) {
+    fetchPnosInto(pnos).then(renderRecordsView);   // 精确增量
     return;
   }
   if (Date.now() - lastFullTick >= AUTO_FULL_MS) {
@@ -3800,7 +3835,11 @@ function pjSwitchTab(name) {
   }
   document.getElementById('pjPanelCfg').style.display = (name === 'cfg') ? 'flex' : 'none';
   document.getElementById('pjPanelRuns').style.display = (name === 'runs') ? 'flex' : 'none';
-  if (name === 'runs') pjRunsLoad();
+  if (name === 'runs') {
+    /* 打开运行记录 tab：先把离开期间的欠账补上（有欠账时由对账拉增量并渲染），
+       否则直接渲染现有 RECORDS */
+    if (!reconcilePending()) pjRunsLoad();
+  }
 }
 function pjRunsLoad() {
   var p = pjCurrent;
