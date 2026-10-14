@@ -395,12 +395,14 @@ function route() {
       if (IS_MOBILE) { tlFeedObserve(); tlFeedTick(); }
       else tlResize();
       if (prevView === 'detail') refreshData(false, null, 'range');   // 从日志详情页返回：自动更新在详情页停更了，按「总长」范围补拉一次
+      reconcilePending();   // 离开期间（任意视图）积累的 SSE 变更：对账补齐（与上一行互补，覆盖绕路返回的场景）
     }
   } else if (name === 'analysis') {
     if (!anReady) {
       loadRuns().then(function () { anInit(); anReady = true; });
     } else {
       anResize();
+      reconcilePending();   // 同上：分析视图也对账离开期间的变更
     }
   } else if (name === 'detail') {
     var id = getParam('id');
@@ -3302,13 +3304,48 @@ var lastFallbackTick = 0;
 
 function revBehind(rev) { return typeof rev === 'number' && rev > DATA_REV; }
 
+/* 合并两批 pnos（去重）；任一为 null/undefined 表示「存在无 pno 的变更」，保留 null 语义 */
+function mergePnos(a, b) {
+  if (a == null || b == null) return null;
+  var seen = {}, out = [];
+  a.concat(b).forEach(function (p) {
+    if (!seen[p]) { seen[p] = true; out.push(p); }
+  });
+  return out;
+}
+
+/* 回到数据视图时的对账：离开期间（详情页/项目页等）积累的变更补齐后再渲染。
+   PENDING.rev > DATA_REV 说明有未应用的变更：有 pnos 就精确拉，没有就 range 拉，
+   拉完清账。route() 在进入 timeline/analysis 时调用。 */
+function reconcilePending() {
+  if (PENDING.rev <= DATA_REV) return;
+  var pnos = PENDING.pnos;
+  PENDING.rev = 0; PENDING.pnos = null;      // 先清账：拉取期间的重复事件由 revBehind 兜住
+  applyDataChange('runs', pnos);
+}
+
+/* 待应用变更：SSE 推来的信号永远不丢——当前视图用不上（如详情页看日志）时
+   先记在这里，回数据视图（route）时先对账补齐再渲染。pendingRev 比 DATA_REV
+   新说明有错过的事件；pnos 累积合并，回视图时一次精确拉取。 */
+var PENDING = { rev: 0, pnos: null };
+
+var PENDING = { rev: 0, pnos: null };
+
 /* 按当前视图应用一次数据刷新（收到变更信号后调用）。
    ev.pnos 非空 = 精确增量：只拉变更的那几条（/api/runs?pnos=），按 id 合并进
    RECORDS，几条变更就是几条的流量；空 = 无 pno 信息（每日全量更新/兜底），
-   退回范围拉取。排期/合规/机器人状态页数据面小，直接整页重拉。 */
-function applyDataChange(kind, pnos) {
+   退回范围拉取。排期/合规/机器人状态页数据面小，直接整页重拉。
+   当前视图用不上这个信号（详情页/项目页等）时不丢弃——记入 PENDING，
+   回到数据视图时 reconcilePending() 补齐。 */
+function applyDataChange(kind, pnos, rev) {
+  /* 视图用不上：先记真账（广播的真实 rev + pnos），回数据视图时 reconcilePending 补齐 */
   if (curView !== 'timeline' && curView !== 'analysis' && curView !== 'botstatus'
-    && curView !== 'compliance' && curView !== 'schedule') return;
+    && curView !== 'compliance' && curView !== 'schedule') {
+    if (typeof rev === 'number') PENDING.rev = Math.max(PENDING.rev, rev);
+    else PENDING.rev = Math.max(PENDING.rev, DATA_REV + 1);   // 无 rev 的调用（兜底路径）：至少标记有变更
+    PENDING.pnos = mergePnos(PENDING.pnos, pnos);
+    return;
+  }
   if (curView === 'botstatus') { bsLoad().then(bsRender); return; }
   if (curView === 'compliance') { cpLoad(); return; }
   if (curView === 'schedule') {
@@ -3356,10 +3393,10 @@ function sseConnect() {
     applyDataChange('runs');
   };
   sseSource.addEventListener('hello', function (e) {
-    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos); } catch (err) { }
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos, d.rev); } catch (err) { }
   });
   sseSource.addEventListener('data', function (e) {
-    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos); } catch (err) { }
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind, d.pnos, d.rev); } catch (err) { }
   });
   /* onerror 不需要处理：EventSource 自动重连，期间由兜底轮询保证数据新鲜 */
 }
