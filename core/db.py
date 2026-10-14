@@ -449,6 +449,24 @@ def count_triggers():
         return 0
 
 
+def latest_trigger_ms():
+    """排期表最近一次写入时刻（毫秒）；0 = 空表。前端据此显示「排期更新于 …」。"""
+    cfg = _cfg()
+    if not cfg:
+        return 0
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(updated_ms) FROM `%s`.`%s`" % (cfg["database"], TRIGGER_TABLE))
+            v = cur.fetchone()[0]
+        conn.close()
+        return int(v or 0)
+    except Exception:
+        return 0
+
+
 def pymysql_ss():
     """游标类（延迟导入，避免模块顶层依赖 pymysql）。"""
     import pymysql.cursors

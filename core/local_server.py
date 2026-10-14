@@ -38,9 +38,8 @@ DIR = os.path.join(BASE, "output")
 WEB = os.path.join(BASE, "web")        # 前端静态目录（前后端分离：index.html/app.js/style.css）
 ECHARTS = os.path.join(BASE, "assets", "echarts.min.js")
 MONACO_ROOT = os.path.join(BASE, "assets", "monaco")         # Monaco Editor（日志高亮，离线自托管；URL /monaco/vs/... → assets/monaco/vs/...）
-UPDATE_HOUR, UPDATE_MINUTE = 12, 0   # 每天完整更新时间
-LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）；节流跳过不更新
-UPDATE_LOCK = threading.Lock()       # 防止完整更新与快速刷新并发写 output
+LAST_UPDATE_TIME = [""]              # 数据源最后成功爬取完成时刻（"YYYY-MM-DD HH:MM:SS"）
+UPDATE_LOCK = threading.Lock()       # 串行化写库任务的抓取（records_poller / 排期抓取）
 LOG_PAGE = 5000                      # 日志分段获取：每页行数（前端"加载更多"逐段拉取，避免大文件卡死）
 MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 limit）
 
@@ -55,36 +54,23 @@ MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 l
 UNDERWAY_INTERVAL = 6                # 轮询间隔（秒）
 LAST_UNDERWAY_TS = [0.0]             # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
 
-# ---- 数据版本号 + SSE 变更推送（内网穿透省流量）----
-# 库每被写入一次 DATA_REV 自增 1；前端持有自己已拿到的 rev：
-# SSE 收到广播（或兜底轮询）时比对，落后才拉数据，无变化零传输。
-DATA_REV = [1]                       # 数据版本号（进程内自增，重启归 1）
-DATA_REV_LOCK = threading.Lock()
+# ---- SSE 变更推送（内网穿透省流量）----
+# 全站只有三个数据接口：/api/runs（运行记录）、/api/schedule（触发器排期）、
+# /api/events（SSE）。写库点广播「有变更」信号，前端带自己的时间戳游标来增量拉取。
 SSE_CLIENTS = []                     # 活跃 SSE 客户端 wfile 列表（配合 SSE_LOCK 遍历摘除）
 SSE_LOCK = threading.Lock()
-SSE_PING_SEC = 30                    # SSE 心跳间隔：保活穿透隧道空闲连接，同时防代理断链
+SSE_PING_SEC = 20                    # SSE 心跳间隔：前端看门狗据此判断连接活性（见 handle_api_events）
+TRIGGER_INTERVAL = 12 * 3600         # 触发器排期轮询间隔（12h；排期变动极少，无需更频）
 
 
-def bump_data_rev(reason="", pnos=None):
-    """任何写库点调用：版本号 +1，并向所有 SSE 客户端广播变更信号。
+def sse_broadcast(data):
+    """向所有 SSE 客户端广播一次变更通知。
 
-    事件体只带 kind + rev + pnos（变更行的 process_no 列表，几十~几百字节），
-    数据由前端收到后按 pnos 精确拉取——推信号不推数据，避免双通道内容不一致，
-    也把推送流量压到最低；没有 pnos（如每日全量更新）时前端退回范围拉取。
+    只发「有变更」这一件事，不带 kind/pnos——全站数据只有运行记录与排期两份，
+    前端带自己的时间戳游标来问「> 这个时间的给我」，由后端筛出真正变化的部分。
+    这样前端不需要理解「变了什么」，只需要知道「该来拉了」。
     """
-    with DATA_REV_LOCK:
-        DATA_REV[0] += 1
-        rev = DATA_REV[0]
-    sse_broadcast("data", {"kind": reason or "runs", "rev": rev,
-                           "pnos": pnos or []})
-
-
-def sse_broadcast(event, data):
-    """向所有 SSE 客户端推送一条事件；断开的客户端就地摘除。
-
-    逐客户端写并 flush；写失败（对方关页/网络断）静默移除，不影响其他客户端。
-    """
-    payload = "event: %s\ndata: %s\n\n" % (event, json.dumps(data, ensure_ascii=False))
+    payload = "event: change\ndata: %s\n\n" % json.dumps(data, ensure_ascii=False)
     dead = []
     with SSE_LOCK:
         clients = list(SSE_CLIENTS)
@@ -178,15 +164,17 @@ def _db_records_from_rows(rows):
     return out
 
 
-def _db_records(limit=None, since_ms=None, pnos=None):
+def _db_records(days=None, cursor=None, limit=None):
     """从 MySQL 查运行记录并组装成前端/dashboard 同构的记录列表。
 
     数据库是唯一真相源：在途记录（end 为空）与终态由轮询线程写入，
     同 process_no 永远只有一行、且是最新状态。
-    limit 给定时只取最新 N 条；since_ms 给定时只取与「now-since_ms ~ now」
-    有交集的记录；pnos 给定时只取这些 process_no（SSE 精确增量拉取）。
+    days   ：最近 N 天（首次加载 / 时间轴放宽档位）；
+    cursor ：增量——只取 updated_ms > cursor 的行（被广播唤醒时用）；
+    limit  ：只取最新 N 条。
     """
-    return _db_records_from_rows(db.fetch_records(limit=limit, since_ms=since_ms, pnos=pnos))
+    return _db_records_from_rows(
+        db.fetch_records(days=days, cursor=cursor, limit=limit))
 
 
 def load_log_roots():
@@ -368,135 +356,6 @@ def read_log_refresh_slice(raw, fn, offset, limit):
                 "content": "\n".join(collected)}
     except Exception as e:
         return {"ok": False, "error": "读取失败：%s" % e}
-
-
-
-# 行级别判定（与前端 app.js 的 LG_RE 同一套语义：1=错误 2=警告 3=成功 0=普通）
-LOG_LEVEL_RE = re.compile(
-    r"(error|exception|traceback|fail(?:ed)?|fatal|失败|错误|异常|中断|中止)"
-    r"|(warn(?:ing)?|timeout|retry|警告|重试|超时(?![\[0-9]))"
-    r"|(success(?:ful)?|succeed|done|finish(?:ed)?|成功|完成)", re.I)
-LOG_LEVEL_EXC = re.compile(r"(已启用异常监控|触发错误处理的|忽略异常并执行)")
-
-
-def log_line_level(line):
-    """按与前端一致的关键词规则判定单行级别：1 错误 / 2 警告 / 3 成功 / 0 普通。"""
-    if not line or len(line) > 20000:
-        return 0
-    if LOG_LEVEL_EXC.search(line):
-        return 0
-    lv = 0
-    for m in LOG_LEVEL_RE.finditer(line):
-        c = 1 if m.group(1) else (2 if m.group(2) else 3)
-        if c == 1:
-            return 1
-        if lv == 0 or c < lv:
-            lv = c
-    return lv
-
-
-SEARCH_SNIPPET = 240       # 命中行片段宽度（超长行以关键词为中心截取）
-SEARCH_MAX_HITS = 400      # 单次检索最多返回的命中数
-SEARCH_MAX_RECORDS = 60    # 单次检索最多扫描的运行记录数
-SEARCH_MAX_LINES = 400000  # 单次检索最多扫描的行数（防止海量日志把请求拖死）
-
-
-def _search_snippet(line, pos, kw_len, width=SEARCH_SNIPPET):
-    """把命中行截成以关键词为中心的片段（超长行首尾加省略号）。"""
-    s = line.rstrip("\n").rstrip()
-    if len(s) <= width:
-        return s
-    half = max(0, (width - kw_len) // 2)
-    start = max(0, pos - half)
-    end = min(len(s), start + width)
-    start = max(0, end - width)
-    return ("…" if start > 0 else "") + s[start:end] + ("…" if end < len(s) else "")
-
-
-def search_logs(records, kw, robot="", days=7, only_lvl=None,
-                max_hits=SEARCH_MAX_HITS, max_records=SEARCH_MAX_RECORDS,
-                max_lines=SEARCH_MAX_LINES):
-    """在运行记录对应的共享日志目录里按关键词检索（仅限白名单根目录内的 .log）。
-
-    只扫「日志目录确实存在」的记录（load_records 已解析出 logOk），按时间倒序逐条扫描；
-    受 max_records / max_lines / max_hits 三重上限约束，命中或扫满即停并置 truncated=True。
-    only_lvl：None=所有行；1=只要错误行；2=错误 + 警告行（放在后端过滤，
-    否则「超时」这类关键词会被 [0/3000] 等待进度噪声占满名额，真正的错误反而被截断）。
-    返回 {ok, hits, scanned:{records,files,lines}, truncated, candidates}。
-    """
-    kw_low = str(kw or "").lower()
-    now_ms = int(time.time() * 1000)
-    since = now_ms - int(days) * 86400000
-
-    cands = []
-    for r in records:
-        if not r.get("start") or r["start"] < since:
-            continue
-        if not r.get("log") or not r.get("logOk"):
-            continue
-        if robot and robot != "__ALL__" and (r.get("robot") or "") != robot:
-            continue
-        cands.append(r)
-    cands.sort(key=lambda r: r["start"], reverse=True)
-
-    hits, scanned = [], {"records": 0, "files": 0, "lines": 0}
-    truncated = stop = False
-
-    for r in cands:
-        if stop:
-            break
-        if scanned["records"] >= max_records:
-            truncated = True
-            break
-        d = os.path.normpath(r["log"])
-        if not is_allowed(d):
-            continue
-        try:
-            if not os.path.isdir(d):
-                continue
-            names = sorted(fn for fn in os.listdir(d) if fn.lower().endswith(".log"))
-        except Exception:
-            continue
-        scanned["records"] += 1
-        for fn in names:
-            if stop:
-                break
-            fp = os.path.normpath(os.path.join(d, fn))
-            if not fp.startswith(d + os.sep) or not os.path.isfile(fp):
-                continue
-            scanned["files"] += 1
-            try:
-                with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                    for ln, line in enumerate(f, 1):
-                        scanned["lines"] += 1
-                        if scanned["lines"] >= max_lines:
-                            truncated = stop = True
-                            break
-                        pos = line.lower().find(kw_low)
-                        if pos < 0:
-                            continue
-                        lv = log_line_level(line)
-                        # 级别筛选：1=只看错误；2=错误 + 警告
-                        if only_lvl == 1 and lv != 1:
-                            continue
-                        if only_lvl == 2 and lv not in (1, 2):
-                            continue
-                        hits.append({
-                            "rid": r.get("id"), "robot": r.get("robot") or "",
-                            "name": r.get("name") or r.get("app") or "",
-                            "start": r.get("start"), "status": r.get("status") or "",
-                            "file": fn, "line": ln,
-                            "lvl": lv,
-                            "text": _search_snippet(line, pos, len(kw_low)),
-                        })
-                        if len(hits) >= max_hits:
-                            truncated = stop = True
-                            break
-            except Exception:
-                continue
-
-    return {"ok": True, "hits": hits, "scanned": scanned, "truncated": truncated,
-            "candidates": len(cands)}
 
 
 def _rgba_to_hex(rgba, bg=255):
@@ -682,15 +541,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path0 == "/api/schedule":
             self.handle_api_schedule()
             return
-        if path0 == "/api/botstatus":
-            self.handle_api_botstatus()
-            return
-        if path0 == "/api/compliance":
-            self.handle_api_compliance()
-            return
-        if path0 == "/api/logsearch":
-            self.handle_log_search()
-            return
         if path0 == "/api/projects":
             self.handle_api_projects()
             return
@@ -703,11 +553,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path0 = self.path.split("?")[0]
         if path0 == "/login":
             return self.handle_login_post()
-        if path0 == "/api/refresh":
+        if path0 == "/api/schedule/refresh":
             if not self._authorized():
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
-            self.handle_refresh()
-            return
+            return self.handle_schedule_refresh()
         if path0 == "/api/rerun":
             if not self._authorized():
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
@@ -722,37 +571,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_projects_run()
         self.send_error(404, "Not Found")
 
-    def handle_refresh(self):
-        """POST /api/refresh —— 标题栏「立刻更新」按钮。
+    def handle_schedule_refresh(self):
+        """POST /api/schedule/refresh —— 排期页「立刻更新」按钮。
 
-        force=1：立即全量爬取（运行记录 + 触发器排期），不受后台轮询节流影响，
-        跑完把抓取结果直接入库（MySQL 为唯一真相源）并返回。失败（如登录态过期
-        且无法重新登录）如实返回 ok=False，前端据此提示刷新失败。
-
-        不带 force：只返回当前库中数据，不触发任何抓取（抓取由后台线程自动完成）。
+        同步抓取网页版触发器列表并写库（crawler --only-triggers 子进程），
+        抓完才返回：前端在此期间显示转圈弹窗，拿到结果后重载排期。
+        有变更时广播，其他客户端也会跟着刷新。
         """
-        q = parse_qs(urlparse(self.path).query)
-        force = q.get("force", ["0"])[0].lower() in ("1", "true", "yes")
-        ok, error = True, ""
-        if force:
-            ok = run_refresh()
-            if not ok:
-                error = "刷新失败，详见 output/update_log.txt"
-        payload = {
+        ok, msg, changed = run_trigger_refresh()
+        if ok and changed:
+            sse_broadcast({"kind": "schedule", "time": now_text()})
+        return self._send_json({
             "ok": ok,
-            "count": db.count_runs(),
-            "time": LAST_UPDATE_TIME[0] or now_text(),
-            "rev": DATA_REV[0],
-            "error": error,
-            "records": _db_records(),
-        }
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+            "changed": changed,
+            "count": db.count_triggers(),
+            "time": now_text(),
+            "message": msg,
+        })
 
     def _send_json(self, obj, code=200):
         """JSON 响应统一出口：请求带 Accept-Encoding: gzip 且响应体较大时压缩传输。
@@ -774,21 +609,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_api_events(self):
-        """GET /api/events —— SSE 长连接：数据库有变动时单向推送变更信号。
+        """GET /api/events —— SSE 长连接：库有变更时通知前端「该来拉了」。
 
-        只推 {kind, rev}（几十字节），不推数据本体；前端收到后按需拉取。
-        连接建立即发一条 hello（带当前 rev，前端据此判断是否需要拉取），
-        之后每 SSE_PING_SEC 秒发 `: ping` 注释行保活（穿透隧道空闲超时
-        一般 60s+，不心跳会被中间层掐断）。客户端断开（关页/网络断）时
-        从广播列表摘除并结束线程。"""
+        事件只有一种：`event: change`（不带数据，前端凭自己的时间戳游标来问）。
+        连接建立后立刻发一次 change，让前端做首轮对账（补上断线期间的变化）。
+
+        心跳用**命名事件**（`event: ping`）而不是注释行（`: ping`）：EventSource
+        规范规定注释行不投递给 JS，前端就无法感知「连接还活着」——隧道黑洞式断开
+        （不发 FIN、只是不再转发）时既不触发 onerror 也不重连，前端会一直拿着旧
+        数据。命名事件会走到 JS，前端据此判断连接活性：超过一段时间没收到任何
+        消息（change 或 ping）就判定连接假死，主动断开重连。
+
+        客户端断开（关页/网络断）时从广播列表摘除并结束线程。
+        """
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
-        hello = ("event: hello\ndata: %s\n\n"
-                 % json.dumps({"rev": DATA_REV[0], "time": now_text()},
-                              ensure_ascii=False))
+        # 首帧：通知前端做首轮对账（也充当「连接已就绪」的信号）
+        hello = ("event: change\ndata: %s\n\n"
+                 % json.dumps({"hello": True, "time": now_text()}, ensure_ascii=False))
         self.wfile.write(hello.encode("utf-8"))
         self.wfile.flush()
         with SSE_LOCK:
@@ -796,7 +637,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             while True:
                 time.sleep(SSE_PING_SEC)
-                self.wfile.write(b": ping\n\n")
+                # 命名事件（不是 ": ping" 注释行）：前端看门狗能收到，用于判断连接活性
+                self.wfile.write(("event: ping\ndata: %d\n\n" % int(time.time())).encode("utf-8"))
                 self.wfile.flush()
         except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
             pass    # 客户端断开：正常退出，finally 里摘除
@@ -1064,26 +906,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def handle_api_runs(self):
-        """GET /api/runs[?limit=N][?since=ms][?pnos=p1,p2,...]：返回运行记录（按需查 MySQL）。
-        limit：只返回最新 N 条。
-        since：只返回与 now-since 有交集的记录（前端按「总长」范围刷新）。
-        pnos：只返回这些 process_no 的记录（SSE 精确增量：广播说哪几条变了就拉哪几条），
-        与 limit/since 可叠加。"""
+        """GET /api/runs[?days=N][?cursor=ms]：运行记录（全站唯一记录接口）。
+
+        days   ：圈定最近 N 天（首次加载 / 时间轴切到更长档位时用），默认 7。
+        cursor ：增量拉取——只回「最后修改时间 > cursor」的行（被广播唤醒时用，
+                 通常只有几条）。游标由响应里的 cursor 字段给出，前端下次原样回传。
+
+        响应始终带 cursor：它是**本次查询之前**取的服务端快照时间戳。前端拿它当
+        下一次的游标，就能保证「这次之后的变化」下次必然被捞到，不受浏览器与
+        服务器时钟差影响。
+        """
         q = parse_qs(urlparse(self.path).query)
-        limit = None
-        try:
-            limit = int(q.get("limit", [""])[0]) or None
-        except ValueError:
-            pass
-        since_ms = None
-        try:
-            since_ms = int(q.get("since", [""])[0]) or None
-        except ValueError:
-            pass
-        pnos = [p for p in unquote(q.get("pnos", [""])[0]).split(",") if p]
-        records = _db_records(limit=limit, since_ms=since_ms, pnos=pnos or None)
+
+        def _int(name, dflt=0):
+            try:
+                return int(q.get(name, [""])[0]) or dflt
+            except (ValueError, TypeError):
+                return dflt
+
+        days = _int("days", 7)
+        cursor = _int("cursor", 0)
+        # 快照必须在查询之前取：查询期间写入的行带更大的 updated_ms，下次必然捞到
+        snap = db.snapshot_cursor()
+        records = _db_records(days=None if cursor else days, cursor=cursor or None)
         self._send_json({"ok": True, "records": records, "count": len(records),
-                         "rev": DATA_REV[0],
+                         "cursor": snap,
                          "time": LAST_UPDATE_TIME[0] or now_text()})
 
     def handle_api_run(self):
@@ -1111,18 +958,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_api_schedule(self):
-        """GET /api/schedule：触发器日程表数据（周/月视图 + 统计）。"""
-        path = os.path.join(DIR, "triggers_normalized.csv")
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8-sig") as f:
-                    rows = list(csv.DictReader(f))
-                payload = dashboard.build_schedule_payload(rows)
-            except Exception as e:
-                payload = {"ok": False, "error": "日程数据聚合失败：%s" % e}
-        else:
-            payload = {"ok": False, "error": "缺少 triggers_normalized.csv"}
-        payload["rev"] = DATA_REV[0]
+        """GET /api/schedule：触发器日程表数据（周/月视图 + 统计），读数据库排期表。
+
+        排期只在 12h 轮询或手动「立刻更新」时变化，页面打开拉一次即可，不随广播刷新。
+        """
+        try:
+            rows = db.fetch_triggers()
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "排期查询失败：%s" % e})
+        if not rows:
+            return self._send_json({"ok": False,
+                                    "error": "排期表为空，请点「立刻更新」抓取触发器"})
+        try:
+            payload = dashboard.build_schedule_payload(rows)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": "日程数据聚合失败：%s" % e})
+        payload["updated"] = db.latest_trigger_ms()
         self._send_json(payload)
 
     def handle_api_schedule_export(self):
@@ -1141,12 +992,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if status == "__all__":
             status = "__ALL__"
 
-        path = os.path.join(DIR, "triggers_normalized.csv")
-        if not os.path.exists(path):
-            return self._send_json({"ok": False, "error": "缺少 triggers_normalized.csv"})
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                rows = list(csv.DictReader(f))
+            rows = db.fetch_triggers()
+            if not rows:
+                return self._send_json({"ok": False, "error": "排期表为空，请先点「立刻更新」抓取触发器"})
             ex = dashboard.build_schedule_export(rows, view=view, robot=robot, status=status)
             ex["calendar"] = dashboard.build_schedule_calendar(ex)
         except Exception as e:
@@ -1175,75 +1024,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
-
-    def handle_api_botstatus(self):
-        """GET /api/botstatus：各机器人实时状态（运行中/排队中/空闲 + 当前任务 + 近期负载）。
-
-        在途部分优先用 underway 实时轮询（桌面 API，~8s 一轮），
-        在途记录（end 为空）来自 underway 轮询入库，终态由 60s 增量抓取覆盖。
-        live: {ok, age, count} 告诉前端实时层状态（ok=False 显示"离线快照"）。
-        """
-        try:
-            records = _db_records()
-            payload = dashboard.build_bot_status(records)
-            payload["time"] = LAST_UPDATE_TIME[0] or now_text()
-            payload["rev"] = DATA_REV[0]
-            payload["live"] = {
-                "ok": bool(LAST_UNDERWAY_TS[0]),
-                "age": int(time.time() - LAST_UNDERWAY_TS[0]) if LAST_UNDERWAY_TS[0] else None,
-                "count": sum(1 for r in records if r.get("end") is None),
-            }
-        except Exception as e:
-            payload = {"ok": False, "error": "机器人状态聚合失败：%s" % e}
-        self._send_json(payload)
-
-    def handle_api_compliance(self):
-        """GET /api/compliance?days=7&window=60：触发器排期 vs 实际运行（命中/延迟/漏跑）。"""
-        q = parse_qs(urlparse(self.path).query)
-
-        def _int(name, dflt, lo, hi):
-            try:
-                v = int(q.get(name, [str(dflt)])[0])
-            except Exception:
-                return dflt
-            return max(lo, min(hi, v))
-
-        days = _int("days", 7, 1, 30)
-        window = _int("window", 60, 5, 720)
-        path = os.path.join(DIR, "triggers_normalized.csv")
-        if not os.path.exists(path):
-            return self._send_json({"ok": False, "error": "缺少 triggers_normalized.csv"})
-        try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                rows = list(csv.DictReader(f))
-            payload = dashboard.build_compliance(rows, _db_records(), days=days, window_min=window)
-            payload["rev"] = DATA_REV[0]
-        except Exception as e:
-            payload = {"ok": False, "error": "命中率聚合失败：%s" % e}
-        self._send_json(payload)
-
-    def handle_log_search(self):
-        """GET /api/logsearch?q=&robot=&days=：跨运行记录的日志关键词检索。
-
-        结果里每条命中带运行记录 id 与文件名，前端据此跳详情页并自动定位关键词。
-        """
-        q = parse_qs(urlparse(self.path).query)
-        kw = unquote(q.get("q", [""])[0]).strip()
-        robot = unquote(q.get("robot", [""])[0]).strip()
-        lvl = unquote(q.get("lvl", ["all"])[0]).strip().lower()
-        only_lvl = 1 if lvl == "err" else (2 if lvl == "warn" else None)
-        try:
-            days = int(q.get("days", ["7"])[0])
-        except Exception:
-            days = 7
-        days = max(1, min(30, days))
-        if len(kw) < 2:
-            return self._send_json({"ok": False, "error": "关键词至少 2 个字符", "hits": []})
-        payload = search_logs(_db_records(), kw, robot=robot, days=days, only_lvl=only_lvl)
-        payload["q"] = kw
-        payload["days"] = days
-        payload["lvl"] = lvl
-        self._send_json(payload)
 
     # ---- 访问密码保护 ----
     def _provided_pwd(self):
@@ -1362,78 +1142,47 @@ def lan_ips():
     return ips
 
 
-def seconds_until(hour, minute):
-    """距下一个 hour:minute 的秒数"""
-    now = datetime.datetime.now()
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now:
-        target += datetime.timedelta(days=1)
-    return (target - now).total_seconds()
+def run_trigger_refresh():
+    """抓取触发器排期并写库（crawler --only-triggers 子进程），返回 (ok, 消息, 变更数)。
 
-
-def run_update():
-    """执行完整更新流程：抓取 -> 整理文档（数据进内存缓存，不生成 HTML）。
-    日志写 output/update_log.txt。"""
+    两个入口：排期页「立刻更新」按钮、后端 12h 轮询线程。
+    登录态失效由 crawler 自身的 authenticate() 处理（缓存会话/密码自动重登）；
+    失败写 update_log.txt 并如实返回 ok=False，前端提示失败而不是误报成功。
+    """
     with UPDATE_LOCK:
         py = sys.executable
         log = os.path.join(DIR, "update_log.txt")
-        commands = [
-            [py, os.path.join("core", "crawler.py"), "--config", "config.json", "--out", "output"],
-            [py, os.path.join("core", "organize.py"), "--input", os.path.join("output", "triggers_normalized.csv"), "--out", "output"],
-        ]
-        with open(log, "a", encoding="utf-8") as f:
-            f.write("\n[%s] ===== 每日自动更新开始 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            for cmd in commands:
-                f.write(">> %s\n" % " ".join(cmd))
-                f.flush()
-                try:
-                    subprocess.run(cmd, cwd=BASE, stdout=f, stderr=subprocess.STDOUT,
-                                   encoding="utf-8", errors="replace", timeout=1800)
-                except Exception as e:
-                    f.write("!! 执行异常: %s\n" % e)
-            f.write("[%s] ===== 每日自动更新结束 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        stamp_data_time()  # 每日完整更新成功：刷新“数据获取”时间
-        bump_data_rev("schedule")   # 触发器排期 + 运行记录都可能变：广播给前端
-
-
-def run_refresh():
-    """全量抓取：crawler 完整爬取（触发器 + 运行记录全量，写 CSV + 入库）。
-
-    只有两个入口：服务器启动时的 initial_full_fetch、标题栏「立刻更新」按钮。
-    日常在途与终态同步走桌面 API（records_poller 每 6s 拉最新 50 条 upsert），
-    不经过这里——网页版会话失效只影响触发器排期的刷新，不影响运行记录。
-
-    登录态失效由 crawler 自身的 authenticate() 处理：缓存会话/配置 Cookie 失效时
-    自动回退到 config.json 的账号密码重新登录，登录成功后才继续抓。
-
-    成功后刷新"数据获取"时间；失败把摘要写入 update_log.txt。返回 True=成功 False=失败。"""
-    with UPDATE_LOCK:
-        py = sys.executable
-        log = os.path.join(DIR, "update_log.txt")
-        cmd = [py, os.path.join("core", "crawler.py"), "--config", "config.json", "--out", "output"]
+        cmd = [py, os.path.join("core", "crawler.py"),
+               "--config", "config.json", "--out", "output", "--only-triggers"]
         try:
             r = subprocess.run(cmd, cwd=BASE, capture_output=True, encoding="utf-8",
                                errors="replace", timeout=600)
-            out = (r.stdout or "")
-            # 登录态失效且重新登录失败：crawler 会打印 [AUTH_FAILED]（此时退出码为 0，不会中断服务器启动），
-            # 这里据此把刷新判为失败，让网页提示「刷新失败」而不是误以为成功。
+            out = r.stdout or ""
             if r.returncode != 0 or "[AUTH_FAILED]" in out:
                 with open(log, "a", encoding="utf-8") as f:
-                    f.write("[%s] 刷新失败: %s\n%s\n" % (
+                    f.write("[%s] 排期刷新失败: %s\n%s\n" % (
                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         " ".join(cmd), (out + (r.stderr or ""))[-600:]))
-                print("[刷新] %s 全量抓取失败（登录态可能已过期，下个周期会自动重试）"
+                print("[排期] %s 抓取失败（登录态可能已过期）"
                       % datetime.datetime.now().strftime("%H:%M:%S"))
-                return False
-            stamp_data_time()   # 记录“数据获取”时间
-            bump_data_rev("schedule")   # 全量抓取入库：排期 + 运行记录都广播
-            print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
-            return True
+                return False, "抓取失败：登录态可能已过期，详见 output/update_log.txt", 0
+            # crawler 用哨兵行回传变更数（stdout 里解析，避免再造一个 IPC）
+            changed = 0
+            for ln in out.splitlines():
+                if ln.startswith("[TRIGGERS_CHANGED]"):
+                    try:
+                        changed = int(ln.split()[1])
+                    except (IndexError, ValueError):
+                        changed = 0
+            print("[排期] %s 触发器已刷新（变更 %d 条）"
+                  % (datetime.datetime.now().strftime("%H:%M:%S"), changed))
+            return True, "", changed
         except Exception as e:
             with open(log, "a", encoding="utf-8") as f:
-                f.write("[%s] 刷新异常: %s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), e))
-            print("[刷新] 异常:", e)
-            return False
+                f.write("[%s] 排期刷新异常: %s\n" % (
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), e))
+            print("[排期] 异常:", e)
+            return False, "抓取异常：%s" % e, 0
 
 
 def _robot_filters():
@@ -1502,8 +1251,7 @@ def records_poller():
             changed = db.upsert_raw_runs(_raw_rows(page), source="desktop")
             if changed:
                 stamp_data_time()   # 有改库：刷新「数据获取」时间
-                # 带变更 pno 广播：前端只拉这几条，不盲拉最新 N 条
-                bump_data_rev("runs", pnos=changed)
+                sse_broadcast({"kind": "runs", "time": now_text()})   # 通知前端来增量拉取
             LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
         except Exception as e:
@@ -1513,17 +1261,31 @@ def records_poller():
         time.sleep(UNDERWAY_INTERVAL)
 
 
-def scheduler():
-    """每天 UPDATE_HOUR:UPDATE_MINUTE 自动更新数据"""
+def trigger_poller():
+    """后台常驻线程：每 TRIGGER_INTERVAL(12h) 抓一次触发器排期并写库。
+
+    排期（触发器定义）变动极少，12h 一轮足够；启动时也先跑一轮（见 main 的
+    initial_fetch），保证重启后库里有排期。抓完有变更才广播，前端在排期页
+    打开时拉一次即可，不随广播自动刷新。
+    失败静默跳过本轮，限频打印；与「立刻更新」按钮通过 UPDATE_LOCK 串行。
+    """
+    fail = 0
     while True:
-        delay = seconds_until(UPDATE_HOUR, UPDATE_MINUTE)
-        next_time = (datetime.datetime.now() + datetime.timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M")
-        print("[定时] 下次自动更新: %s（%.1f 小时后）" % (next_time, delay / 3600))
-        time.sleep(delay)
         try:
-            run_update()
+            ok, msg, changed = run_trigger_refresh()
+            if ok:
+                fail = 0
+                if changed:
+                    sse_broadcast({"kind": "schedule", "time": now_text()})
+            else:
+                fail += 1
+                if fail == 1 or fail % 8 == 0:
+                    print("[排期] 抓取失败 x%d: %s" % (fail, msg))
         except Exception as e:
-            print("[定时] 更新异常:", e)
+            fail += 1
+            if fail == 1 or fail % 8 == 0:
+                print("[排期] 抓取异常 x%d: %s" % (fail, e))
+        time.sleep(TRIGGER_INTERVAL)
 
 
 def main():
@@ -1535,19 +1297,21 @@ def main():
     os.chdir(DIR)
     db.init_db()       # MySQL 建库建表（幂等；未配置 config.json -> mysql 段时静默跳过）
     _init_data_time_from_file()   # “数据获取”时间初始为数据文件生成时刻
-    print("[启动] 运行记录 %d 条在库（MySQL 为唯一真相源）" % db.count_runs())
+    print("[启动] 运行记录 %d 条 / 触发器排期 %d 条在库（MySQL 为唯一真相源）"
+          % (db.count_runs(), db.count_triggers()))
 
-    def initial_full_fetch():
-        """服务器启动时先全量抓一轮（触发器 + 运行记录全量，写 CSV + 入库），
-        保证重启后数据完整；与 records_poller 通过 UPDATE_LOCK 串行。"""
+    def initial_fetch():
+        """启动时抓一轮排期（运行记录由 records_poller 6s 一轮自动补齐，
+        首次启动可能库里空，等第一轮轮询即可）。与轮询线程通过 UPDATE_LOCK 串行。"""
         try:
-            run_refresh()
+            ok, msg, changed = run_trigger_refresh()
+            print("[启动] 排期抓取%s（变更 %d 条）" % ("成功" if ok else "失败：" + msg, changed))
         except Exception as e:
-            print("[启动] 全量抓取异常:", e)
+            print("[启动] 排期抓取异常:", e)
 
-    threading.Thread(target=initial_full_fetch, daemon=True).start()
-    threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=initial_fetch, daemon=True).start()
     threading.Thread(target=records_poller, daemon=True).start()
+    threading.Thread(target=trigger_poller, daemon=True).start()
 
     class Server(socketserver.ThreadingTCPServer):
         daemon_threads = True   # SSE 是长连接：线程随主进程退出，不等连接关闭
@@ -1564,11 +1328,10 @@ def main():
         else:
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
-        print("  运行记录轮询: 每 %d 秒桌面 API runningRecords 最新 50 条入库（在途+终态一次同步）" % UNDERWAY_INTERVAL)
-        print("  变更推送:     /api/events SSE——库有变动才广播信号，前端按需拉取（省流量）")
+        print("  运行记录:     每 %d 秒桌面 API runningRecords 最新 50 条入库，有变化才广播" % UNDERWAY_INTERVAL)
+        print("  触发器排期:   每 %.0f 小时抓一次（+ 排期页「立刻更新」手动触发）" % (TRIGGER_INTERVAL / 3600))
+        print("  变更推送:     /api/events SSE——有变更通知前端按时间戳游标增量拉取")
         print("  网页读取:     按需查询 MySQL（唯一真相源），不触发抓取")
-        print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
-        print("  无需 Windows 任务计划：数据更新由本后端进程自动完成")
         print("  更新日志:   output\\update_log.txt")
         print("  其他电脑打开上面的局域网地址即可查看仪表盘")
         print("  如无法访问，请在本机防火墙中放行 Python 和端口 %d" % PORT)
