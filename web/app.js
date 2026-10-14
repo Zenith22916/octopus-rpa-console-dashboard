@@ -3542,8 +3542,8 @@ document.addEventListener('click', function () {
   document.getElementById('navMenu').classList.remove('open');
 });
 if (document.getElementById('chkAuto').checked) {
-  autoTick();
-  if (!autoTimer) autoTimer = setInterval(autoTick, 6000);
+  autoTick();   /* 开关默认勾选：进页面即连 SSE + 60s 兜底轮询，不再 6s 高频拉数据 */
+  if (!autoTimer) autoTimer = setInterval(autoTick, FALLBACK_MS);
 }
 
 /* ==================== 项目控制台视图 ==================== */

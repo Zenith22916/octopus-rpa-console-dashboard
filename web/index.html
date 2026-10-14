@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>RPA 运行仪表盘</title>
-<!-- 静态资源带 ?v=<文件mtime> 版本号：文件一改 URL 就变，配合后端一年长缓存，
-     内容更新即时生效且二次访问零下载（v 值由 start_server 时注入，手工改成任意新值同样生效） -->
-<link rel="stylesheet" href="/style.css?v=2">
+<!-- 静态资源带 ?v=auto 版本号：服务器按下表各文件的 mtime 实时替换成真实版本号
+     （文件一改 URL 就变，长缓存自动失效；没改则 URL 不变、缓存继续命中） -->
+<link rel="stylesheet" href="/style.css?v=auto">
 <!-- 视觉增强层：只覆盖外观与动效，不含业务逻辑；删掉这行即可回退到原样式 -->
-<link rel="stylesheet" href="/theme.css?v=2">
+<link rel="stylesheet" href="/theme.css?v=auto">
 <!-- 手机端布局层：视口 ≤880px 时整体换一套布局（脱离桌面「压进一屏」策略，改为整页滚动）；
      删掉这行即可回退到桌面那套窄屏表现 -->
-<link rel="stylesheet" href="/mobile.css?v=2">
-<script src="/echarts.min.js?v=2"></script>
+<link rel="stylesheet" href="/mobile.css?v=auto">
+<script src="/echarts.min.js?v=auto"></script>
 <!-- Monaco 的 AMD loader 必须在 echarts 之后加载：否则 echarts 的 UMD 包装检测到 define.amd 会注册成 AMD 模块，不再暴露 window.echarts 全局 -->
 <script src="/monaco/vs/loader.js"></script>
 </head>
@@ -436,8 +436,8 @@
   </div>
 </div>
 
-<script src="/app.js?v=2"></script>
+<script src="/app.js?v=auto"></script>
 <!-- 装饰层：跟随鼠标的氛围光晕，失败不影响主页面 -->
-<script src="/theme.js?v=2"></script>
+<script src="/theme.js?v=auto"></script>
 </body>
 </html>

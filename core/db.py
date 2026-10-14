@@ -126,7 +126,11 @@ INSERT INTO `{db}`.`{table}`
 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 ON DUPLICATE KEY UPDATE
   status=VALUES(status), end_ms=VALUES(end_ms), exec_start_ms=VALUES(exec_start_ms),
-  bot_name=VALUES(bot_name), source=VALUES(source), updated_at=VALUES(updated_at)
+  bot_name=VALUES(bot_name), source=VALUES(source),
+  updated_at=IF(status=VALUES(status) AND end_ms<=>VALUES(end_ms)
+                AND exec_start_ms<=>VALUES(exec_start_ms)
+                AND bot_name=VALUES(bot_name) AND source=VALUES(source),
+                updated_at, VALUES(updated_at))
 """
 
 
@@ -163,10 +167,14 @@ def upsert_raw_runs(rows, source="crawler"):
           （flow_id/process_no/flow_name/bot_name/trigger_name/start_way/
             status/start_time/end_time/execution_start_time）。
     幂等：同 process_no 以最后一次写入为准（在途 -> 终态覆盖）。
+    返回「实际发生变更的行数」——executemany 的 rowcount 对 ON DUPLICATE KEY
+    会把"没变化的重放"也计入，因此用每行 rowcount 语义（1=新写/变更，
+    2=... 不适用；0=内容与库中完全一致）汇总：变更行 > 0 才算库真的变了，
+    records_poller 据此决定要不要 bump DATA_REV / 广播 SSE。
     """
     cfg = _cfg()
     if not cfg or not rows:
-        return False
+        return 0
     out, now = [], datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
     for r in rows:
         pno = str(r.get("process_no") or "")
@@ -181,25 +189,33 @@ def upsert_raw_runs(rows, source="crawler"):
             source, now,
         ))
     if not out:
-        return False
+        return 0
     try:
         conn, _ = _connect(cfg)
         if conn is None:
-            return False
+            return 0
+        changed = 0
         with conn.cursor() as cur:
-            cur.executemany(UPSERT_SQL(cfg), out)
+            # 逐行执行而非 executemany：executemany 的合并 rowcount 无法区分
+            # 「每行没变化（affected=0）」，逐行才能精确知道库有没有真的变。
+            for row in out:
+                cur.execute(_UPSERT_SINGLE.format(db=cfg["database"], table=TABLE), row)
+                changed += cur.rowcount if cur.rowcount > 0 else 0
         conn.close()
-        return len(out)
+        return changed
     except ImportError:
         _err("未安装 pymysql，入库跳过")
-        return False
+        return 0
     except Exception as e:
         _err("写入失败：%s" % e)
-        return False
+        return 0
 
 
 def UPSERT_SQL(cfg):
     return _UPSERT.format(db=cfg["database"], table=TABLE)
+
+
+_UPSERT_SINGLE = _UPSERT   # 逐行执行与批量共用同一条 SQL 模板
 
 
 _COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"

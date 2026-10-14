@@ -652,8 +652,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._send_401({"error": "unauthorized", "message": "需要访问密码"})
             return self._send_login_page()
         if self.path in ("/", ""):
-            self.path = "/index.html"
-            return super().do_GET()
+            return self._serve_index()
+        if path0 == "/index.html":
+            return self._serve_index()
         if path0 == "/echarts.min.js":
             return self._serve_echarts()
         if path0.startswith("/monaco/"):
@@ -988,6 +989,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_index(self):
+        """提供 web/index.html：把静态资源引用里的 ?v=auto 替换成 ?v=<文件mtime>。
+
+        版本号随文件内容变化自动更新——改了 app.js 不用手动 bump 版本，
+        URL 一变浏览器缓存即失效；文件没改则 URL 不变，长缓存继续命中。
+        index.html 自身 no-store，每次都拿最新版本号。"""
+        fp = os.path.join(WEB, "index.html")
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                html = f.read()
+        except Exception:
+            return self.send_error(500, "index.html missing")
+
+        def _ver(m):
+            name = m.group(1)
+            # echarts.min.js 实际在 assets/（由 /echarts.min.js 路由单独提供），其余在 web/
+            p = (os.path.join(BASE, "assets") if name == "echarts.min.js" else WEB) + os.sep + name
+            v = int(os.path.getmtime(p)) if os.path.exists(p) else 0
+            return '/%s?v=%d' % (name, v)
+
+        html = re.sub(r'/(app\.js|theme\.js|style\.css|theme\.css|mobile\.css|echarts\.min\.js)\?v=auto', _ver, html)
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -1453,6 +1482,8 @@ def records_poller():
     endTime 有值），upsert 幂等（同 process_no 以最后一次写入为准，在途被终态
     覆盖），所以无需 underway 差异比对——一条轻 GET 每 6s 就能把新增和终态
     都同步进库，前端感知延迟 ≤6s。60s 无成功轮询时前端显示「离线快照」。
+    upsert 返回「实际变更行数」：0 = 库无任何变化，不刷时间、不广播 SSE
+    （否则每 6s 都会推一次假变更，前端退化成事实上的固定轮询）。
     失败静默跳过本轮，限频打印避免刷屏；octo_api 内部 401 时会自行续期/重登。
     """
     fail = 0

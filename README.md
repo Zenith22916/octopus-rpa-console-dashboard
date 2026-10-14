@@ -132,7 +132,7 @@ web/（纯前端，hash 路由八视图）
 
 | 机制 | 说明 |
 |---|---|
-| 静态资源长缓存 | js/css/图片一律 `Cache-Control: public, max-age=31536000, immutable`，由 index.html 里的 `?v=N` 版本号控制更新——二次打开页面**零下载**（echarts 1MB、主题/脚本约 350KB 不再重复传输）；HTML 与 API 保持 `no-store` |
+| 静态资源长缓存 | js/css/图片一律 `Cache-Control: public, max-age=31536000, immutable`，版本号由服务器按文件 mtime 自动注入（index.html 写 `?v=auto`，`_serve_index` 实时替换成 `?v=<mtime>`）——文件一改 URL 即变、缓存自动失效，无需手动 bump；二次打开页面**零下载** |
 | SSE 变更推送 | `/api/events` 长连接：库有变动（poller upsert / 全量抓取 / 每日更新）才广播 `{kind, rev}`，空闲时只有 30 秒一个心跳——取代原「每 6s 一次完整请求」轮询，无变动零流量 |
 | rev 版本号比对 | 每次写库 `DATA_REV` 自增；`/api/runs`、`/api/botstatus`、`/api/schedule` 响应都带 `rev`，前端只在落后时才拉数据，重复/乱序事件被天然去重 |
 | gzip 压缩 | JSON 接口对 >1KB 的响应按请求 `Accept-Encoding: gzip` 压缩（记录列表压缩率约 80~90%） |
@@ -392,7 +392,7 @@ pause
 
 | 调度 | 频率 | 内容 |
 |---|---|---|
-| 后端自动抓取 | 每 6 秒（服务常驻，与有没有人打开页面无关） | 桌面 API runningRecords 最新 50 条幂等 upsert 入库（在途+终态一次同步）；有改库即自增 `DATA_REV` 并向 SSE 客户端广播变更信号 |
+| 后端自动抓取 | 每 6 秒（服务常驻，与有没有人打开页面无关） | 桌面 API runningRecords 最新 50 条幂等 upsert 入库（在途+终态一次同步）；**有实际变更行**才自增 `DATA_REV` 并向 SSE 客户端广播（无变化零广播、零流量） |
 | 立刻更新 | 手动 | 不等下一轮，立即全量爬取（运行记录 + 触发器排期），成功后广播 |
 | 网页自动更新 | SSE 事件驱动（开关，可关） | 库有变动才被推送信号，按需拉取；无变动零流量。断线回退 60 秒兜底轮询 |
 | 每日完整更新 | 每天 12:00 | 爬取触发器 + 运行记录、整理时刻表，并刷新「数据获取」时间 |
