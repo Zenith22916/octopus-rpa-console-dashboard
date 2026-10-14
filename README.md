@@ -449,38 +449,6 @@ python local_server.py                                                          
 
 以 `_` 开头的键视为注释，不会加入白名单。
 
-## 附：八爪鱼 RPA MCP 服务器（`octo_mcp/`）
-
-让 AI 客户端直接操作八爪鱼 RPA 的 MCP 服务，与仪表盘共用同一份抓取数据：
-
-| 工具 | 作用 |
-|---|---|
-| `octo_list_projects` | 列出本地流程项目 |
-| `octo_read_subflow` / `octo_write_subflow` | 解密读取 / 加密回写 `.subflow` 流程文件 |
-| `octo_search_flows` | 流程内全文搜索关键词 |
-| `octo_list_backups` / `octo_restore_backup` | 备份列表 / 恢复 |
-| `octo_get_key` | 查询当前 AES 密钥与重取方法 |
-| `octo_list_triggers` / `octo_list_runs` | 触发器清单、运行记录（只读，读 `output/`） |
-
-```bash
-pip install "mcp<2" cryptography
-```
-
-`mcp.json` 配置示例：
-
-```json
-{
-  "mcpServers": {
-    "octopus-rpa": {
-      "command": "<python.exe 路径>",
-      "args": ["E:\\octopus-rpa-console-dashboard\\octo_mcp\\server.py"]
-    }
-  }
-}
-```
-
-> 密钥可用环境变量覆盖：`OCTO_SUBFLOW_KEY` / `OCTO_SUBFLOW_IV`（HEX）。
-
 ## 项目结构
 
 ```
@@ -498,8 +466,6 @@ octopus-rpa-console-dashboard/
 ├── start_server.sh         # 一键（Linux/macOS）：python3 core/local_server.py
 ├── requirements.txt        # requests / openpyxl / pymysql
 ├── config.example.json     # 配置模板
-├── octo_mcp/
-│   └── server.py           # MCP 服务器（流程文件读写/搜索/备份）
 ├── assets/
 │   ├── echarts.min.js      # ECharts（本地，离线可用）
 │   ├── monaco/vs/          # Monaco Editor（日志只读高亮，离线自托管）
