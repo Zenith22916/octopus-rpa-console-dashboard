@@ -333,6 +333,8 @@ def main():
     ap.add_argument("--out", default="output")
     ap.add_argument("--only-runs", action="store_true",
                     help="仅抓取运行记录（快速刷新用，跳过触发器/机器人）")
+    ap.add_argument("--only-triggers", action="store_true",
+                    help="仅抓取触发器排期并写库（排期页「立刻更新」与 12h 轮询用）")
     ap.add_argument("--days", type=int, default=0,
                     help="运行记录只保留最近 N 天；0=全量抓取（默认，抓完接口返回的全部记录）")
     ap.add_argument("--pages", type=int, default=0,
@@ -377,6 +379,23 @@ def main():
         if any(k in name for k in exclude):
             return False
         return True
+
+    # ---- 仅抓触发器（排期页「立刻更新」+ 后端 12h 轮询）：不碰运行记录，直接写库 ----
+    if args.only_triggers:
+        print("[*] 拉取触发器列表（仅排期）...")
+        triggers = fetch_all(session, API_TRIGGERS)
+        kept = [t for t in triggers if keep_name(t.get("executorName") or "")]
+        dropped = len(triggers) - len(kept)
+        if dropped:
+            print(f"[*] 已过滤 {dropped} 条（include={include}, exclude={exclude}）")
+        rows = [normalize_trigger(t) for t in kept]
+        import db as _db
+        changed = _db.upsert_triggers(rows)
+        changed = changed if isinstance(changed, list) else []
+        print(f"[+] 触发器已入库 MySQL: 变更 {len(changed)} / 共 {len(rows)} 条")
+        print(f"[TRIGGERS_CHANGED] {len(changed)}")
+        print("[✓] 触发器排期刷新完成")
+        return
 
     # 拉取运行记录：默认全量抓取（翻完接口全部页）；--days N 时只保留最近 N 天；
     # --pages N 时只抓最新 N 页（增量轻量模式，直接写 MySQL 不落 CSV）。
@@ -468,6 +487,12 @@ def main():
     if dropped:
         print(f"[*] 已过滤 {dropped} 条（include={include}, exclude={exclude}）")
     rows = [normalize_trigger(t) for t in kept]
+    # 入库：排期页/合规页/Excel 导出统一读库（CSV 仍写一份作为离线快照与排查用）
+    import db as _db2
+    t_changed = _db2.upsert_triggers(rows)
+    t_changed = t_changed if isinstance(t_changed, list) else []
+    print(f"[+] 触发器已入库 MySQL: 变更 {len(t_changed)} / 共 {len(rows)} 条")
+    print(f"[TRIGGERS_CHANGED] {len(t_changed)}")
     with open(os.path.join(args.out, "triggers_normalized.csv"), "w",
               encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)

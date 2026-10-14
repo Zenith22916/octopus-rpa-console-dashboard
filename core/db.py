@@ -27,6 +27,7 @@ from datetime import datetime, timezone, timedelta
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根（core/ 的上级）
 CFG_FILE = os.path.join(BASE, "config.json")
 TABLE = "rpa_runs"
+TRIGGER_TABLE = "rpa_triggers"
 
 _BJT = timezone(timedelta(hours=8))   # 北京时间（start_dt 列用）
 _last_err = [0.0, ""]          # 限频打印：[上次报错时间戳, 上次报错摘要]
@@ -112,30 +113,100 @@ CREATE TABLE IF NOT EXISTS `{db}`.`{table}` (
   exec_start_ms  BIGINT           NULL,
   source         VARCHAR(16)  NOT NULL DEFAULT '',
   updated_at     DATETIME     NOT NULL,
+  updated_ms     BIGINT       NOT NULL DEFAULT 0,
   PRIMARY KEY (process_no),
   KEY idx_start_ms (start_ms),
   KEY idx_bot (bot_name),
-  KEY idx_status (status)
+  KEY idx_status (status),
+  KEY idx_updated_ms (updated_ms)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+# 触发器排期表：crawler 从网页版 API 抓到的触发器归一化后落库（12h 一轮），
+# 排期页/合规页/Excel 导出统一读这张表，不再依赖 CSV 文件。
+DDL_TRIGGERS = """
+CREATE TABLE IF NOT EXISTS `{db}`.`{ttable}` (
+  trigger_id     VARCHAR(32)  NOT NULL,
+  flow_id        VARCHAR(64)  NOT NULL DEFAULT '',
+  trigger_name   VARCHAR(255) NOT NULL DEFAULT '',
+  robot_name     VARCHAR(128) NOT NULL DEFAULT '',
+  app_name       VARCHAR(255) NOT NULL DEFAULT '',
+  trigger_type   VARCHAR(32)  NOT NULL DEFAULT '',
+  cron           VARCHAR(255) NOT NULL DEFAULT '',
+  enabled        TINYINT(1)       NULL,
+  calendar       MEDIUMTEXT       NULL,
+  update_time    VARCHAR(32)  NOT NULL DEFAULT '',
+  updated_ms     BIGINT       NOT NULL DEFAULT 0,
+  PRIMARY KEY (trigger_id),
+  KEY idx_robot (robot_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
 _UPSERT = """
 INSERT INTO `{db}`.`{table}`
   (process_no, flow_id, flow_name, bot_name, trigger_name, start_way,
-   status, start_ms, start_dt, end_ms, exec_start_ms, source, updated_at)
-VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+   status, start_ms, start_dt, end_ms, exec_start_ms, source, updated_at, updated_ms)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 ON DUPLICATE KEY UPDATE
-  status=VALUES(status), end_ms=VALUES(end_ms), exec_start_ms=VALUES(exec_start_ms),
-  bot_name=VALUES(bot_name), source=VALUES(source),
-  updated_at=IF(status=VALUES(status) AND end_ms<=>VALUES(end_ms)
+  updated_ms=IF(status<=>VALUES(status) AND end_ms<=>VALUES(end_ms)
                 AND exec_start_ms<=>VALUES(exec_start_ms)
-                AND bot_name=VALUES(bot_name) AND source=VALUES(source),
-                updated_at, VALUES(updated_at))
+                AND bot_name<=>VALUES(bot_name) AND source<=>VALUES(source),
+                updated_ms, VALUES(updated_ms)),
+  updated_at=IF(status<=>VALUES(status) AND end_ms<=>VALUES(end_ms)
+                AND exec_start_ms<=>VALUES(exec_start_ms)
+                AND bot_name<=>VALUES(bot_name) AND source<=>VALUES(source),
+                updated_at, VALUES(updated_at)),
+  status=VALUES(status), end_ms=VALUES(end_ms), exec_start_ms=VALUES(exec_start_ms),
+  bot_name=VALUES(bot_name), source=VALUES(source)
+"""
+
+_UPSERT_TRIGGER = """
+INSERT INTO `{db}`.`{ttable}`
+  (trigger_id, flow_id, trigger_name, robot_name, app_name, trigger_type,
+   cron, enabled, calendar, update_time, updated_ms)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+ON DUPLICATE KEY UPDATE
+  updated_ms=IF(flow_id<=>VALUES(flow_id) AND trigger_name<=>VALUES(trigger_name)
+                AND robot_name<=>VALUES(robot_name) AND app_name<=>VALUES(app_name)
+                AND trigger_type<=>VALUES(trigger_type) AND cron<=>VALUES(cron)
+                AND enabled<=>VALUES(enabled) AND calendar<=>VALUES(calendar),
+                updated_ms, VALUES(updated_ms)),
+  flow_id=VALUES(flow_id), trigger_name=VALUES(trigger_name),
+  robot_name=VALUES(robot_name), app_name=VALUES(app_name),
+  trigger_type=VALUES(trigger_type), cron=VALUES(cron),
+  enabled=VALUES(enabled), calendar=VALUES(calendar),
+  update_time=VALUES(update_time)
 """
 
 
+def _migrate(conn, cfg):
+    """已有库的结构补齐（幂等）：老库缺 updated_ms 列时加上并回填。
+
+    CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，所以升级路径必须显式 ALTER。
+    回填值取 updated_at 的毫秒时间戳——老数据本来没有这个字段，用写库时刻代替，
+    语义正确（那就是它们最后一次被改动的时刻）。
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s AND column_name='updated_ms'",
+                (cfg["database"], TABLE))
+            if cur.fetchone()[0]:
+                return
+            cur.execute("ALTER TABLE `%s`.`%s` ADD COLUMN updated_ms BIGINT NOT NULL DEFAULT 0"
+                        % (cfg["database"], TABLE))
+            cur.execute("ALTER TABLE `%s`.`%s` ADD KEY idx_updated_ms (updated_ms)"
+                        % (cfg["database"], TABLE))
+            cur.execute("UPDATE `%s`.`%s` SET updated_ms=UNIX_TIMESTAMP(updated_at)*1000 "
+                        "WHERE updated_ms=0" % (cfg["database"], TABLE))
+            print("[mysql] 已补齐 updated_ms 列（历史行按 updated_at 回填）")
+    except Exception as e:
+        _err("结构补齐跳过：%s" % e)
+
+
 def init_db():
-    """建库建表（幂等）。未配置/失败返回 False，不抛错。"""
+    """建库建表（幂等；含老库结构补齐）。未配置/失败返回 False，不抛错。"""
     cfg = _cfg()
     if not cfg:
         return False
@@ -149,8 +220,10 @@ def init_db():
         conn, _ = _connect(cfg)
         with conn.cursor() as cur:
             cur.execute(DDL_TABLE.format(db=cfg["database"], table=TABLE))
+            cur.execute(DDL_TRIGGERS.format(db=cfg["database"], ttable=TRIGGER_TABLE))
+        _migrate(conn, cfg)
         conn.close()
-        print("[mysql] 就绪：%s.%s" % (cfg["database"], TABLE))
+        print("[mysql] 就绪：%s.%s + %s" % (cfg["database"], TABLE, TRIGGER_TABLE))
         return True
     except ImportError:
         _err("未安装 pymysql（pip install pymysql），入库跳过")
@@ -174,7 +247,9 @@ def upsert_raw_runs(rows, source="crawler"):
     cfg = _cfg()
     if not cfg or not rows:
         return []
-    out, now = [], datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
+    out = []
+    now = datetime.now(_BJT).strftime("%Y-%m-%d %H:%M:%S")
+    now_ms = int(time.time() * 1000)   # 本轮写库时刻：增量拉取的游标基准
     for r in rows:
         pno = str(r.get("process_no") or "")
         start = iso_to_ms(r.get("start_time"))
@@ -185,7 +260,7 @@ def upsert_raw_runs(rows, source="crawler"):
             r.get("bot_name") or "", r.get("trigger_name") or "", r.get("start_way") or "",
             r.get("status") or "", start, _ms_to_dt(start),
             iso_to_ms(r.get("end_time")), iso_to_ms(r.get("execution_start_time")),
-            source, now,
+            source, now, now_ms,
         ))
     if not out:
         return []
@@ -222,12 +297,30 @@ _UPSERT_SINGLE = _UPSERT   # 逐行执行与批量共用同一条 SQL 模板
 _COLS = "process_no, flow_id, flow_name, bot_name, trigger_name, start_way, status, start_ms, end_ms, exec_start_ms"
 
 
-def fetch_records(limit=None, since_ms=None, pnos=None):
-    """按 start_ms 倒序查询（最新在前）。
-    limit 给定时只取最新 N 条；since_ms 给定时只取「在途或 end >= since_ms」的行
-    （按与时间范围的 overlapped 判定，覆盖跨界的长任务）；
-    pnos 给定时只取这些 process_no 的行（SSE 精确增量拉取：变更了哪几条就取哪几条），
-    与 limit/since_ms 可叠加（取交叠行后仍按 start_ms 倒序 + limit 截断）。"""
+def now_ms():
+    """当前毫秒时间戳（增量游标的基准）。"""
+    return int(time.time() * 1000)
+
+
+def snapshot_cursor():
+    """取一个「先于查询」的快照游标：比当前时刻略早，避免漏掉查询期间写入的行。
+
+    前端下次用这个值做增量拉取（updated_ms > cursor）。快照必须在查询之前取，
+    这样「取游标 -> 查询」之间新写入的行会带上更大的 updated_ms，下次必然被捞到。
+    """
+    return now_ms()
+
+
+def fetch_records(limit=None, days=None, cursor=None):
+    """查运行记录。
+
+    days   ：按开始时间圈定最近 N 天（end 为空或 end 落在窗口内，覆盖跨界长任务）；
+             启动加载 / 时间轴切到更长档位时用。
+    cursor ：增量拉取——只返回 updated_ms &gt; cursor 的行（最后修改时间晚于游标）。
+             被广播唤醒时用，只回真正变化的那几条。
+    limit  ：只取最新 N 条（与上面两个条件可叠加）。
+    默认按 start_ms 倒序（增量场景行数少，顺序不影响合并）。
+    """
     cfg = _cfg()
     if not cfg:
         return []
@@ -238,20 +331,19 @@ def fetch_records(limit=None, since_ms=None, pnos=None):
         sql = "SELECT {cols} FROM `{db}`.`{table}`".format(
             cols=_COLS, db=cfg["database"], table=TABLE)
         conds, params = [], []
-        if pnos:
-            # 分批拼占位符（process_no 是主键，一批 pnos 数量有限）
-            ph = ",".join(["%s"] * len(pnos))
-            conds.append("process_no IN (%s)" % ph)
-            params.extend(str(p) for p in pnos)
-        if since_ms:
+        if cursor:
+            conds.append("updated_ms > %s")
+            params.append(int(cursor))
+        if days:
+            cutoff = now_ms() - int(days) * 86400000
             conds.append("(end_ms IS NULL OR end_ms >= %s)")
-            params.append(int(since_ms))
+            params.append(cutoff)
         if conds:
             sql += " WHERE " + " AND ".join(conds)
         if limit:
             sql += " ORDER BY start_ms DESC LIMIT %s"
             params.append(int(limit))
-        elif conds:
+        else:
             sql += " ORDER BY start_ms DESC"
         with conn.cursor(pymysql_ss()) as cur:
             cur.execute(sql, params or None)
@@ -263,6 +355,98 @@ def fetch_records(limit=None, since_ms=None, pnos=None):
     except Exception as e:
         _err("查询失败：%s" % e)
         return []
+
+
+# ---- 触发器排期表 ----
+
+def upsert_triggers(rows):
+    """触发器归一化行批量 upsert（crawler.normalize_trigger 的输出）。
+
+    返回实际变更的 trigger_id 列表；空 = 排期无变化（12h 轮询据此决定要不要广播）。
+    """
+    cfg = _cfg()
+    if not cfg or not rows:
+        return []
+    now_ms_v = now_ms()
+    out = []
+    for r in rows:
+        tid = str(r.get("trigger_id") or "")
+        if not tid:
+            continue
+        en = r.get("enabled")
+        en = None if en is None else (1 if en is True else 0)
+        out.append((tid, r.get("flow_id") or "", r.get("trigger_name") or "",
+                    r.get("robot_name") or "", r.get("app_name") or "",
+                    r.get("trigger_type") or "", r.get("cron") or "", en,
+                    r.get("calendar") or "", r.get("update_time") or "", now_ms_v))
+    if not out:
+        return []
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return []
+        changed = []
+        with conn.cursor() as cur:
+            for row in out:
+                cur.execute(_UPSERT_TRIGGER.format(db=cfg["database"], ttable=TRIGGER_TABLE), row)
+                if cur.rowcount and cur.rowcount > 0:
+                    changed.append(row[0])
+        conn.close()
+        return changed
+    except ImportError:
+        _err("未安装 pymysql，排期入库跳过")
+        return []
+    except Exception as e:
+        _err("排期写入失败：%s" % e)
+        return []
+
+
+def fetch_triggers():
+    """读全部触发器（排期页 / 合规页 / Excel 导出共用），按机器人+应用名排序。
+
+    返回 crawler.normalize_trigger 同构的 dict 列表（enabled 还原成 bool），
+    这样 dashboard.build_schedule_payload 等聚合函数可以原样复用。
+    """
+    cfg = _cfg()
+    if not cfg:
+        return []
+    cols = ("trigger_id, flow_id, trigger_name, robot_name, app_name, "
+            "trigger_type, cron, enabled, calendar, update_time")
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return []
+        with conn.cursor(pymysql_ss()) as cur:
+            cur.execute("SELECT %s FROM `%s`.`%s` ORDER BY robot_name, app_name"
+                        % (cols, cfg["database"], TRIGGER_TABLE))
+            names = [c[0] for c in cur.description]
+            rows = [dict(zip(names, r)) for r in cur.fetchall()]
+        conn.close()
+        for r in rows:
+            if r.get("enabled") is not None:
+                r["enabled"] = bool(r["enabled"])
+        return rows
+    except Exception as e:
+        _err("排期查询失败：%s" % e)
+        return []
+
+
+def count_triggers():
+    """排期表行数（启动横幅/状态展示用）。"""
+    cfg = _cfg()
+    if not cfg:
+        return 0
+    try:
+        conn, _ = _connect(cfg)
+        if conn is None:
+            return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM `%s`.`%s`" % (cfg["database"], TRIGGER_TABLE))
+            n = cur.fetchone()[0]
+        conn.close()
+        return int(n)
+    except Exception:
+        return 0
 
 
 def pymysql_ss():
