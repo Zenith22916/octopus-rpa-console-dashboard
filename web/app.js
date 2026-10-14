@@ -1,9 +1,16 @@
 /* ==================== 公共工具 ==================== */
 var STATUS_CN = {
   Waiting: "排队中", Executing: "运行中", Finished: "已完成",
-  Failed: "失败", Stopped: "已停止"
+  Failed: "失败", Stopped: "已停止", Delivered: "已派发"
 };
 var WAY_CN = { Manual: "手动", TimingTrigger: "定时触发器", Webhook: "Webhook" };
+/* 「排队类」状态：都表示「还没真正开始跑，在等机器人」。
+   Waiting   = 等待调度（还没派发到机器人）；
+   Delivered = 已派发到机器人、但尚未开始执行。
+   两者显示名不同（排队中 / 已派发），但**归类**相同：凡是按排队处理的地方
+   （配色、时间轴画成等待段、跟随「显示排队」开关、机器人状态算 queued）
+   统一用这个集合判断，避免各处各写一份 if 而漏掉某个状态。 */
+var QUEUE_STATES = { Waiting: 1, Delivered: 1 };
 function wayOf(r) { return WAY_CN[r.way] || r.way || "-"; }
 function wayCN(w) { return WAY_CN[w] || w || "—"; }
 function esc(s) {
@@ -83,11 +90,11 @@ function fmtSize(b) { if (b == null) return ""; if (b < 1024) return b + " B"; i
 function statusColor(r) {
   if (r.status === "Failed") return "rgba(226,75,74,0.6)";
   if (r.status === "Executing") return "rgba(239,159,39,0.6)";
-  if (r.status === "Waiting") return "rgba(55,138,221,0.6)";
+  if (QUEUE_STATES[r.status]) return "rgba(55,138,221,0.6)";   // Waiting / Delivered = 排队蓝
   if (r.status === "Stopped") return "rgba(95,94,90,0.6)";
   if (r.status === "Finished") return "rgba(29,158,117,0.6)";
-  /* 未知状态（如 Delivered 等八爪鱼新增/客户端特有状态）默认当「运行中」画黄色，
-     不要落成绿色的「已完成」—— 那会把没见过的状态伪装成成功。 */
+  /* 真正的未知状态默认当「运行中」画黄色，不要落成绿色的「已完成」——
+     那会把没见过的状态伪装成成功。 */
   return "rgba(239,159,39,0.6)";
 }
 /* 状态色的实色版：时间轴数据块用 0.6 透明度（半透明便于看重叠），
@@ -95,7 +102,7 @@ function statusColor(r) {
 function statusColorSolid(r) {
   if (r.status === "Failed") return "#E24B4A";
   if (r.status === "Executing") return "#EF9F27";
-  if (r.status === "Waiting") return "#378ADD";
+  if (QUEUE_STATES[r.status]) return "#378ADD";   // Waiting / Delivered = 排队蓝
   if (r.status === "Stopped") return "#8b8f98";
   if (r.status === "Finished") return "#1D9E75";
   /* 未知状态兜底 = 运行中的橙黄色（与 statusColor 的口径一致） */
@@ -150,6 +157,7 @@ var STATUS_HUE = {
   Failed: [226, 75, 74],
   Executing: [239, 159, 39],
   Waiting: [55, 138, 221],
+  Delivered: [55, 138, 221],   // 与 Waiting 同为「排队中」配色
   Stopped: [120, 122, 128],
   Finished: [29, 158, 117]
 };
@@ -252,9 +260,12 @@ function statusBadge(st) {
     Failed: ["失败", "rgba(226,75,74,0.18)", "#E24B4A"],
     Executing: ["运行中", "rgba(239,159,39,0.18)", "#EF9F27"],
     Waiting: ["排队中", "rgba(55,138,221,0.18)", "#378ADD"],
+    /* Delivered 显示名单独叫「已派发」（已下发到机器人、还没开始跑），
+       但归类与配色仍算「排队类」（QUEUE_STATES），跟随「显示排队」开关 */
+    Delivered: ["已派发", "rgba(55,138,221,0.18)", "#378ADD"],
     Stopped: ["已停止", "rgba(95,94,90,0.18)", "#8b8f98"]
   };
-  /* 未知状态（如 Delivered）徽章默认显示「运行中」+ 橙黄色，与时间轴/颜色兜底口径一致 */
+  /* 真正的未知状态徽章默认显示「运行中」+ 橙黄色，与时间轴/颜色兜底口径一致 */
   var m = map[st] || (st === "Finished"
     ? ["已完成", "rgba(29,158,117,0.18)", "#1D9E75"]
     : ["运行中", "rgba(239,159,39,0.18)", "#EF9F27"]);
@@ -602,6 +613,14 @@ function buildSegs() {
   var segs = [];
   records.forEach(function (r) {
     var st = r.start;
+    /* 排队类状态（Waiting / Delivered）整体按「排队等位」处理：画成一个 wait 段
+       （蓝色），因而跟随「显示排队」开关 —— 关掉时整条都不显示。
+       这里有意不做「有 execStart 就画 run 段」的例外：口径要单一，
+       否则关掉排队时这类记录会以运行段的身份留在图上，与「视为排队中」不符。 */
+    if (QUEUE_STATES[r.status]) {
+      segs.push({ r: r, start: st, end: r.end, kind: 'wait' });
+      return;
+    }
     var exec = (r.execStart && r.execStart > st) ? r.execStart : null;
     if (exec && exec - st >= 60 * 1000) segs.push({ r: r, start: st, end: exec, kind: 'wait' });
     segs.push({ r: r, start: exec || st, end: r.end, kind: 'run' });
@@ -1834,7 +1853,7 @@ function anRenderAll(recs) {
     statusCount[s] = (statusCount[s] || 0) + 1;
     if (s === 'Finished') finished++; else if (s === 'Failed') failed++;
     else if (s === 'Executing') running++; else if (s === 'Stopped') stopped++;
-    else if (s === 'Waiting') waiting++;
+    else if (QUEUE_STATES[s]) waiting++;   // Waiting / Delivered 都算排队中
     if (r.execStart && r.execStart > st) { waitSum += r.execStart - st; waitN++; }
     if (r.execStart && r.end != null && r.end > r.execStart) { var rd = r.end - r.execStart; runSum += rd; runN++; if (rd > maxRun) maxRun = rd; }
     else if (r.end != null && r.end > st) { var rd2 = r.end - st; if (rd2 > maxRun) maxRun = rd2; }
@@ -4124,7 +4143,7 @@ function bsCard(b) {
     /* 时长用紧凑写法（fmtDurShort）：一行 3 张时卡片内宽只有 200 出头，
        带空格的「11 分 40 秒」会把进度行挤到省略号 */
     metaHtml = '<span class="bs-task-meta">'
-      + esc((t.status === 'Waiting' ? '等待调度' : '已跑 ' + fmtDurShort(t.elapsed))
+      + esc((QUEUE_STATES[t.status] ? '等待调度' : '已跑 ' + fmtDurShort(t.elapsed))
         + (t.waited ? ' · 排队 ' + fmtDurShort(t.waited) : '')
         + (b.tasks.length > 1 ? ' · 另有 ' + (b.tasks.length - 1) + ' 个在途' : ''))
       + '</span>';
