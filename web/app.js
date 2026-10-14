@@ -287,6 +287,7 @@ function api(url) {
 function loadRuns() {
   return api('/api/runs').then(function (d) {
     if (d && Array.isArray(d.records)) { RECORDS = d.records; }
+    if (d && typeof d.rev === 'number') DATA_REV = d.rev;   // 同步数据版本号（SSE 比对用）
     if (d && d.time) document.getElementById('dataTime').textContent = d.time;
     return RECORDS;
   });
@@ -299,7 +300,10 @@ function loadRunDetail(id) {
 }
 function loadSchedule() {
   return api('/api/schedule').then(function (d) {
-    if (d && d.ok) SCHED = d;
+    if (d && d.ok) {
+      SCHED = d;
+      if (typeof d.rev === 'number') DATA_REV = d.rev;   // 同步数据版本号（SSE 比对用）
+    }
     return SCHED;
   });
 }
@@ -3198,7 +3202,7 @@ document.getElementById('scExport').addEventListener('click', scExport);
 /* 当前时刻标记每 6 秒跟随一次（横线位置 + 今天列的底色，跨天时自动切换） */
 setInterval(scUpdateNowLine, 6000);
 
-/* ==================== 自动更新 ==================== */
+/* ==================== 自动更新（SSE 推送 + rev 比对 + 低频兜底） ==================== */
 /* 自动更新进行中：在开关圆钮里转圈（纯视觉反馈，不动开关的勾选状态） */
 function swBusy(on) {
   var sw = document.querySelector('#autoCtl .switch');
@@ -3228,6 +3232,7 @@ function refreshData(force, done, mode) {
     var okFlag = false;
     if (d && d.ok && Array.isArray(d.records)) {
       okFlag = true;
+      if (typeof d.rev === 'number') DATA_REV = d.rev;   // 同步数据版本号（SSE 比对用）
       // 只有「立刻更新」会失败；自动更新读的是后端内存，失败时才提示
       if (warnEl && force) warnEl.style.display = 'none';
       if (mode) {
@@ -3273,13 +3278,32 @@ document.getElementById('btnRefreshNow').addEventListener('click', function () {
     setTimeout(function () { btn.textContent = '立刻更新'; btn.disabled = false; }, 2000);
   });
 });
-/* 自动更新：6s 轻量刷（最新 6 条增量合并，不触发抓取），每 5min 做一次
-   「总长」范围刷新兜底（/api/runs?since=，同样不真全量）；仅在依赖实跑数据
-   的视图生效。抓取由后端常驻线程自行完成。 */
+/* 自动更新主链路（内网穿透省流量改造）：
+   - SSE：后端 /api/events 在库有变动时推 {kind, rev}（几十字节），空闲时只有
+     30s 一个心跳——替代原「每 6s 一次完整请求」的轮询，无变动零流量；
+   - rev 比对：收到广播先和本地已到的版本比，落后才拉数据（事件可能乱序/重复）；
+   - 兜底轮询：SSE 断线或漏事件时，60s 低频拉一次轻量 rev 检查，不再 6s 全请求；
+   - 甘特图 200ms「现在」线与手机端 5s 走格定时器是纯客户端动画，不过网络，保留。 */
+var DATA_REV = 0;          // 前端已同步到的数据版本号（与后端 DATA_REV 对应）
 var AUTO_FULL_MS = 5 * 60 * 1000;
 var lastFullTick = 0;
-function autoTick() {
-  if (curView !== 'timeline' && curView !== 'analysis') return;
+var FALLBACK_MS = 60 * 1000;   // SSE 失效时的兜底轮询间隔
+var lastFallbackTick = 0;
+
+function revBehind(rev) { return typeof rev === 'number' && rev > DATA_REV; }
+
+/* 按当前视图应用一次数据刷新（收到变更信号后调用）。
+   排期/合规页走各自的重载链路；timeline/analysis 走 refreshData 的
+   range 增量合并；botstatus 直接重拉。 */
+function applyDataChange(kind) {
+  if (curView !== 'timeline' && curView !== 'analysis' && curView !== 'botstatus'
+    && curView !== 'compliance' && curView !== 'schedule') return;
+  if (curView === 'botstatus') { bsLoad().then(bsRender); return; }
+  if (curView === 'compliance') { cpLoad(); return; }
+  if (curView === 'schedule') {
+    loadSchedule().then(function () { scReload(); });
+    return;
+  }
   if (Date.now() - lastFullTick >= AUTO_FULL_MS) {
     lastFullTick = Date.now();
     refreshData(false, null, 'range');
@@ -3287,20 +3311,49 @@ function autoTick() {
     refreshData(false, null, 'lite');
   }
 }
-/* 机器人状态页快刷：后端每 6s 轮询桌面 API underway（运行中记录，与
-   OctopusRPA 桌面客户端同机制），这里同步 6s 直接拉 /api/botstatus，
-   不经过 autoTick 的 refreshData 链路。勾选「自动更新」时生效。 */
-setInterval(function () {
-  if (curView === 'botstatus' && document.getElementById('chkAuto').checked) {
-    bsLoad().then(bsRender);
-  }
-}, 6000);
+
+/* SSE 连接：EventSource 自带断线自动重连；onopen 无条件按当前视图拉一次，
+   补上断线期间错过的事件（重连后 rev 比对也能兜住，这里是即时刷新体验）。 */
+var sseSource = null;
+function sseConnect() {
+  if (sseSource || location.protocol === 'file:') return;
+  try { sseSource = new EventSource('/api/events'); } catch (e) { sseSource = null; return; }
+  sseSource.onopen = function () {
+    /* 重连成功：断线期间的变动收不到事件，无条件刷一次当前视图 */
+    applyDataChange('runs');
+  };
+  sseSource.addEventListener('hello', function (e) {
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind); } catch (err) { }
+  });
+  sseSource.addEventListener('data', function (e) {
+    try { var d = JSON.parse(e.data); if (revBehind(d.rev)) applyDataChange(d.kind); } catch (err) { }
+  });
+  /* onerror 不需要处理：EventSource 自动重连，期间由兜底轮询保证数据新鲜 */
+}
+
+/* 兜底轮询：每 FALLBACK_MS 拉一次 /api/runs?limit=1（最小请求），用返回的 rev
+   判断是否落后；落后才做真正的刷新。SSE 正常时这只是个 1 条记录的轻请求。 */
+function fallbackTick() {
+  if (Date.now() - lastFallbackTick < FALLBACK_MS) return;
+  lastFallbackTick = Date.now();
+  api('/api/runs?limit=1').then(function (d) {
+    if (d && revBehind(d.rev)) applyDataChange('runs');
+  }).catch(function () { });
+}
+
+function autoTick() {
+  sseConnect();
+  fallbackTick();
+}
+/* 机器人状态页快刷改由 SSE 驱动（applyDataChange('runs') 里的 botstatus 分支），
+   这里不再单独轮询。勾选「自动更新」时生效。 */
 document.getElementById('chkAuto').addEventListener('change', function () {
   if (this.checked) {
     autoTick();
-    if (!autoTimer) autoTimer = setInterval(autoTick, 6000);
+    if (!autoTimer) autoTimer = setInterval(autoTick, FALLBACK_MS);
   } else {
     if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    if (sseSource) { sseSource.close(); sseSource = null; }
   }
 });
 document.getElementById('btnBack').addEventListener('click', function () {
@@ -3916,6 +3969,7 @@ function bsBind() {
 function bsLoad() {
   return api('/api/botstatus').then(function (d) {
     BS_DATA = (d && d.ok) ? d : null;
+    if (d && typeof d.rev === 'number') DATA_REV = d.rev;   // 同步数据版本号（SSE 比对用）
     return BS_DATA;
   }).catch(function () { BS_DATA = null; return null; });
 }

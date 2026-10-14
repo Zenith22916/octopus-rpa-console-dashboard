@@ -13,6 +13,7 @@
 """
 import csv
 import datetime
+import gzip
 import http.server
 import json
 import re
@@ -53,6 +54,49 @@ MAX_PAGE = 20000                     # 单页行数上限（防止恶意超大 l
 # 在途与终态一次同步——库即最新状态，无内存态。
 UNDERWAY_INTERVAL = 6                # 轮询间隔（秒）
 LAST_UNDERWAY_TS = [0.0]             # 上一轮成功时间戳；0 = 从未成功（前端 live.ok=False）
+
+# ---- 数据版本号 + SSE 变更推送（内网穿透省流量）----
+# 库每被写入一次 DATA_REV 自增 1；前端持有自己已拿到的 rev：
+# SSE 收到广播（或兜底轮询）时比对，落后才拉数据，无变化零传输。
+DATA_REV = [1]                       # 数据版本号（进程内自增，重启归 1）
+DATA_REV_LOCK = threading.Lock()
+SSE_CLIENTS = []                     # 活跃 SSE 客户端 wfile 列表（配合 SSE_LOCK 遍历摘除）
+SSE_LOCK = threading.Lock()
+SSE_PING_SEC = 30                    # SSE 心跳间隔：保活穿透隧道空闲连接，同时防代理断链
+
+
+def bump_data_rev(reason=""):
+    """任何写库点调用：版本号 +1，并向所有 SSE 客户端广播变更信号。
+
+    事件体只带 kind + rev（几十字节），数据由前端收到后按需拉取——
+    推信号不推数据，避免双通道内容不一致，也把推送流量压到最低。
+    """
+    with DATA_REV_LOCK:
+        DATA_REV[0] += 1
+        rev = DATA_REV[0]
+    sse_broadcast("data", {"kind": reason or "runs", "rev": rev})
+
+
+def sse_broadcast(event, data):
+    """向所有 SSE 客户端推送一条事件；断开的客户端就地摘除。
+
+    逐客户端写并 flush；写失败（对方关页/网络断）静默移除，不影响其他客户端。
+    """
+    payload = "event: %s\ndata: %s\n\n" % (event, json.dumps(data, ensure_ascii=False))
+    dead = []
+    with SSE_LOCK:
+        clients = list(SSE_CLIENTS)
+    for c in clients:
+        try:
+            c.write(payload.encode("utf-8"))
+            c.flush()
+        except Exception:
+            dead.append(c)
+    if dead:
+        with SSE_LOCK:
+            for c in dead:
+                if c in SSE_CLIENTS:
+                    SSE_CLIENTS.remove(c)
 
 
 def now_text():
@@ -576,9 +620,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB, **kwargs)
 
+    def send_header(self, keyword, value):
+        # Python 3.14 的 SimpleHTTPRequestHandler 在 send_head 阶段会自带一条
+        # Cache-Control: no-store，与下面的统一策略冲突（响应出现两条）。
+        # 先吞下所有 Cache-Control，由 end_headers 统一补发一条最终值。
+        if keyword.lower() == "cache-control":
+            self._cache_ctl_last = value
+            return
+        super().send_header(keyword, value)
+
     def end_headers(self):
-        # 页面数据每分钟刷新，禁用缓存避免浏览器拿到旧版本
-        self.send_header("Cache-Control", "no-store")
+        # 缓存策略（内网穿透省流量核心）：静态资源（js/css/图片）内容由 URL 版本号
+        # ?v=N 保证新鲜，走一年长缓存——浏览器二次打开不再下载 1MB 的 echarts
+        # 和 4MB 的帮助截图；HTML 与 API 数据永远 no-store。
+        path0 = self.path.split("?")[0]
+        ext = os.path.splitext(path0)[1].lower()
+        if path0 == "/" or ext in (".html", "") or path0.startswith("/api/"):
+            self._cache_ctl_last = "no-store"
+        else:
+            self._cache_ctl_last = "public, max-age=31536000, immutable"
+        super().send_header("Cache-Control", self._cache_ctl_last)
+        self._cache_ctl_last = None
         super().end_headers()
 
     def do_GET(self):
@@ -598,6 +660,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._serve_monaco()
         if path0 == "/api/log":
             self.handle_log_fetch()
+            return
+        if path0 == "/api/events":
+            self.handle_api_events()
             return
         if path0 == "/api/runs":
             self.handle_api_runs()
@@ -674,6 +739,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "ok": ok,
             "count": db.count_runs(),
             "time": LAST_UPDATE_TIME[0] or now_text(),
+            "rev": DATA_REV[0],
             "error": error,
             "records": _db_records(),
         }
@@ -686,13 +752,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_json(self, obj, code=200):
+        """JSON 响应统一出口：请求带 Accept-Encoding: gzip 且响应体较大时压缩传输。
+
+        记录列表这类重复文本压缩率通常 80~90%，穿隧道时直接省一个数量级流量；
+        小响应不值得压缩开销，原样发。"""
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        use_gzip = ("gzip" in (self.headers.get("Accept-Encoding") or "")
+                    and len(body) > 1024)
+        if use_gzip:
+            body = gzip.compress(body, 5)
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def handle_api_events(self):
+        """GET /api/events —— SSE 长连接：数据库有变动时单向推送变更信号。
+
+        只推 {kind, rev}（几十字节），不推数据本体；前端收到后按需拉取。
+        连接建立即发一条 hello（带当前 rev，前端据此判断是否需要拉取），
+        之后每 SSE_PING_SEC 秒发 `: ping` 注释行保活（穿透隧道空闲超时
+        一般 60s+，不心跳会被中间层掐断）。客户端断开（关页/网络断）时
+        从广播列表摘除并结束线程。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        hello = ("event: hello\ndata: %s\n\n"
+                 % json.dumps({"rev": DATA_REV[0], "time": now_text()},
+                              ensure_ascii=False))
+        self.wfile.write(hello.encode("utf-8"))
+        self.wfile.flush()
+        with SSE_LOCK:
+            SSE_CLIENTS.append(self.wfile)
+        try:
+            while True:
+                time.sleep(SSE_PING_SEC)
+                self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError, OSError):
+            pass    # 客户端断开：正常退出，finally 里摘除
+        finally:
+            with SSE_LOCK:
+                if self.wfile in SSE_CLIENTS:
+                    SSE_CLIENTS.remove(self.wfile)
 
     def _json_body(self):
         """读取并解析请求体 JSON；缺失或解析失败返回 {}。"""
@@ -940,15 +1048,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except ValueError:
             pass
         records = _db_records(limit=limit, since_ms=since_ms)
-        payload = {"ok": True, "records": records, "count": len(records),
-                   "time": LAST_UPDATE_TIME[0] or now_text()}
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json({"ok": True, "records": records, "count": len(records),
+                         "rev": DATA_REV[0],
+                         "time": LAST_UPDATE_TIME[0] or now_text()})
 
     def handle_api_run(self):
         """GET /api/run?id=<rid>：返回单条运行记录详情（含日志目录路径），查 MySQL。"""
@@ -986,13 +1088,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 payload = {"ok": False, "error": "日程数据聚合失败：%s" % e}
         else:
             payload = {"ok": False, "error": "缺少 triggers_normalized.csv"}
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        payload["rev"] = DATA_REV[0]
+        self._send_json(payload)
 
     def handle_api_schedule_export(self):
         """GET /api/schedule/export?view=&robot=&status=：按排期页当前筛选条件导出 xlsx。
@@ -1056,6 +1153,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             records = _db_records()
             payload = dashboard.build_bot_status(records)
             payload["time"] = LAST_UPDATE_TIME[0] or now_text()
+            payload["rev"] = DATA_REV[0]
             payload["live"] = {
                 "ok": bool(LAST_UNDERWAY_TS[0]),
                 "age": int(time.time() - LAST_UNDERWAY_TS[0]) if LAST_UNDERWAY_TS[0] else None,
@@ -1260,6 +1358,7 @@ def run_update():
                     f.write("!! 执行异常: %s\n" % e)
             f.write("[%s] ===== 每日自动更新结束 =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         stamp_data_time()  # 每日完整更新成功：刷新“数据获取”时间
+        bump_data_rev("schedule")   # 触发器排期 + 运行记录都可能变：广播给前端
 
 
 def run_refresh():
@@ -1292,6 +1391,7 @@ def run_refresh():
                       % datetime.datetime.now().strftime("%H:%M:%S"))
                 return False
             stamp_data_time()   # 记录“数据获取”时间
+            bump_data_rev("schedule")   # 全量抓取入库：排期 + 运行记录都广播
             print("[刷新] %s 运行记录 + 触发器排期已更新（全量抓取，完整爬取）" % datetime.datetime.now().strftime("%H:%M:%S"))
             return True
         except Exception as e:
@@ -1365,6 +1465,7 @@ def records_poller():
             n = db.upsert_raw_runs(_raw_rows(page), source="desktop")
             if n:
                 stamp_data_time()   # 有改库：刷新「数据获取」时间
+                bump_data_rev("runs")   # 通知 SSE 客户端：库有变动（拉取由前端按需发起）
             LAST_UNDERWAY_TS[0] = time.time()
             fail = 0
         except Exception as e:
@@ -1409,7 +1510,11 @@ def main():
     threading.Thread(target=initial_full_fetch, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=records_poller, daemon=True).start()
-    with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), Handler) as httpd:
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True   # SSE 是长连接：线程随主进程退出，不等连接关闭
+
+    with Server(("0.0.0.0", PORT), Handler) as httpd:
         print("=" * 56)
         print("  RPA 日程仪表盘 - 局域网服务器已启动")
         print("=" * 56)
@@ -1422,6 +1527,7 @@ def main():
             print("  访问密码:   未启用（config.json 无 access_password 字段，任何人可访问）")
         print("-" * 56)
         print("  运行记录轮询: 每 %d 秒桌面 API runningRecords 最新 50 条入库（在途+终态一次同步）" % UNDERWAY_INTERVAL)
+        print("  变更推送:     /api/events SSE——库有变动才广播信号，前端按需拉取（省流量）")
         print("  网页读取:     按需查询 MySQL（唯一真相源），不触发抓取")
         print("  每日 %02d:%02d 自动完整更新（抓取->整理->仪表盘）" % (UPDATE_HOUR, UPDATE_MINUTE))
         print("  无需 Windows 任务计划：数据更新由本后端进程自动完成")
