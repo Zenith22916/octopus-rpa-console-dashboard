@@ -2345,6 +2345,11 @@ function logEditorCreate() {
         language: "log",
         theme: "rpa-dark",
         readOnly: true,
+        /* 关掉「带语法高亮复制」：Monaco 默认会把选中内容同时写成 HTML Format 富文本，
+           跨机剪贴板（Mouse Without Borders / 远程桌面等）转发时对端可能只落地了 HTML、
+           丢掉 CF_UNICODETEXT，表现为剪贴板历史显示「没有预览」且处处粘不出来。
+           代价只是复制到的地方没有颜色，换回的是任何地方都能粘。 */
+        copyWithSyntaxHighlighting: false,
         automaticLayout: true,
         fontFamily: "Consolas, 'Microsoft YaHei', monospace",
         fontSize: 12.5,
